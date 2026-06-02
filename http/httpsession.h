@@ -4,6 +4,7 @@
 #include <vector>
 #include "blue/msocketstream.h"
 #include "blue/sslsocket.h"
+#include "blue/task.h"
 #include "http.h"
 #include "httpParser.h"
 
@@ -39,14 +40,14 @@ namespace blue
              * @return 返回一对值(recvStatus,httpRequestPtr)
              * @note recvStatus返回有 ok,error,close(客户端主动关闭连接)
              */
-            ReturnType recvRequest();
+            Task<ReturnType> recvRequest();
 
             /**
              * @brief 对客户端发送的请求予以响应
              * @param response 响应对象智能指针
              * @param request 解析后的request.拿到发送发有没有Accept-Encoding
              */
-            int sendResponse(HttpResponse::HttpResponsePtr response, HttpRequest::HttpRequestPtr request);
+            Task<int> sendResponse(HttpResponse::HttpResponsePtr response, HttpRequest::HttpRequestPtr request);
 
             /**
              * @brief 检查encoding是否含有tem

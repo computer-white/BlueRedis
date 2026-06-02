@@ -10,11 +10,11 @@ namespace blue
         static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
         HttpSession::HttpSession(SocketStream::SocketStreamPtr stream, bool owner)
             : SocketStream(stream->getSock(), owner),
-            m_stream(stream)
+              m_stream(stream)
         {
         }
 
-        HttpSession::ReturnType HttpSession::recvRequest()
+        Task<HttpSession::ReturnType> HttpSession::recvRequest()
         {
             m_isFinish = false;
             auto parser = Parser::CreateHttpRequestParser();
@@ -30,16 +30,16 @@ namespace blue
             size_t offset = 0;
             do
             {
-                ssize_t n = m_stream->read(data + offset, requestbuffersize - offset);
+                ssize_t n = co_await m_stream->read(data + offset, requestbuffersize - offset);
                 if (n == 0) // 客户端主动关闭连接
                 {
                     // 连接关闭，尝试finalize
                     parser->Finalize(); // 告诉已经发送完数据了
                     if (m_isFinish)     // 监测一个完整的http request解析完毕
                     {
-                        return {HttpSession::RecvStatus::OK, parser->getData()};
+                        co_return {HttpSession::RecvStatus::OK, parser->getData()};
                     }
-                    return {HttpSession::RecvStatus::CLOSE, nullptr};
+                    co_return {HttpSession::RecvStatus::CLOSE, nullptr};
                 }
                 if (n < 0)
                 {
@@ -48,7 +48,7 @@ namespace blue
                     // hook帮我们hook住了，如果没有数据了最后回来了回到hook重新去读了
                     if (errno == EAGAIN || errno == EWOULDBLOCK)
                         continue;
-                    return {HttpSession::RecvStatus::ERROR, nullptr};
+                    co_return {HttpSession::RecvStatus::ERROR, nullptr};
                 }
                 parser->Execute(data + offset, n);
                 offset += n;
@@ -58,14 +58,14 @@ namespace blue
                     if (parser->getError() == HPE_PAUSED_UPGRADE)
                     {
                         // CONNECT 请求已解析完成，返回 OK
-                        return {HttpSession::RecvStatus::OK, parser->getData()};
+                        co_return {HttpSession::RecvStatus::OK, parser->getData()};
                     }
                     BLUE_LOG_ERROR(g_logger) << "http request 格式错误";
-                    return {HttpSession::RecvStatus::ERROR, nullptr};
+                    co_return {HttpSession::RecvStatus::ERROR, nullptr};
                 }
                 if (m_isFinish)
                 {
-                    return {HttpSession::RecvStatus::OK, parser->getData()};
+                    co_return {HttpSession::RecvStatus::OK, parser->getData()};
                 }
 
                 // 数据不够放了
@@ -81,15 +81,15 @@ namespace blue
                 }
             } while (true);
 
-            return {HttpSession::RecvStatus::ERROR, nullptr};
+            co_return {HttpSession::RecvStatus::ERROR, nullptr};
         }
 
-        int HttpSession::sendResponse(HttpResponse::HttpResponsePtr response, HttpRequest::HttpRequestPtr request)
+        Task<int> HttpSession::sendResponse(HttpResponse::HttpResponsePtr response, HttpRequest::HttpRequestPtr request)
         {
             std::string encoding = request->getHeader("Accept-Encoding", "");
             // BLUE_LOG_INFO(g_logger) << "query : " << request->getQuery() << " val : " << request->getParam("target");
             std::string body = response->getBody();
-    
+
             if (!body.empty() && checkEncoding(encoding, "gzip"))
             {
                 if (body.size() > 20)
@@ -103,10 +103,12 @@ namespace blue
             std::string str = response->toString();
             BLUE_LOG_WARN(g_logger) << "=== Final HTTP Response Headers ===";
             size_t header_end = str.find("\r\n\r\n");
-            if (header_end != std::string::npos) {
+            if (header_end != std::string::npos)
+            {
                 BLUE_LOG_WARN(g_logger) << str.substr(0, header_end);
             }
-            return m_stream->writeFixSize(str.c_str(), str.size());
+            auto res = co_await m_stream->writeFixSize(str.c_str(), str.size());
+            co_return res;
         }
 
         bool HttpSession::checkEncoding(const std::string &encoding, const char *tem)

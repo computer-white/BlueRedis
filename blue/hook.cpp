@@ -16,22 +16,7 @@ namespace blue
 
 	static thread_local bool t_hook_enable = false;
 #define HOOK_FUNC(XX) \
-	XX(sleep)         \
-	XX(usleep)        \
-	XX(nanosleep)     \
 	XX(socket)        \
-	XX(connect)       \
-	XX(accept)        \
-	XX(read)          \
-	XX(readv)         \
-	XX(recvfrom)      \
-	XX(recvmsg)       \
-	XX(recv)          \
-	XX(write)         \
-	XX(writev)        \
-	XX(send)          \
-	XX(sendto)        \
-	XX(sendmsg)       \
 	XX(close)         \
 	XX(fcntl)         \
 	XX(ioctl)         \

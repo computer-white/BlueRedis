@@ -615,6 +615,12 @@ namespace blue
         static void LoadFromYAML(const YAML::Node &root);
 
         /**
+         * @brief 从 JSON 文件加载配置
+         * @param json_file_path JSON 文件路径
+         */
+        static void LoadFromJson(const std::string &json_file_path);
+
+        /**
          * @brief 按照名称查找基类指针
          * @param name 配置的名称
          * @return 配置基类指针

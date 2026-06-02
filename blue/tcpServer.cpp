@@ -1,7 +1,8 @@
+#include <chrono>
 #include "config.h"
 #include "log.h"
 #include "tcpServer.h"
-#include <chrono>
+#include "await.h"
 
 // tcp server
 namespace blue
@@ -20,14 +21,15 @@ namespace blue
           m_RecvTimeOut(g_tcp_server_read_timeout->getValue()),
           m_level(level),
           m_option_name(option_name),
-          m_option(std::move(option)),
-          m_isStop(true)
+          m_option(std::move(option))
     {
     }
 
     template <typename T>
     TcpServer<T>::~TcpServer()
     {
+        BLUE_LOG_INFO(g_logger) << "~TcpServer";
+        m_isStop.store(true,std::memory_order_release);
         for (auto &sock : m_socks)
         {
             sock->close();
@@ -88,50 +90,62 @@ namespace blue
     }
 
     template <typename T>
-    void TcpServer<T>::startAccept(MSocket::MSocketPtr sock)
+    Task<void> TcpServer<T>::startAccept(MSocket::MSocketPtr sock)
     {
         // 处在连接状态
         auto self = this->shared_from_this();
-        while (!m_isStop)
+        while (!m_isStop.load(std::memory_order_acquire))
         {
-            MSocket::MSocketPtr client = sock->accept();
+            MSocket::MSocketPtr client = co_await sock->accept();
             if (client)
             {
+                BLUE_LOG_INFO(g_logger) << "accept new client, ptr=" << client.get() 
+                            << " fd=" << client->getSocketfd();
                 client->setRecvTimeout(m_RecvTimeOut);
-                m_worker->schedule([s = self,c = client](){
-                    s->handleClient(c);
-                });
+                // auto task = self->handleClient(client);
+                // auto handle = task.getHandleNoType();
+                // m_worker->schedule(handle);
+                m_worker->schedule(self->handleClient(client));
             }
             else
             {
+                // 检查是否因为 socket 关闭导致的错误
+                if (errno == EBADF || errno == EINVAL || sock->getSocketfd() < 0)
+                {
+                    BLUE_LOG_ERROR(g_logger) << "socket closed, stop accept";
+                    m_isStop.store(true, std::memory_order_release);
+                    break;
+                }
+                
                 BLUE_LOG_ERROR(g_logger) << "tcp accept failed error : " << errno
-                                         << " strerror : " << strerror(errno);
+                                        << " strerror : " << strerror(errno);
+                
+                co_await sleepFor(1);
             }
         }
+        co_return;
     }
 
     template <typename T>
-    bool TcpServer<T>::start()
+    Task<bool> TcpServer<T>::start()
     {
-        if (!m_isStop)
+        if (!m_isStop.load(std::memory_order_acquire))
         {
-            return true;
+            co_return true;
         }
-        m_isStop = false;
+        m_isStop.store(false,std::memory_order_release);
         auto self = this->shared_from_this();
         for (auto &sock : m_socks)
         {
-            m_acceptworker->schedule([s = self,so = sock](){
-                s->startAccept(so);
-            });
+            m_acceptworker->schedule(startAccept(sock));
         }
-        return true;
+        co_return true;
     }
 
     template <typename T>
     bool TcpServer<T>::stop()
     {
-        m_isStop = true;
+        m_isStop.store(true,std::memory_order_release);
         auto self = this->shared_from_this();
         m_worker->schedule([s = self](){
             for (auto& sock : s->m_socks)
@@ -145,9 +159,26 @@ namespace blue
     }
 
     template <typename T>
-    void TcpServer<T>::handleClient(MSocket::MSocketPtr sock)
+    Task<void> TcpServer<T>::handleClient(MSocket::MSocketPtr sock)
     {
         BLUE_LOG_INFO(g_logger) << "handleClient : " << sock->toString();
+        char buf[1024];
+        while (true) {
+            ssize_t n = co_await sock->recv(buf, sizeof(buf));
+            BLUE_LOG_INFO(g_logger) << "recv returned: n=" << n 
+                                    << " errno=" << errno 
+                                    << " strerror=" << strerror(errno);
+            if (n <= 0) {
+                BLUE_LOG_INFO(g_logger) << "client closed, breaking";
+                break;
+            }
+            ssize_t sent = co_await sock->send(buf, n);
+            BLUE_LOG_INFO(g_logger) << "send returned: sent=" << sent;
+            if (sent <= 0) break;
+        }
+        sock->close();
+        BLUE_LOG_INFO(g_logger) << "handleClient done";
+        co_return;
     }
 
     template class blue::TcpServer<int>;

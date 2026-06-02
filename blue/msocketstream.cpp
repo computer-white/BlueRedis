@@ -23,56 +23,58 @@ namespace blue
         return m_sock && m_sock->isConnected();
     }
 
-    ssize_t SocketStream::read(void *buf, size_t len)
+    Task<ssize_t> SocketStream::read(void *buf, size_t len)
     {
         if (!isConnected())
         {
-            return -1;
+            co_return -1;
         }
-        return m_sock->recv(buf,len);
+        auto res = co_await m_sock->recv(buf,len);
+        co_return res;
     }
 
-    ssize_t SocketStream::read(ByteArray::ByteArrayPtr data, size_t len)
+    Task<ssize_t> SocketStream::read(ByteArray::ByteArrayPtr data, size_t len)
     {
         if (!isConnected())
         {
-            return -1;
+            co_return -1;
         }
         std::vector<iovec> vec;
         data->getWriteBuffers(vec,len);
-        ssize_t ret = m_sock->recv(&vec[0],vec.size());
+        ssize_t ret = co_await m_sock->recv(&vec[0],vec.size());
         if (ret > 0)
         {
             data->setSize(data->getSize() + ret);
             data->setPosition(data->getPosition() + ret);
         }
-        return ret;
+        co_return ret;
     }
 
-    ssize_t SocketStream::write(const void *buf, size_t len)
+    Task<ssize_t> SocketStream::write(const void *buf, size_t len)
     {
         if (!isConnected())
         {
-            return -1;
+            co_return -1;
         }
-        return m_sock->send(buf,len);
+        auto res = co_await m_sock->send(buf,len);
+        co_return res;
     }
 
-    ssize_t SocketStream::write(ByteArray::ByteArrayPtr data, size_t len)
+    Task<ssize_t> SocketStream::write(ByteArray::ByteArrayPtr data, size_t len)
     {
         if (!isConnected())
         {
-            return -1;
+            co_return -1;
         }
         std::vector<iovec> vec;
         data->getReadBuffers(vec,len);
-        ssize_t ret = m_sock->send(&vec[0],vec.size());
+        ssize_t ret = co_await m_sock->send(&vec[0],vec.size());
         if (ret > 0)
         {
             // data->setSize(ret);
             data->setPosition(data->getPosition() + ret);
         }
-        return ret;
+        co_return ret;
     }
 
     void SocketStream::close()

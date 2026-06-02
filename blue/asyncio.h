@@ -9,7 +9,7 @@
 #include "log.h"
 
 namespace blue
-{ 
+{
     namespace xx
     {
         static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
@@ -52,13 +52,21 @@ namespace blue
                 return false; // 挂起提交一个任务
             }
             BLUE_LOG_ERROR(xx::g_logger) << " AsyncRead error, fd : " << fd
-                                     << " error : " << errno
-                                     << " strerrno : " << strerror(errno);
+                                         << " error : " << errno
+                                         << " strerrno : " << strerror(errno);
             return true; // error
         }
         void await_suspend(std::coroutine_handle<> h)
         {
             auto *iom = IOManager::GetThis();
+            if (!iom)
+            {
+                BLUE_LOG_ERROR(xx::g_logger) << "not have iom";
+                ret = -1;
+                errno = EIO;
+                h.resume();
+                return;
+            }
             int tem = iom->addEvent(fd, event, h, nullptr);
             if (tem)
             {
@@ -85,16 +93,17 @@ namespace blue
             {
                 IOManager::GetThis()->delEvent(fd, event);
                 BLUE_LOG_ERROR(xx::g_logger) << " Asyncio error, fd : " << fd
-                                         << " error : " << errno
-                                         << " strerrno : " << strerror(errno)
-                                         << event
-                                         << " event be canceled";
+                                             << " error : " << errno
+                                             << " strerrno : " << strerror(errno)
+                                             << event
+                                             << " event be canceled";
                 return 0; // 超时返回 0
             }
             // 到这里要么出错且不是EAGIN等,要么成功
             if (timer)
             {
                 timer->cancel();
+                timer = nullptr;
             }
             return ret;
         }
@@ -125,13 +134,13 @@ namespace blue
     }
 
     // read 超时
-    inline auto ReadT(int fd, void *buf, size_t len, uint64_t ms)
+    inline auto ReadT(int fd, void *buf, size_t len, uint64_t ms = 0)
     {
         return AsyncIo{fd, ::read, IOManager::READ, with_timeout, ms, buf, len};
     }
 
     // write 超时
-    inline auto WriteT(int fd, const void *buf, size_t len, uint64_t ms)
+    inline auto WriteT(int fd, const void *buf, size_t len, uint64_t ms = 0)
     {
         return AsyncIo{fd, ::write, IOManager::WRITE, with_timeout, ms, buf, len};
     }
@@ -161,13 +170,13 @@ namespace blue
     }
 
     // connect 超时
-    inline auto ConnectT(int sockfd, const struct sockaddr *addr, socklen_t len, uint64_t ms)
+    inline auto ConnectT(int sockfd, const struct sockaddr *addr, socklen_t len, uint64_t ms = 0)
     {
         return AsyncIo{sockfd, ::connect, IOManager::WRITE, with_timeout, ms, addr, len};
     }
 
     // accept 超时
-    inline auto AcceptT(int sockfd, struct sockaddr *addr, socklen_t len, uint64_t ms)
+    inline auto AcceptT(int sockfd, struct sockaddr *addr, socklen_t len, uint64_t ms = 0)
     {
         return AsyncIo{sockfd, ::accept, IOManager::READ, with_timeout, ms, addr, len};
     }
@@ -210,38 +219,38 @@ namespace blue
     }
 
     // readv 超时
-    inline auto ReadvT(int fd, const struct iovec *iov, int iocvnt, uint64_t ms)
+    inline auto ReadvT(int fd, const struct iovec *iov, int iocvnt, uint64_t ms = 0)
     {
         return AsyncIo{fd, ::readv, IOManager::READ, with_timeout, ms, iov, iocvnt};
     }
 
     // recvfrom 超时
-    inline auto RecvfromT(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen, uint64_t ms)
+    inline auto RecvfromT(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen, uint64_t ms = 0)
     {
         return AsyncIo{sockfd, ::recvfrom, IOManager::READ, with_timeout, ms, buf, len, flags, src_addr, addrlen};
     }
 
     // recvmsg 超时
-    inline auto RecvmsgT(int sockfd, struct msghdr *msg, int flags, uint64_t ms)
+    inline auto RecvmsgT(int sockfd, struct msghdr *msg, int flags, uint64_t ms = 0)
     {
         return AsyncIo{sockfd, ::recvmsg, IOManager::READ, with_timeout, ms, msg, flags};
     }
 
     // writev 超时
-    inline auto WritevT(int fd, const struct iovec *iov, int iovcnt, uint64_t ms)
+    inline auto WritevT(int fd, const struct iovec *iov, int iovcnt, uint64_t ms = 0)
     {
         return AsyncIo{fd, ::writev, IOManager::WRITE, with_timeout, ms, iov, iovcnt};
     }
 
     // sendto 超时
     inline auto SendtoT(int sockfd, const void *buf, size_t len, int flags,
-                        const struct sockaddr *dest_addr, socklen_t addrlen, uint64_t ms)
+                        const struct sockaddr *dest_addr, socklen_t addrlen, uint64_t ms = 0)
     {
         return AsyncIo{sockfd, ::sendto, IOManager::WRITE, with_timeout, ms, buf, len, flags, dest_addr, addrlen};
     }
 
     // sendmsg 超时
-    inline auto SendmsgT(int sockfd, const struct msghdr *msg, int flags, uint64_t ms)
+    inline auto SendmsgT(int sockfd, const struct msghdr *msg, int flags, uint64_t ms = 0)
     {
         return AsyncIo{sockfd, ::sendmsg, IOManager::WRITE, with_timeout, ms, msg, flags};
     }

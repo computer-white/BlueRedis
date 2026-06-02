@@ -30,7 +30,7 @@ namespace blue
              * @return 返回实际读取的大小
              * @note 对socket上recv的抽象
              */
-            virtual ssize_t read(void *buf, size_t len) override;
+            virtual Task<ssize_t> read(void *buf, size_t len) override;
 
             /**
              * @brief 读取len长度内容到buf中
@@ -39,7 +39,7 @@ namespace blue
              * @return 返回实际读取的大小(出错返回实际读取)
              * @note 对socket上recv的抽象
              */
-            virtual ssize_t read(ByteArray::ByteArrayPtr data, size_t len) override;
+            virtual Task<ssize_t> read(ByteArray::ByteArrayPtr data, size_t len) override;
 
             /**
              * @brief 将buf中len长度内容发送给对方
@@ -48,7 +48,7 @@ namespace blue
              * @return 返回实际写入的大小
              * @note 对socket上send的抽象(出错返回实际写入)
              */
-            virtual ssize_t write(const void *buf, size_t len) override;
+            virtual Task<ssize_t> write(const void *buf, size_t len) override;
 
             /**
              * @brief 将data中len长度内容发送给对方
@@ -57,7 +57,7 @@ namespace blue
              * @return 返回实际写入的大小
              * @note 对socket上send的抽象(出错返回实际写入)
              */
-            virtual ssize_t write(ByteArray::ByteArrayPtr data, size_t len) override;
+            virtual Task<ssize_t> write(ByteArray::ByteArrayPtr data, size_t len) override;
 
             /**
              * @brief 若sock对象有效且fd没有关闭则关闭

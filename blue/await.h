@@ -16,24 +16,48 @@ namespace blue
     }
     struct SleepAwaiter
     {
-        uint64_t ms;
+        uint32_t s;
 
-        SleepAwaiter(uint64_t ms):ms(ms) {}
+        SleepAwaiter(uint32_t s) : s(s) {}
 
-        bool await_ready() const noexcept 
-        { 
-            return false; 
+        bool await_ready() const noexcept
+        {
+            return false;
         }
 
-        void await_suspend(std::coroutine_handle<> h) 
+        void await_suspend(std::coroutine_handle<> h)
         {
-            IOManager::GetThis()->addTimer(ms,h,nullptr);
+            IOManager::GetThis()->addTimer(s * 1000, h, nullptr);
         }
 
         void await_resume() const noexcept {}
     };
-    SleepAwaiter sleepFor(uint64_t ms)
+
+    /**
+     * @brief 等待 s 秒
+     */
+    SleepAwaiter sleepFor(uint32_t s)
     {
-        return SleepAwaiter{ms};
+        return SleepAwaiter{s};
+    }
+
+
+    struct SleepAwaiterMs 
+    {
+        uint64_t ms;
+        
+        SleepAwaiterMs(uint64_t ms) : ms(ms) {}
+        
+        bool await_ready() const noexcept { return false; }
+        
+        void await_suspend(std::coroutine_handle<> h) {
+            IOManager::GetThis()->addTimer(ms, h, nullptr);
+        }
+        
+        void await_resume() const noexcept {}
+    };
+
+    inline SleepAwaiterMs sleepForMs(uint64_t ms) {
+        return SleepAwaiterMs{ms};
     }
 }

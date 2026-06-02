@@ -571,7 +571,8 @@ namespace blue
                 total += queue->pending.load(std::memory_order_acquire);
             }
             return total == 0 
-                   && m_pendingEventCounts.load(std::memory_order_acquire) == 0; });
+                   && m_pendingEventCounts.load(std::memory_order_acquire) == 0
+                   && !TimerManager::hasTimer();; });
     }
 
     IOManager *IOManager::GetThis()

@@ -169,6 +169,10 @@ namespace blue
                                      << strerror(errno);
             co_return nullptr;
         }
+        if (connfd >= 0)
+        {
+            FdManagerPtr::GetInstance()->get(connfd,true);      // 没有了hook需要我们手动来设置
+        }
         if (newsockfd->_init(connfd))
         {
             co_return newsockfd;
@@ -243,7 +247,8 @@ namespace blue
         }
         if (timeout == UINT32_MAX)
         {
-            if (co_await Connect(m_sockfd, address->getAddr(), address->getAddrLen()))
+            bool conn = co_await Connect(m_sockfd, address->getAddr(), address->getAddrLen());
+            if (conn)
             {
                 BLUE_LOG_ERROR(g_logger) << "::connect error,addr : "
                                          << address->toString() << ",errno : " << errno
@@ -255,7 +260,8 @@ namespace blue
         else
         {
 
-            if (co_await ConnectT(m_sockfd, address->getAddr(), address->getAddrLen(), timeout))
+            bool conn = co_await ConnectT(m_sockfd, address->getAddr(), address->getAddrLen(), timeout);
+            if (conn)
             {
                 BLUE_LOG_ERROR(g_logger) << "::connect error,addr : "
                                          << address->toString() << "timeout : "
@@ -569,6 +575,7 @@ namespace blue
     bool MSocket::_init(int fd)
     {
         blue::FdCxt::FdCxtPtr cxt = FdManagerPtr::GetInstance()->get(fd);
+        BLUE_LOG_INFO(g_logger) << "cxt : " << cxt;
         if (cxt && cxt->isSocket() && !cxt->isClosed())
         {
             m_sockfd = fd;

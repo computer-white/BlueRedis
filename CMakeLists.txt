@@ -50,6 +50,8 @@ find_library(HIREDIS_LIB hiredis)
 find_package(Boost REQUIRED COMPONENTS iostreams coroutine context)
 # gzip 需要 zlib 底层支持
 find_package(ZLIB REQUIRED)
+# 查找 json
+find_package(nlohmann_json REQUIRED)
 
 # 头文件
 include_directories(/usr/include) # yaml-cpp头文件
@@ -106,27 +108,34 @@ set(LLHTTP_SRC
 # 设置源文件变量
 set(LIB_SRC 
     blue/address.cpp
-    # blue/config.cpp
-    # blue/configinit.cpp
-    # blue/bytearray.cpp
-    # blue/dbmanager.cpp
+    blue/async_logger.cpp
+    blue/config.cpp
+    blue/configinit.cpp
+    blue/bytearray.cpp
+    blue/dbmanager.cpp
     blue/fdmanager.cpp
     blue/hook.cpp
     blue/log.cpp
     blue/msocket.cpp
-    # blue/msocketstream.cpp
-    # blue/mstream.cpp
+    blue/msocketstream.cpp
+    blue/mstream.cpp
     blue/mthread.cpp
-    # blue/mysqlpool.cpp
-    # blue/redismanager.cpp
-    # blue/sslsocket.cpp
-    # blue/tcpServer.cpp
+    blue/mysqlpool.cpp
+    blue/redismanager.cpp
+    blue/sslsocket.cpp
+    blue/tcpServer.cpp
     blue/url.cpp
     blue/urlparser.cpp
     blue/util.cpp
     blue/scheduler.cpp
     blue/io_manager.cpp
     blue/timer.cpp
+    http/http.cpp
+    http/httpconnection.cpp
+    http/httpParser.cpp
+    http/httpserver.cpp
+    http/httpservlet.cpp
+    http/httpsession.cpp
     newblue/io_manager.cpp
     newblue/scheduler.cpp
     newblue/timer.cpp
@@ -203,6 +212,7 @@ target_link_libraries(blue PRIVATE
     Boost::coroutine
     Boost::context
     ZLIB::ZLIB
+    nlohmann_json::nlohmann_json
 )
 target_link_libraries(blue_static PRIVATE
     ${OPENSSL_LIBRARIES}
@@ -210,6 +220,7 @@ target_link_libraries(blue_static PRIVATE
     Boost::coroutine
     Boost::context
     ZLIB::ZLIB
+    nlohmann_json::nlohmann_json
 )
 
 # 链接 IDN 库（如果找到）
@@ -268,6 +279,12 @@ add_newblue_test(test_new_iomanager)
 add_newblue_test(test_echo)
 add_newblue_test(test_new_msocket)
 add_newblue_test(test_compute)
+add_newblue_test(test_tcpServer)
+add_newblue_test(test_httpserver)
+add_newblue_test(test_httpconnection)
+add_newblue_test(test_benchmark)
+add_newblue_test(test_debug)
+add_newblue_test(test_asynclog)
 
 # 打印构建信息
 message(STATUS "========================")

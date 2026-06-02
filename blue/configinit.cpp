@@ -19,7 +19,7 @@ namespace blue
                 blue::Config::Lookup<std::string>("db.user","blue","db user");
         
         static blue::ConfigVar<std::string>::ConfigVarPtr g_db_passward = 
-                blue::Config::Lookup<std::string>("db.passward","","db passward");
+                blue::Config::Lookup<std::string>("db.passward","LLd20051014.","db passward");
         
         static blue::ConfigVar<std::string>::ConfigVarPtr g_db_database = 
                 blue::Config::Lookup<std::string>("db.database","blue_proxy","db database");
@@ -35,7 +35,7 @@ namespace blue
                 blue::Config::Lookup<uint16_t>("redis.port",6379,"redis port");
         
         static blue::ConfigVar<std::string>::ConfigVarPtr g_redis_passward = 
-                blue::Config::Lookup<std::string>("redis.passward","","redis passward");
+                blue::Config::Lookup<std::string>("redis.passward","lld200510","redis passward");
 
         static blue::ConfigVar<uint64_t>::ConfigVarPtr g_rate_limit = 
                 blue::Config::Lookup<uint64_t>("redis.rate_limit",100,"redis rate limit");

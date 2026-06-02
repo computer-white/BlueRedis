@@ -1,6 +1,7 @@
 #include "scheduler.h"
 #include "log.h"
 #include "macro.h"
+#include "hook.h"
 
 namespace blue
 {
@@ -139,7 +140,7 @@ namespace blue
     {
         int myIndex = t_threadIndex;
         auto& myQueue = m_threadQueues[myIndex];
-        
+        // blue::set_hook_enable(true);     // 可以选择加上或不加，加上在我这echo测试QPS只有7000多所以我选择不加
         while (true)
         {
             FuncAndId task;

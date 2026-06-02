@@ -4,3 +4,4 @@ bin
 lib
 thirdparty
 build
+CMakeLists.txt

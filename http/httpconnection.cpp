@@ -1,4 +1,5 @@
 #include "blue/log.h"
+#include "blue/asyncio.h"
 #include "httpconnection.h"
 #include <string>
 #include <fcntl.h>
@@ -32,7 +33,7 @@ namespace blue
             BLUE_LOG_INFO(g_logger) << "HttpConnection::~HttpConnection";
         }
 
-        HttpConnection::ReturnType HttpConnection::recvResponse()
+        Task<HttpConnection::ReturnType> HttpConnection::recvResponse()
         {
             m_isFinish = false;
             auto parser = Parser::CreateHttpResponseParser();
@@ -40,10 +41,12 @@ namespace blue
                                        {
                 m_isFinish = true;
                 return 0; });
-            // parser->on_Body([](const std::string &data) -> int
-            //                 {
-            //     BLUE_LOG_INFO(g_logger) << data << std::flush;
-            //     return 0; });
+            if (m_isStreaming)
+            {
+                parser->on_Body([](const std::string &data) -> int{
+                    BLUE_LOG_INFO(g_logger) << data << std::flush;
+                return 0; });
+            }
             parser->Init();
             uint64_t responsebuffersize = HttpResponseParser::GetHttpResponseBufferSize();
             // 无脑vector 管理data
@@ -52,16 +55,16 @@ namespace blue
             size_t offset = 0;
             do
             {
-                ssize_t n = m_stream->read(data + offset, responsebuffersize - offset);
+                ssize_t n = co_await m_stream->read(data + offset, responsebuffersize - offset);
                 if (n == 0) // 对方主动关闭连接
                 {
                     // 连接关闭，尝试finalize
                     parser->Finalize(); // 告诉已经发送完数据了
                     if (m_isFinish)     // 监测一个完整的http response解析完毕
                     {
-                        return {HttpConnection::RecvStatus::OK, parser->getData()};
+                        co_return {HttpConnection::RecvStatus::OK, parser->getData()};
                     }
-                    return {HttpConnection::RecvStatus::CLOSE, nullptr};
+                    co_return {HttpConnection::RecvStatus::CLOSE, nullptr};
                 }
                 if (n < 0)
                 {
@@ -70,18 +73,18 @@ namespace blue
                     // hook帮我们hook住了，如果没有数据了最后回来了回到hook重新去读了
                     if (errno == EAGAIN || errno == EWOULDBLOCK)
                         continue;
-                    return {HttpConnection::RecvStatus::ERROR, nullptr};
+                    co_return {HttpConnection::RecvStatus::ERROR, nullptr};
                 }
                 parser->Execute(data + offset, n);
                 offset += n;
                 if (m_isFinish)
                 {
-                    return {HttpConnection::RecvStatus::OK, parser->getData()};
+                    co_return {HttpConnection::RecvStatus::OK, parser->getData()};
                 }
                 if (parser->getError() != HPE_OK)
                 {
                     BLUE_LOG_ERROR(g_logger) << "http response 格式错误";
-                    return {HttpConnection::RecvStatus::ERROR, nullptr};
+                    co_return {HttpConnection::RecvStatus::ERROR, nullptr};
                 }
 
                 // 数据不够放了
@@ -97,10 +100,10 @@ namespace blue
                 }
             } while (true);
 
-            return {HttpConnection::RecvStatus::ERROR, nullptr};
+            co_return {HttpConnection::RecvStatus::ERROR, nullptr};
         }
 
-        int HttpConnection::sendRequest(HttpRequest::HttpRequestPtr request)
+        Task<int> HttpConnection::sendRequest(HttpRequest::HttpRequestPtr request)
         {
             std::string body = request->getBody();
             if (!body.empty() && body.size() > 20)
@@ -113,77 +116,83 @@ namespace blue
             // 希望服务器返回压缩响应
             request->setHeader("Accept-Encoding", "gzip");
             std::string str = request->toString();
-            return m_stream->writeFixSize(str.c_str(), str.size());
+            auto res = co_await m_stream->writeFixSize(str.c_str(), str.size());
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnection::DoGet(const std::string &url,
+        Task<std::shared_ptr<HttpResult>> HttpConnection::DoGet(std::string url,
                                                           uint64_t timeout_ms,
-                                                          const std::map<std::string, std::string> &header,
-                                                          const std::string &body)
+                                                          std::map<std::string, std::string> header,
+                                                          std::string body)
         {
             auto urlptr = blue::Url::CreateUrl(url);
             if (!urlptr)
             {
                 // BLUE_LOG_INFO(g_logger) << "url failed";
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_URL),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_URL),
                                                     nullptr,
                                                     "invailed get url " + url);
             }
-            return DoGet(urlptr, timeout_ms, header, body);
+            auto res = co_await DoGet(urlptr, timeout_ms, header, body);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnection::DoPost(const std::string &url,
+        Task<std::shared_ptr<HttpResult>> HttpConnection::DoPost(std::string url,
                                                            uint64_t timeout_ms,
-                                                           const std::map<std::string, std::string> &header,
-                                                           const std::string &body)
+                                                           std::map<std::string, std::string> header,
+                                                           std::string body)
         {
             auto urlptr = blue::Url::CreateUrl(url);
             if (!urlptr)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_URL),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_URL),
                                                     nullptr,
                                                     "invailed post url " + url);
             }
-            return DoPost(urlptr, timeout_ms, header, body);
+            auto res = co_await DoPost(urlptr, timeout_ms, header, body);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnection::DoGet(blue::Url::UrlPtr url,
+        Task<std::shared_ptr<HttpResult>> HttpConnection::DoGet(blue::Url::UrlPtr url,
                                                           uint64_t timeout_ms,
-                                                          const std::map<std::string, std::string> &header,
-                                                          const std::string &body)
+                                                          std::map<std::string, std::string> header,
+                                                          std::string body)
         {
-            return DoRequest(http::HttpMethod::GET, url, timeout_ms, header, body);
+            auto res = co_await DoRequest(http::HttpMethod::GET, url, timeout_ms, header, body);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnection::DoPost(blue::Url::UrlPtr url,
+        Task<std::shared_ptr<HttpResult>> HttpConnection::DoPost(blue::Url::UrlPtr url,
                                                            uint64_t timeout_ms,
-                                                           const std::map<std::string, std::string> &header,
-                                                           const std::string &body)
+                                                           std::map<std::string, std::string> header,
+                                                           std::string body)
         {
-            return DoRequest(http::HttpMethod::POST, url, timeout_ms, header, body);
+            auto res = co_await DoRequest(http::HttpMethod::POST, url, timeout_ms, header, body);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnection::DoRequest(http::HttpMethod method,
-                                                              const std::string &url,
+        Task<std::shared_ptr<HttpResult>> HttpConnection::DoRequest(http::HttpMethod method,
+                                                              const std::string url,
                                                               uint64_t timeout_ms,
-                                                              const std::map<std::string, std::string> &header,
-                                                              const std::string &body)
+                                                              std::map<std::string, std::string> header,
+                                                              std::string body)
         {
             auto urlptr = blue::Url::CreateUrl(url);
             if (!urlptr)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_URL),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_URL),
                                                     nullptr,
                                                     "invailed request url " + url);
             }
 
-            return DoRequest(method, urlptr, timeout_ms, header, body);
+            auto res = co_await DoRequest(method, urlptr, timeout_ms, header, body);
+            co_return res;
         }
-        std::shared_ptr<HttpResult> HttpConnection::DoRequest(http::HttpMethod method,
+        Task<std::shared_ptr<HttpResult>> HttpConnection::DoRequest(http::HttpMethod method,
                                                               blue::Url::UrlPtr url,
                                                               uint64_t timeout_ms,
-                                                              const std::map<std::string, std::string> &header,
-                                                              const std::string &body)
+                                                              std::map<std::string, std::string> header,
+                                                              std::string body)
         {
             auto request = std::make_shared<HttpRequest>();
             request->setMethod(method);
@@ -209,31 +218,32 @@ namespace blue
                 request->setHeader("Host", url->getHost());
             }
             request->setBody(body);
-            return DoRequest(request, url, timeout_ms);
+            auto res = co_await DoRequest(request, url, timeout_ms);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnection::DoRequest(http::HttpRequest::HttpRequestPtr req,
+        Task<std::shared_ptr<HttpResult>> HttpConnection::DoRequest(http::HttpRequest::HttpRequestPtr req,
                                                               blue::Url::UrlPtr url,
                                                               uint64_t timeout_ms)
         {
             auto addr = url->createAddress();
             if (!addr)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_HOST),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_HOST),
                                                     nullptr,
                                                     "invailed requst host, unicodehost : " + url->getUnicodeHost() + "asciihost : " + url->getHost());
             }
             auto sock = blue::MSocket::CreateTcp(addr);
             if (!sock)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::CREATE_SOCKET_ERROR),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::CREATE_SOCKET_ERROR),
                                                     nullptr,
                                                     "create socket failed, addr : " + addr->toString() + " error " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
             }
-            bool ret = sock->connect(addr);
+            bool ret = co_await sock->connect(addr);
             if (!ret)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::CONNECT_FAILED),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::CONNECT_FAILED),
                                                     nullptr,
                                                     "connected failed, addr : " + addr->toString() + " error " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
             }
@@ -252,18 +262,19 @@ namespace blue
                 SSL_set_tlsext_host_name(ssl_sock->getSSL(),url->getHost().c_str());
                 if (!ssl_sock->isValid())
                 {
-                    return std::make_shared<HttpResult>((int)HttpResult::ResultStatus::SSL_INVALID_SSL,
+                    co_return std::make_shared<HttpResult>((int)HttpResult::ResultStatus::SSL_INVALID_SSL,
                                     nullptr,
                                     "SSL invalied");
                 }
-                if (!ssl_sock->handshake()) 
+                bool tem = co_await ssl_sock->handshake();
+                if (!tem) 
                 {
                     BLUE_LOG_ERROR(g_logger) << "SSL handshake failed for: " << url->getHost();
                     unsigned long e = ERR_get_error();
                     char buf[256];
                     ERR_error_string_n(e, buf, sizeof(buf));
                     BLUE_LOG_ERROR(g_logger) << "SSL error: " << buf;
-                    return std::make_shared<HttpResult>((int)HttpResult::ResultStatus::SSL_HANDSHAKE_FAILED,
+                    co_return std::make_shared<HttpResult>((int)HttpResult::ResultStatus::SSL_HANDSHAKE_FAILED,
                         nullptr,
                         "SSL handshake failed");
                 }
@@ -276,41 +287,41 @@ namespace blue
             }
 
             sock->setRecvTimeout(timeout_ms);
-            int rt = connect->sendRequest(req);
+            int rt = co_await connect->sendRequest(req);
             if (rt == 0)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::SEND_CLOSE_BY_PEER),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::SEND_CLOSE_BY_PEER),
                                                     nullptr,
                                                     "send request closed by peer : " + addr->toString());
             }
             if (rt < 0)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::SEND_SOCKET_ERROR),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::SEND_SOCKET_ERROR),
                                                     nullptr,
                                                     "send socket, errno : " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
             }
             uint64_t nowtimems = blue::GetCurrentMs();
-            auto [status, response] = connect->recvResponse();
+            auto [status, response] = co_await connect->recvResponse();
             uint64_t backtimes = blue::GetCurrentMs();
             if (!response)
             {
                 if (nowtimems + timeout_ms < backtimes)
                 {
-                    return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::TIMEOUT),
+                    co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::TIMEOUT),
                                                         nullptr,
                                                         "recvresponse timeout, addr : " + addr->toString() + " timeout_ms : " + std::to_string(timeout_ms));
                 }
-                return std::make_shared<HttpResult>((int)(status),
+                co_return std::make_shared<HttpResult>((int)(status),
                                                     nullptr,
                                                     "recvresponse error, errno : " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
             }
-            return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::OK), response, "ok");
+            co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::OK), response, "ok");
         }
 
         HttpConnectionPool::HttpConnectionPool(const std::string &host, const std::string &vhost,
                                                uint16_t port, uint64_t aliveTime, 
-                                               uint32_t maxRequest, uint32_t maxSize)
-            : m_host(host), m_vhost(vhost),
+                                               uint32_t maxRequest, const std::string& scheme, uint32_t maxSize)
+            : m_scheme(scheme), m_host(host), m_vhost(vhost),
               m_maxAliveTime(aliveTime), m_maxSize(maxSize),
               m_maxRequest(maxRequest), m_port(port)
         {
@@ -322,7 +333,7 @@ namespace blue
             return m_pool.size();
         }
 
-        HttpConnection::HttpConnectionPtr HttpConnectionPool::getConnnection()
+        Task<HttpConnection::HttpConnectionPtr> HttpConnectionPool::getConnnection()
         {
             uint64_t nowms = blue::GetCurrentMs();
             std::vector<HttpConnection *> invalid_conn;
@@ -363,19 +374,20 @@ namespace blue
                 if (!addr)
                 {
                     BLUE_LOG_ERROR(g_logger) << "get addr failed, host : " << m_host;
-                    return nullptr;
+                    co_return nullptr;
                 }
                 addr->setPort(m_port);
                 auto sock = blue::MSocket::CreateTcp(addr);
                 if (!sock)
                 {
                     BLUE_LOG_ERROR(g_logger) << "create socket failed, addr : " << addr->toString();
-                    return nullptr;
+                    co_return nullptr;
                 }
-                if (!sock->connect(addr))
+                bool conn = co_await sock->connect(addr);
+                if (!conn)
                 {
                     BLUE_LOG_ERROR(g_logger) << "sock connect failed, addr : " << addr->toString();
-                    return nullptr;
+                    co_return nullptr;
                 }
                 bool isSSl = (m_scheme == "https");
                 std::shared_ptr<SSLSocket> ssl_sock;
@@ -386,16 +398,17 @@ namespace blue
                     if (!ssl_sock->isValid())
                     {
                         BLUE_LOG_ERROR(g_logger) << "ssl_sock is not valid";
-                        return nullptr;
+                        co_return nullptr;
                     }
-                    if (!ssl_sock->handshake())
+                    bool tem = co_await ssl_sock->handshake();
+                    if (!tem)
                     {
                         BLUE_LOG_ERROR(g_logger) << "SSl handshake failed, host : " << m_host;
                         unsigned long e = ERR_get_error();
                         char buf[256];
                         ERR_error_string_n(e, buf, sizeof(buf));
                         BLUE_LOG_ERROR(g_logger) << "SSL error: " << buf;
-                        return nullptr;
+                        co_return nullptr;
                     }
                     ptr = new HttpConnection(ssl_sock);
                 }
@@ -406,30 +419,32 @@ namespace blue
                 }
                 m_total.fetch_add(1, std::memory_order_acq_rel);
             }
-            return HttpConnection::HttpConnectionPtr(ptr, [self = this](HttpConnection *p)
+            co_return HttpConnection::HttpConnectionPtr(ptr, [self = this](HttpConnection *p)
                                                      { ReleasePtr(p, self); });
         }
 
-        std::shared_ptr<HttpResult> HttpConnectionPool::doGet(const std::string &url,
+        Task<std::shared_ptr<HttpResult>> HttpConnectionPool::doGet(std::string url,
                                                               uint64_t timeout_ms,
-                                                              const std::map<std::string, std::string> &header,
-                                                              const std::string &body)
+                                                              std::map<std::string, std::string> header,
+                                                              std::string body)
         {
-            return doRequest(blue::http::HttpMethod::GET, url, timeout_ms, header, body);
+            auto res = co_await doRequest(blue::http::HttpMethod::GET, url, timeout_ms, header, body);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnectionPool::doPost(const std::string &url,
+        Task<std::shared_ptr<HttpResult>> HttpConnectionPool::doPost(std::string url,
                                                                uint64_t timeout_ms,
-                                                               const std::map<std::string, std::string> &header,
-                                                               const std::string &body)
+                                                               std::map<std::string, std::string> header,
+                                                               std::string body)
         {
-            return doRequest(blue::http::HttpMethod::POST, url, timeout_ms, header, body);
+            auto res = co_await doRequest(blue::http::HttpMethod::POST, url, timeout_ms, header, body);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnectionPool::doGet(blue::Url::UrlPtr url,
+        Task<std::shared_ptr<HttpResult>> HttpConnectionPool::doGet(blue::Url::UrlPtr url,
                                                               uint64_t timeout_ms,
-                                                              const std::map<std::string, std::string> &header,
-                                                              const std::string &body)
+                                                              std::map<std::string, std::string> header,
+                                                              std::string body)
         {
             std::stringstream ss;
             ss << url->getPath()
@@ -437,14 +452,14 @@ namespace blue
                << url->getQuery()
                << (url->getFragment().empty() ? "" : "#")
                << url->getFragment();
-            m_scheme = url->getScheme();
-            return doGet(ss.str(), timeout_ms, header, body);
+            auto res = co_await doGet(ss.str(), timeout_ms, header, body);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnectionPool::doPost(blue::Url::UrlPtr url,
+        Task<std::shared_ptr<HttpResult>> HttpConnectionPool::doPost(blue::Url::UrlPtr url,
                                                                uint64_t timeout_ms,
-                                                               const std::map<std::string, std::string> &header,
-                                                               const std::string &body)
+                                                               std::map<std::string, std::string> header,
+                                                               std::string body)
         {
             std::stringstream ss;
             ss << url->getPath()
@@ -452,15 +467,15 @@ namespace blue
                << url->getQuery()
                << (url->getFragment().empty() ? "" : "#")
                << url->getFragment();
-            m_scheme = url->getScheme();
-            return doPost(ss.str(), timeout_ms, header, body);
+            auto res = co_await doPost(ss.str(), timeout_ms, header, body);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnectionPool::doRequest(http::HttpMethod method,
-                                                                  const std::string &url,
+        Task<std::shared_ptr<HttpResult>> HttpConnectionPool::doRequest(http::HttpMethod method,
+                                                                  std::string url,
                                                                   uint64_t timeout_ms,
-                                                                  const std::map<std::string, std::string> &header,
-                                                                  const std::string &body)
+                                                                  std::map<std::string, std::string> header,
+                                                                  std::string body)
         {
             auto request = std::make_shared<HttpRequest>();
             request->setMethod(method);
@@ -492,14 +507,15 @@ namespace blue
                 }
             }
             request->setBody(body);
-            return doRequest(request, timeout_ms);
+            auto res = co_await doRequest(request, timeout_ms);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnectionPool::doRequest(http::HttpMethod method,
+        Task<std::shared_ptr<HttpResult>> HttpConnectionPool::doRequest(http::HttpMethod method,
                                                                   blue::Url::UrlPtr url,
                                                                   uint64_t timeout_ms,
-                                                                  const std::map<std::string, std::string> &header,
-                                                                  const std::string &body)
+                                                                  std::map<std::string, std::string> header,
+                                                                  std::string body)
         {
             std::stringstream ss;
             ss << url->getPath()
@@ -507,71 +523,72 @@ namespace blue
                << url->getQuery()
                << (url->getFragment().empty() ? "" : "#")
                << url->getFragment();
-            m_scheme = url->getScheme();
-            return doRequest(method, ss.str(), timeout_ms, header, body);
+            auto res = co_await doRequest(method, ss.str(), timeout_ms, header, body);
+            co_return res;
         }
 
-        std::shared_ptr<HttpResult> HttpConnectionPool::doRequest(http::HttpRequest::HttpRequestPtr req,
+        Task<std::shared_ptr<HttpResult>> HttpConnectionPool::doRequest(http::HttpRequest::HttpRequestPtr req,
                                                                   uint64_t timeout_ms)
         {
-            auto conn = getConnnection();
+            auto conn = co_await getConnnection();
             if (!conn)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::POOL_GET_CONNECTION_FAILED),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::POOL_GET_CONNECTION_FAILED),
                                                     nullptr,
                                                     "pool host : " + m_host + ":" + std::to_string(m_port));
             }
             auto sock = conn->getSock();
             if (!sock)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::POOL_INVALID_CONNECTION),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::POOL_INVALID_CONNECTION),
                                                     nullptr,
                                                     "invalid connection, host : " + m_host + ":" + std::to_string(m_port));
             }
             sock->setRecvTimeout(timeout_ms);
-            int rt = conn->sendRequest(req);
+            int rt = co_await conn->sendRequest(req);
             if (rt == 0)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::SEND_CLOSE_BY_PEER),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::SEND_CLOSE_BY_PEER),
                                                     nullptr,
                                                     "send request closed by peer : " + sock->getRemoteAddress()->toString());
             }
             if (rt < 0)
             {
-                return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::SEND_SOCKET_ERROR),
+                co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::SEND_SOCKET_ERROR),
                                                     nullptr,
                                                     "send socket, errno : " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
             }
             uint64_t nowtimems = blue::GetCurrentMs();
-            auto [status, response] = conn->recvResponse();
+            auto [status, response] = co_await conn->recvResponse();
             uint64_t backtimes = blue::GetCurrentMs();
             if (!response)
             {
                 if (nowtimems + timeout_ms < backtimes)
                 {
-                    return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::TIMEOUT),
+                    co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::TIMEOUT),
                                                         nullptr,
                                                         "recvresponse timeout, addr : " + sock->getRemoteAddress()->toString() + " timeout_ms : " + std::to_string(timeout_ms));
                 }
-                return std::make_shared<HttpResult>((int)(status),
+                co_return std::make_shared<HttpResult>((int)(status),
                                                     nullptr,
                                                     "recvresponse error, errno : " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
             }
-            return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::OK), response, "ok");
+            co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::OK), response, "ok");
         }
 
-        void HttpConnectionPool::ReleasePtr(HttpConnection *conn, HttpConnectionPool *pool)
+        Task<void> HttpConnectionPool::ReleasePtr(HttpConnection *conn, HttpConnectionPool *pool)
         {
             // BLUE_LOG_INFO(g_logger) << "ReleasePtr: isConnected=" << conn->isConnected()
             //                         << " createTime+alive=" << (conn->m_createTime + pool->m_maxAliveTime <= blue::GetCurrentMs())
             //                         << " requestSize=" << conn->m_requestSize << " maxRequest=" << pool->m_maxRequest;
+            BLUE_LOG_WARN(g_logger) << "ReleasePtr 开始";
             conn->m_requestSize++;
             conn->m_isBusy.store(false, std::memory_order_release);
             if (!conn->isConnected() || conn->m_createTime + pool->m_maxAliveTime <= blue::GetCurrentMs() || conn->m_requestSize >= pool->m_maxRequest)
             {
                 delete conn;
                 pool->m_total.fetch_sub(1, std::memory_order_acq_rel);
-                return;
+                co_return;
             }
             auto sock = conn->getSock();
             if (sock && sock->isConnected())
@@ -581,9 +598,15 @@ namespace blue
                 // 循环读取并丢弃所有残留数据
                 constexpr int kBUfferSize = 4096 * 2;
                 auto buf = std::make_unique<char[]>(kBUfferSize);
-                while (recv(fd, buf.get(), kBUfferSize, 0) > 0)
-                {
-                }
+                // auto res = co_await Recv(fd, buf.get(), kBUfferSize, 0);
+                // while (res > 0)
+                // {
+                //     res = co_await Recv(fd, buf.get(), kBUfferSize, 0);
+                // }
+                int flags = fcntl(fd, F_GETFL, 0);
+                fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+                while (::recv(fd, buf.get(), sizeof(buf), 0) > 0) {}
+                fcntl(fd, F_SETFL, flags);  // 恢复
             }
             MmutexType::lockSco lock(pool->m_mutex);
             if (pool->m_pool.size() < pool->m_maxSize)

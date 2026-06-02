@@ -7,6 +7,7 @@
 #include "blue/url.h"
 #include "http.h"
 #include "httpParser.h"
+#include "blue/task.h"
 
 // http connnection
 namespace blue
@@ -67,10 +68,10 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            static std::shared_ptr<HttpResult> DoGet(const std::string &url,
+            static Task<std::shared_ptr<HttpResult>> DoGet(std::string url,
                                                      uint64_t timeout,
-                                                     const std::map<std::string, std::string> &header = {},
-                                                     const std::string &body = "");
+                                                     std::map<std::string, std::string> header = {},
+                                                     std::string body = "");
 
             /**
              * @brief post 请求
@@ -79,10 +80,10 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            static std::shared_ptr<HttpResult> DoPost(const std::string &url,
+            static Task<std::shared_ptr<HttpResult>> DoPost(std::string url,
                                                       uint64_t timeout,
-                                                      const std::map<std::string, std::string> &header = {},
-                                                      const std::string &body = "");
+                                                      std::map<std::string, std::string> header = {},
+                                                      std::string body = "");
 
             /**
              * @brief get 请求
@@ -91,10 +92,10 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            static std::shared_ptr<HttpResult> DoGet(blue::Url::UrlPtr url,
+            static Task<std::shared_ptr<HttpResult>> DoGet(blue::Url::UrlPtr url,
                                                      uint64_t timeout,
-                                                     const std::map<std::string, std::string> &header = {},
-                                                     const std::string &body = "");
+                                                     std::map<std::string, std::string> header = {},
+                                                     std::string body = "");
 
             /**
              * @brief post 请求
@@ -103,10 +104,10 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            static std::shared_ptr<HttpResult> DoPost(blue::Url::UrlPtr url,
+            static Task<std::shared_ptr<HttpResult>> DoPost(blue::Url::UrlPtr url,
                                                       uint64_t timeout,
-                                                      const std::map<std::string, std::string> &header = {},
-                                                      const std::string &body = "");
+                                                      std::map<std::string, std::string> header = {},
+                                                      std::string body = "");
             /**
              * @brief request请求
              * @param mothod 方法
@@ -115,11 +116,11 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            static std::shared_ptr<HttpResult> DoRequest(http::HttpMethod method,
-                                                         const std::string &url,
+            static Task<std::shared_ptr<HttpResult>> DoRequest(http::HttpMethod method,
+                                                         std::string url,
                                                          uint64_t timeout,
-                                                         const std::map<std::string, std::string> &header = {},
-                                                         const std::string &body = "");
+                                                         std::map<std::string, std::string> header = {},
+                                                         std::string body = "");
 
             /**
              * @brief request请求
@@ -129,11 +130,11 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            static std::shared_ptr<HttpResult> DoRequest(http::HttpMethod method,
+            static Task<std::shared_ptr<HttpResult>> DoRequest(http::HttpMethod method,
                                                          blue::Url::UrlPtr url,
                                                          uint64_t timeout,
-                                                         const std::map<std::string, std::string> &header = {},
-                                                         const std::string &body = "");
+                                                         std::map<std::string, std::string> header = {},
+                                                         std::string body = "");
 
             /**
              * @brief 将request请求发到指定的url并带有超时时间
@@ -141,7 +142,7 @@ namespace blue
              * @param url 指定url智能指针
              * @param timeout 超时时长(ms)
              */
-            static std::shared_ptr<HttpResult> DoRequest(http::HttpRequest::HttpRequestPtr req,
+            static Task<std::shared_ptr<HttpResult>> DoRequest(http::HttpRequest::HttpRequestPtr req,
                                                          blue::Url::UrlPtr url,
                                                          uint64_t timeout);
             /**
@@ -161,16 +162,23 @@ namespace blue
              * @return 返回一对值(recvStatus,httpResponsePtr)
              * @note recvStatus返回有 ok,error,close(客户端主动关闭连接)
              */
-            ReturnType recvResponse();
+            Task<ReturnType> recvResponse();
 
             /**
              * @brief 对服务器端发送请求
              * @param request 要发送的请求对象智能指针
              */
-            int sendRequest(HttpRequest::HttpRequestPtr request);
+            Task<int> sendRequest(HttpRequest::HttpRequestPtr request);
+
+            /**
+             * @brief 设置是否开启流式输出
+             * @param button true 表示开始
+             */
+            void setStreaming(bool button) { m_isStreaming = button; }
 
         private:
             bool m_isFinish = false;
+            bool m_isStreaming = false;
             SocketStream::SocketStreamPtr m_stream;
             std::atomic<bool> m_isBusy = {false};
             uint64_t m_requestSize = 0;
@@ -201,13 +209,14 @@ namespace blue
                                uint16_t port,
                                uint64_t aliveTime,
                                uint32_t maxRequest,
+                               const std::string& scheme = "http",
                                uint32_t maxSize = s_httpconnpool_mxsize);
 
             /**
              * @brief 获取连接实例指针
              * @return httpconnectionPtr
              */
-            HttpConnection::HttpConnectionPtr getConnnection();
+            Task<HttpConnection::HttpConnectionPtr> getConnnection();
 
             /**
              * @brief get 请求
@@ -216,10 +225,10 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            std::shared_ptr<HttpResult> doGet(const std::string &url,
+            Task<std::shared_ptr<HttpResult>> doGet(std::string url,
                                               uint64_t timeout,
-                                              const std::map<std::string, std::string> &header = {},
-                                              const std::string &body = "");
+                                              std::map<std::string, std::string> header = {},
+                                              std::string body = "");
 
             /**
              * @brief post 请求
@@ -228,10 +237,10 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            std::shared_ptr<HttpResult> doPost(const std::string &url,
+            Task<std::shared_ptr<HttpResult>> doPost(std::string url,
                                                uint64_t timeout,
-                                               const std::map<std::string, std::string> &header = {},
-                                               const std::string &body = "");
+                                               std::map<std::string, std::string> header = {},
+                                               std::string body = "");
 
             /**
              * @brief get 请求
@@ -240,10 +249,10 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            std::shared_ptr<HttpResult> doGet(blue::Url::UrlPtr url,
+            Task<std::shared_ptr<HttpResult>> doGet(blue::Url::UrlPtr url,
                                               uint64_t timeout,
-                                              const std::map<std::string, std::string> &header = {},
-                                              const std::string &body = "");
+                                              std::map<std::string, std::string> header = {},
+                                              std::string body = "");
 
             /**
              * @brief post 请求
@@ -252,10 +261,10 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            std::shared_ptr<HttpResult> doPost(blue::Url::UrlPtr url,
+            Task<std::shared_ptr<HttpResult>> doPost(blue::Url::UrlPtr url,
                                                uint64_t timeout,
-                                               const std::map<std::string, std::string> &header = {},
-                                               const std::string &body = "");
+                                               std::map<std::string, std::string> header = {},
+                                               std::string body = "");
             /**
              * @brief request请求
              * @param mothod 方法
@@ -264,11 +273,11 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            std::shared_ptr<HttpResult> doRequest(http::HttpMethod method,
-                                                  const std::string &url,
+            Task<std::shared_ptr<HttpResult>> doRequest(http::HttpMethod method,
+                                                  std::string url,
                                                   uint64_t timeout,
-                                                  const std::map<std::string, std::string> &header = {},
-                                                  const std::string &body = "");
+                                                  std::map<std::string, std::string> header = {},
+                                                  std::string body = "");
 
             /**
              * @brief request请求
@@ -278,18 +287,18 @@ namespace blue
              * @param header 头部key-val
              * @param body body
              */
-            std::shared_ptr<HttpResult> doRequest(http::HttpMethod method,
+            Task<std::shared_ptr<HttpResult>> doRequest(http::HttpMethod method,
                                                   blue::Url::UrlPtr url,
                                                   uint64_t timeout,
-                                                  const std::map<std::string, std::string> &header = {},
-                                                  const std::string &body = "");
+                                                  std::map<std::string, std::string> header = {},
+                                                  std::string body = "");
 
             /**
              * @brief 发送request请求
              * @param req 请求智能指针
              * @param timeout 超时时长(ms)
              */
-            std::shared_ptr<HttpResult> doRequest(http::HttpRequest::HttpRequestPtr req,
+            Task<std::shared_ptr<HttpResult>> doRequest(http::HttpRequest::HttpRequestPtr req,
                                                   uint64_t timeout);
 
             /**
@@ -303,7 +312,7 @@ namespace blue
             uint32_t getTotalCounts() const { return m_total.load(std::memory_order_acquire); }
 
         private:
-            static void ReleasePtr(HttpConnection *conn, HttpConnectionPool *pool);
+            static Task<void> ReleasePtr(HttpConnection *conn, HttpConnectionPool *pool);
 
         private:
             mutable MmutexType m_mutex;          // 互斥变量

@@ -1,6 +1,7 @@
 #include <regex>
 #include <chrono>
 #include <fcntl.h>
+#include "blue/asyncio.h"
 #include "blue/log.h"
 #include "blue/config.h"
 #include "blue/dbmanager.h"
@@ -601,7 +602,7 @@ namespace blue
         }
 
         template <typename T>
-        void HttpServer<T>::handleClient(MSocket::MSocketPtr sock)
+        Task<void> HttpServer<T>::handleClient(MSocket::MSocketPtr sock)
         {
             auto remoteAddress = std::dynamic_pointer_cast<IPAddress>(sock->getRemoteAddress());
             auto localAddress = std::dynamic_pointer_cast<IPAddress>(sock->getLocalAddress());
@@ -613,7 +614,7 @@ namespace blue
 
             // ===== 检测 TLS，如果是就替换为 SSLSocket =====
             char first_byte;
-            int peek_ret = ::recv(sock->getSocketfd(), &first_byte, 1, MSG_PEEK | MSG_DONTWAIT);
+            int peek_ret = co_await Recv(sock->getSocketfd(), &first_byte, 1, MSG_PEEK | MSG_DONTWAIT);
             
             std::shared_ptr<HttpSession> session;
             if (peek_ret == 1 && first_byte == 0x16) 
@@ -624,13 +625,14 @@ namespace blue
                 {
                     BLUE_LOG_ERROR(g_logger) << "SSLSocket creation failed (cert not found?)";
                     sock->close();
-                    return;
+                    co_return;
                 }
-                if (!ssl_sock->handshake()) 
+                bool tem = co_await ssl_sock->handshake();
+                if (!tem) 
                 {
                     BLUE_LOG_ERROR(g_logger) << "SSL handshake failed";
                     sock->close();
-                    return;
+                    co_return;
                 }
                 session = std::make_shared<HttpSession>(ssl_sock);
             } else 
@@ -644,12 +646,12 @@ namespace blue
             {
                 // 若双方有一个是长连接就长连接
                 // 错误由recvRequest处理
-                auto [recvstatus, requestPtr] = session->recvRequest();
+                auto [recvstatus, requestPtr] = co_await session->recvRequest();
                 if (recvstatus == http::HttpSession::RecvStatus::ERROR ||
                     recvstatus == http::HttpSession::RecvStatus::CLOSE)
                 {
                     session->close();
-                    return;
+                    co_return;
                 }
                 auto responsePtr = std::make_shared<HttpResponse>(requestPtr->getVersion(), (requestPtr->isKeepAlive() || temkeepAlive));
                 temkeepAlive = (requestPtr->isKeepAlive() || temkeepAlive);
@@ -663,8 +665,8 @@ namespace blue
                 if (requestPtr->getMethod() == HttpMethod::CONNECT)
                 {
                     BLUE_LOG_INFO(g_logger) << "CONNECT: " << requestPtr->getPath();
-                    _handleConnect(sock, requestPtr);
-                    return;  // CONNECT
+                    co_await _handleConnect(sock, requestPtr);
+                    co_return;  // CONNECT
                 }
 
                 if (path == "/proxy.pac")
@@ -712,7 +714,7 @@ namespace blue
                             if (!q.empty()) targeturl += "?" + q;
                         }
                     }
-                    _forwardRequest(requestPtr, responsePtr, targeturl, false);
+                    co_await _forwardRequest(requestPtr, responsePtr, targeturl, false);
                 }
 
                 // ===== 正向代理 =====
@@ -736,8 +738,8 @@ namespace blue
                             std::string query = requestPtr->getQuery();
                             if (!query.empty()) targeturl += "?" + query;
                         }
-                        _handleWebSocket(sock, requestPtr, responsePtr, targeturl);
-                        return;
+                        co_await _handleWebSocket(sock, requestPtr, responsePtr, targeturl);
+                        co_return;
                     }
                     // 正常正向代理
                     if (path.find("http://") == 0 || path.find("https://") == 0)
@@ -750,7 +752,7 @@ namespace blue
                         std::string query = requestPtr->getQuery();
                         if (!query.empty()) targeturl += "?" + query;
                     }
-                    _forwardRequest(requestPtr, responsePtr, targeturl, true);
+                    co_await _forwardRequest(requestPtr, responsePtr, targeturl, true);
                 }
 
                 // ===== 反向代理（路径前缀模式）=====
@@ -788,7 +790,7 @@ namespace blue
                                 if (!q.empty()) targeturl += "?" + q;
                             }
                         }
-                        _forwardRequest(requestPtr, responsePtr, targeturl, false);
+                        co_await _forwardRequest(requestPtr, responsePtr, targeturl, false);
                     }
                     else
                     {
@@ -808,7 +810,7 @@ namespace blue
                 {
                     responsePtr->setHeader("Content-Length", std::to_string(responsePtr->getBody().size()));
                 }
-                session->sendResponse(responsePtr, requestPtr);
+                co_await session->sendResponse(responsePtr, requestPtr);
                 BLUE_LOG_INFO(g_logger) << sock->getRemoteAddress()->toString()
                                         << " \"" << http::HttpMethodToChars(requestPtr->getMethod())
                                         << " " << requestPtr->getPath()
@@ -818,7 +820,7 @@ namespace blue
                                         << requestPtr->getHeader("User-Agent");
             } while (temkeepAlive);
             session->close();
-            return;
+            co_return;
         }
 
         template <typename T>
@@ -840,9 +842,9 @@ namespace blue
         }
 
         template <typename T>
-        void HttpServer<T>::_forwardRequest(HttpRequest::HttpRequestPtr request,
+        Task<void> HttpServer<T>::_forwardRequest(HttpRequest::HttpRequestPtr request,
                                             HttpResponse::HttpResponsePtr response, 
-                                            const std::string &targeturl,
+                                            std::string targeturl,
                                             bool isForwardProxy)
         {
             // ===== Redis 缓存（正向代理 GET 请求）=====
@@ -859,7 +861,7 @@ namespace blue
                     response->setHeader("Content-Length", std::to_string(cached.size()));
                     response->setHeader("X-Cache", "HIT");
                     response->setStatus(blue::http::HttpStatus::OK);
-                    return;
+                    co_return;
                 }
             }
             // ===== Redis 缓存（反向代理 GET 请求）=====
@@ -874,7 +876,7 @@ namespace blue
                     response->setHeader("Content-Length",std::to_string(cached.size()));
                     response->setHeader("X-Cache","HIT");
                     response->setStatus(blue::http::HttpStatus::OK);
-                    return;
+                    co_return;
                 }
             }
             // 对于同一个客户端请求进行限流
@@ -891,7 +893,7 @@ namespace blue
                 {
                     response->setStatus(blue::http::HttpStatus::TOO_MANY_REQUESTS);
                     response->setBody("Rate limit exceeded");
-                    return;
+                    co_return;
                 }
             }
             // 设置下游(client)ip(remoteip)
@@ -907,7 +909,7 @@ namespace blue
             {
                 response->setStatus(blue::http::HttpStatus::BAD_REQUEST);
                 response->setBody("invalid target url");
-                return;
+                co_return;
             }
 
             // 代理前缀
@@ -926,7 +928,7 @@ namespace blue
                 if (it == s_pools.end())
                 {
                     pool = std::make_shared<HttpConnectionPool>(
-                        UrlPtr->getHost(), "", UrlPtr->getPort(), 60000, 100, 10);
+                        UrlPtr->getHost(), "", UrlPtr->getPort(), 60000, 100,UrlPtr->getScheme(), 10);
                     s_pools[poolKey] = pool;
                 }
                 else
@@ -938,7 +940,7 @@ namespace blue
             // 转发
             auto now = std::chrono::steady_clock::now();
             // 用连接池发请求（复用连接）
-            auto result = pool->doRequest(request->getMethod(), UrlPtr, 5000, headers, request->getBody());
+            auto result = co_await pool->doRequest(request->getMethod(), UrlPtr, 5000, headers, request->getBody());
             auto end = std::chrono::steady_clock::now();
             int duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - now).count();
 
@@ -988,7 +990,7 @@ namespace blue
                         s_redismanager_ptr->set(cache_key, result->response->getBody(), s_cache_expire);
                         response->setHeader("X-Cache", "MISS");
                     }
-                    return;
+                    co_return;
                 }
 
                 // ===== 反向代理：重写 HTML/CSS =====
@@ -1010,7 +1012,7 @@ namespace blue
                             {
                                 s_redismanager_ptr->set(cache_key,err,s_cache_expire);
                             }
-                            return;
+                            co_return;
                         }
 
                         // 把重定向 URL 也改成代理模式
@@ -1023,7 +1025,7 @@ namespace blue
                         {
                             s_redismanager_ptr->set(cache_key,"",s_cache_expire);
                         }
-                        return;
+                        co_return;
                     }
                 }
 
@@ -1073,6 +1075,7 @@ namespace blue
                 response->setStatus(blue::http::HttpStatus::BAD_GATEWAY);
                 response->setBody("forward failed: " + result->error);
             }
+            co_return;
         }
 
         template <typename T>
@@ -1180,7 +1183,7 @@ namespace blue
                     });
                     </script>
                     </h2>
-                    <div class="stat"><div class="val">)" + std::to_string(blue::Fiber::TotalFibers()) + R"(</div><div class="label">Fibers</div></div>
+                    <div class="stat"><div class="val">)" + std::to_string(Scheduler::GetThis()->GetThreadCount()) + R"(</div><div class="label">ThreadCounts</div></div>
                     <div class="stat"><div class="val">)" + std::to_string(s_pools.size()) + R"(</div><div class="label">Connection Pools</div></div>
                     </div>
                     </body></html>)";
@@ -1287,7 +1290,7 @@ namespace blue
         }
 
         template <typename T>
-        void HttpServer<T>::_handleConnect(MSocket::MSocketPtr sock,
+        Task<void> HttpServer<T>::_handleConnect(MSocket::MSocketPtr sock,
                                             HttpRequest::HttpRequestPtr request)
         {
             // CONNECT 的 path 是 host:port
@@ -1311,11 +1314,18 @@ namespace blue
 
             // 连接目标站
             auto addr = blue::Address::LookupAnyIpAddress(host);
-            if (!addr) return;
+            if (!addr)
+            {
+                co_return;
+            }
             addr->setPort(port);
             
             auto remote_sock = blue::MSocket::CreateTcp(addr);
-            if (!remote_sock->connect(addr)) return;
+            bool tem = co_await remote_sock->connect(addr);
+            if (!tem)
+            {
+                co_return;
+            }
             
             int client_fd = sock->getSocketfd();
             int remote_fd = remote_sock->getSocketfd();
@@ -1323,122 +1333,75 @@ namespace blue
 
             // 返回 200 给浏览器，表示隧道建立
             std::string ok = "HTTP/1.1 200 Connection Established\r\n\r\n";
-            ::send(client_fd, ok.c_str(), ok.size(), 0);
+            co_await Send(client_fd, ok.c_str(), ok.size(), 0);
             BLUE_LOG_INFO(g_logger) << "CONNECT tunnel established";
             
             char buf[16384];
-            fd_set fds;
-            
-            while (true)
-            {
-                FD_ZERO(&fds);
-                FD_SET(client_fd, &fds);
-                FD_SET(remote_fd, &fds);
+    
+            while (true) {
+                // 客户端 → 远端
+                ssize_t n = co_await Recv(client_fd, buf, sizeof(buf), 0);
+                if (n <= 0) break;
+                ssize_t sent = co_await Send(remote_fd, buf, n, 0);
+                if (sent <= 0) break;
                 
-                int max_fd = std::max(client_fd, remote_fd);
-                struct timeval tv = {0, (long)s_select_timeout * 1000};
-                
-                int ret = select(max_fd + 1, &fds, nullptr, nullptr, &tv);
-                if (ret < 0)
-                {
-                    BLUE_LOG_WARN(g_logger) << "CONNECT select timeout or error: " << ret;
-                    break;
-                }
-                else if (ret == 0)
-                {
-                    blue::Fiber::YieldToHold();
-                }
-                else
-                {
-                    if (FD_ISSET(client_fd, &fds))
-                    {
-                        ssize_t n = ::recv(client_fd, buf, sizeof(buf), 0);
-                        if (n <= 0)
-                        {
-                            BLUE_LOG_INFO(g_logger) << "CONNECT client closed, n=" << n;
-                            break;
-                        }
-                        ssize_t sent = ::send(remote_fd, buf, n, 0);
-                        if (sent <= 0)
-                        {
-                            BLUE_LOG_INFO(g_logger) << "CONNECT remote send failed: " << sent 
-                                << " errno=" << errno << " " << strerror(errno);
-                            break;
-                        }
-                    }
-                    
-                    if (FD_ISSET(remote_fd, &fds))
-                    {
-                        ssize_t n = ::recv(remote_fd, buf, sizeof(buf), 0);
-                        if (n <= 0)
-                        {
-                            BLUE_LOG_INFO(g_logger) << "CONNECT remote closed, n=" << n;
-                            break;
-                        }
-                        ssize_t sent = ::send(client_fd, buf, n, 0);
-                        if (sent <= 0)
-                        {
-                            BLUE_LOG_INFO(g_logger) << "CONNECT client send failed: " << sent;
-                            break;
-                        }
-                    }
-                }
+                // 远端 → 客户端
+                n = co_await Recv(remote_fd, buf, sizeof(buf), 0);
+                if (n <= 0) break;
+                sent = co_await Send(client_fd, buf, n, 0);
+                if (sent <= 0) break;
             }
             
             remote_sock->close();
             BLUE_LOG_INFO(g_logger) << "CONNECT tunnel closed";
+            co_return;
         }
 
         template <typename T>
-        void HttpServer<T>::_handleWebSocket(MSocket::MSocketPtr sock, 
+        Task<void> HttpServer<T>::_handleWebSocket(MSocket::MSocketPtr sock, 
                             HttpRequest::HttpRequestPtr request, 
                             HttpResponse::HttpResponsePtr response, 
-                            const std::string &targeturl)
+                            std::string targeturl)
         {
             // 1. 连接目标站
             auto url = blue::Url::CreateUrl(targeturl);
             auto addr = url->createAddress();
             auto remote = blue::MSocket::CreateTcp(addr);
-            if (!remote->connect(addr)) return;
+            bool conn = co_await remote->connect(addr);
+            if (!conn)
+            {
+                co_return;
+            }
 
             // 2. 转发升级请求到目标站
             std::string req_str = request->toString();
-            remote->send(req_str.c_str(), req_str.size());
+            co_await remote->send(req_str.c_str(), req_str.size());
 
             // 3. 读取目标站的 101 响应
             char buf[4096];
-            ssize_t n = remote->recv(buf, sizeof(buf), 0);
+            ssize_t n = co_await remote->recv(buf, sizeof(buf), 0);
             
             // 4. 透传 101 给浏览器
-            ::send(sock->getSocketfd(), buf, n, 0);
+            co_await Send(sock->getSocketfd(), buf, n, 0);
 
             // 5. 双向透传 WebSocket 帧（和 CONNECT 隧道一样）
             int client_fd = sock->getSocketfd();
             int remote_fd = remote->getSocketfd();
 
-            fd_set fds;
-            while (true) {
-                FD_ZERO(&fds);
-                FD_SET(client_fd, &fds);
-                FD_SET(remote_fd, &fds);
-                struct timeval tv = {0, (long)(s_select_timeout * 1000)};
-                int ret = select(std::max(client_fd, remote_fd) + 1, &fds, nullptr, nullptr, &tv);
-                if (ret > 0) {
-                    if (FD_ISSET(client_fd, &fds)) {
-                        n = ::recv(client_fd, buf, sizeof(buf), 0);
-                        if (n <= 0) break;
-                        ::send(remote_fd, buf, n, 0);
-                    }
-                    if (FD_ISSET(remote_fd, &fds)) {
-                        n = ::recv(remote_fd, buf, sizeof(buf), 0);
-                        if (n <= 0) break;
-                        ::send(client_fd, buf, n, 0);
-                    }
-                } else if (ret == 0) {
-                    blue::Fiber::YieldToHold();
-                } else break;
+            while (true) 
+            {
+                // 客户端 → 远端
+                ssize_t n = co_await Recv(client_fd, buf, sizeof(buf), 0);
+                if (n <= 0) break;
+                co_await Send(remote_fd, buf, n, 0);
+                
+                // 远端 → 客户端
+                n = co_await Recv(remote_fd, buf, sizeof(buf), 0);
+                if (n <= 0) break;
+                co_await Send(client_fd, buf, n, 0);
             }
             remote->close();
+            co_return;
         }
 
 
@@ -1447,15 +1410,18 @@ namespace blue
         {
             for (auto &[key,val] : request->getHeaders())
             {
-                // 跳过 Host（让 DoRequest 自己设置）
                 if (strcasecmp(key.c_str(), "host") == 0)
+                {
                     continue;
-                // 跳过 Referer（指向 localhost，百度会拒绝）
+                }
                 if (strcasecmp(key.c_str(), "referer") == 0)
+                {
                     continue;
-                // 跳过 Sec-Fetch-* 头（导致跨域问题）
+                }
                 if (strncasecmp(key.c_str(), "sec-", 4) == 0)
+                {
                     continue;
+                }
                 headers[key] = val;
             }
         }
