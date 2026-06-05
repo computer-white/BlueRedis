@@ -271,6 +271,100 @@ namespace blue
          */
         Task<ssize_t> recvFrom(iovec *buf, size_t len, Address::AddressPtr src_addr, int flags = 0);
 
+        // 带有超时的
+        
+        /**
+         * @brief 接受一个客户端连接，返回封装好的 MSocket 对象
+         * @return 成功时返回一个复用当前 socket 协议族、类型、协议的新连接 MSocket 对象；
+         *         失败时返回 nullptr（通常可检查 errno）
+         * @note 带有超时的
+         */
+        Task<std::shared_ptr<MSocket>> acceptT(uint64_t ms = 0);
+
+        /**
+         * @brief 向已连接的远程主机发送数据（TCP/SCTP 等）
+         * @param buf 待发送数据的缓冲区
+         * @param len 待发送数据的字节数
+         * @param flags 发送标志位，如 MSG_DONTWAIT, MSG_NOSIGNAL 等，默认 0
+         * @return 成功时返回实际发送的字节数；失败时返回 -1 并设置 errno
+         * @note TCP 下发送成功仅表示数据进入内核缓冲区，不保证对方已收到
+         * @note 带有超时的
+         */
+        Task<ssize_t> sendT(const void *buf, size_t len, int flags = 0, uint64_t ms = 0);
+
+        /**
+         * @brief 以聚合 I/O 方式向已连接的远程主机发送数据
+         * @param bufs iovec 数组指针，每个元素指向一块独立缓冲区
+         * @param len iovec 数组的元素个数，即 bufs 中有几块缓冲区
+         * @param flags 发送标志位，默认 0
+         * @return 成功时返回实际发送的总字节数；失败返回 -1
+         * @note 带有超时的
+         */
+        Task<ssize_t> sendT(const iovec *bufs, size_t len, int flags = 0, uint64_t ms = 0);
+        /**
+         * @brief 向指定的目标地址发送数据（UDP 等非连接协议常用，也可用于连接后的 TCP）
+         * @param buf 待发送数据的缓冲区
+         * @param len 待发送数据的字节数
+         * @param dest_addr 目标地址对象，需包含 IP 和端口
+         * @param flags 发送标志位，默认 0
+         * @return 成功返回实际发送的字节数；失败返回 -1
+         * @note 带有超时的
+         */
+        Task<ssize_t> sendToT(const void *buf, size_t len, Address::AddressPtr dest_addr, int flags = 0, uint64_t ms = 0);
+
+        /**
+         * @brief 以聚合 I/O 方式向指定的目标地址发送数据
+         * @param bufs iovec 数组指针
+         * @param len iovec 数组的元素个数
+         * @param dest_addr 目标地址对象
+         * @param flags 发送标志位，默认 0
+         * @return 成功返回实际发送的总字节数；失败返回 -1
+         * @note 带有超时的
+         */
+        Task<ssize_t> sendToT(const iovec *bufs, size_t len, Address::AddressPtr dest_addr, int flags = 0, uint64_t ms = 0);
+
+        /**
+         * @brief 从已连接的远程主机接收数据
+         * @param buf 接收缓冲区指针
+         * @param len 缓冲区最多能容纳的字节数
+         * @param flags 接收标志位，如 MSG_DONTWAIT, MSG_PEEK 等，默认 0
+         * @return 成功时返回实际读取的字节数；对方已关闭连接时返回 0；失败返回 -1
+         * @note 带有超时的
+         */
+        Task<ssize_t> recvT(void *buf, size_t len, int flags = 0, uint64_t ms = 0);
+
+        /**
+         * @brief 以聚合 I/O 方式从已连接的远程主机接收数据到多块缓冲区
+         * @param buf iovec 数组指针，用于存放接收数据
+         * @param len iovec 数组的元素个数
+         * @param flags 接收标志位，默认 0
+         * @return 成功返回读取的总字节数；对方关闭连接返回 0；失败返回 -1
+         * @note 带有超时的
+         */
+        Task<ssize_t> recvT(iovec *buf, size_t len, int flags = 0, uint64_t ms = 0);
+
+        /**
+         * @brief 从远程主机接收数据并获取数据来源地址
+         * @param buf 接收缓冲区指针
+         * @param len 缓冲区最大长度
+         * @param src_addr [输入输出] 传入期望协议族的地址对象（如 IPv4），函数返回时将被填充为数据发送方的地址
+         * @param flags 接收标志位，默认 0
+         * @return 成功返回读取的字节数；失败返回 -1
+         * @note 带有超时的
+         */
+        Task<ssize_t> recvFromT(void *buf, size_t len, Address::AddressPtr src_addr, int flags = 0, uint64_t ms = 0);
+
+        /**
+         * @brief 以聚合 I/O 方式从远程主机接收数据并获取来源地址
+         * @param buf iovec 数组指针
+         * @param len iovec 数组元素个数
+         * @param src_addr [输入输出] 传入期望协议族的地址对象（如 IPv4），函数返回时将被填充为数据发送方的地址
+         * @param flags 接收标志位，默认 0
+         * @return 成功返回读取的总字节数；失败返回 -1
+         * @note 带有超时的
+         */
+        Task<ssize_t> recvFromT(iovec *buf, size_t len, Address::AddressPtr src_addr, int flags = 0, uint64_t ms = 0);
+        
         /**
          * @brief 获取远程主机地址
          * @return 返回远程主机地址

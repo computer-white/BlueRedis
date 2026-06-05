@@ -275,4 +275,9 @@ namespace blue
     {
         t_Scheduler = t;
     }
+
+    void schedule_coroutine(std::coroutine_handle<> h) 
+    {
+        Scheduler::GetThis()->schedule(h);
+    }   
 }

@@ -65,7 +65,7 @@ namespace blue
          * @return 成功返回true
          * @note 取消socket上绑定的事件并关闭socket
          */
-        virtual bool stop();
+        virtual Task<bool> stop();
 
         /**
          * @brief 获取receive超时

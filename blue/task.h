@@ -5,6 +5,7 @@
 
 namespace blue
 {
+    void schedule_coroutine(std::coroutine_handle<> h);
     template <typename T = void>
     struct Task;
 
@@ -163,12 +164,12 @@ namespace blue
         /**
          * @brief 获取类型化句柄（不转移所有权）
          */
-        HandleType getHandle() noexcept { return handle; }
+        HandleType getHandle() const noexcept { return handle; }
 
         /**
          * @brief 获取无类型句柄（用于跨类型传递）
          */
-        std::coroutine_handle<> getHandleNoType() noexcept { return handle; }
+        std::coroutine_handle<> getHandleNoType() const noexcept { return handle; }
 
         /**
          * @brief 立即销毁协程帧（谨慎使用，需确保协程已完成）
@@ -195,17 +196,29 @@ namespace blue
          */
         bool await_ready() const noexcept { return !handle || handle.done(); }
 
-        /**
-         * @brief 挂起当前协程，设置父协程关系，启动子协程
-         * @param call 父协程句柄
-         */
-        void await_suspend(std::coroutine_handle<> call) const noexcept
+        // /**
+        //  * @brief 挂起当前协程，设置父协程关系，启动子协程
+        //  * @param call 父协程句柄
+        //  */
+        // void await_suspend(std::coroutine_handle<> call) const noexcept
+        // {
+        //     if (handle && !handle.done())
+        //     {
+        //         handle.promise().fa = call; // 记录父协程
+        //         handle.resume();            // 启动子协程
+        //         // printf("schedule coroutine %p, parent %p\n", handle.address(), call.address());
+        //         // schedule_coroutine(getHandleNoType());
+        //     }
+        // }
+
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> call) const noexcept
         {
             if (handle && !handle.done())
             {
-                handle.promise().fa = call; // 记录父协程
-                handle.resume();            // 启动子协程
+                handle.promise().fa = call;
+                return handle;
             }
+            return std::noop_coroutine();
         }
 
         /**
@@ -309,9 +322,9 @@ namespace blue
             }
         }
 
-        HandleType getHandle() noexcept { return handle; }
+        HandleType getHandle() const noexcept { return handle; }
 
-        std::coroutine_handle<> getHandleNoType() noexcept { return handle; }
+        std::coroutine_handle<> getHandleNoType() const noexcept { return handle; }
 
         void destroy() { destroySafe(); }
 
@@ -326,13 +339,25 @@ namespace blue
 
         bool await_ready() const noexcept { return !handle || handle.done(); }
 
-        void await_suspend(std::coroutine_handle<> call) const noexcept
+        // void await_suspend(std::coroutine_handle<> call) const noexcept
+        // {
+        //     if (handle && !handle.done())
+        //     {
+        //         handle.promise().fa = call;
+        //         handle.resume();
+        //         // printf("schedule coroutine %p, parent %p\n", handle.address(), call.address());
+        //         // schedule_coroutine(getHandleNoType());
+        //     }
+        // }
+
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> call) const noexcept
         {
             if (handle && !handle.done())
             {
                 handle.promise().fa = call;
-                handle.resume();
+                return handle;
             }
+            return std::noop_coroutine();
         }
 
         void await_resume() const

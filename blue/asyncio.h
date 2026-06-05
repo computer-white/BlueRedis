@@ -32,6 +32,7 @@ namespace blue
         bool has_timer = false;
         ssize_t ret = -1;
         Timer::TimerPtr timer;
+        bool is_timeout = false;
 
     public:
         AsyncIo(int f, OriginFunc fun, IOManager::Event event, Args... args)
@@ -78,32 +79,29 @@ namespace blue
             }
             if (has_timer)
             {
-                timer = iom->addTimer(timeout_ms, h, nullptr);
+                timer = iom->addTimer(timeout_ms, nullptr, [this, h] {
+                    is_timeout = true;
+                    h.resume();
+                });
             }
         }
         ssize_t await_resume()
         {
-            // errno == EAGIN 或 EWOULDBLOCK 再试一次
-            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-            {
-                ret = std::apply(func, std::tuple_cat(std::make_tuple(fd), io_args));
-            }
-            // 如果还是 EAGAIN，说明是定时器先触发没有经过epoll的唤醒（超时）
-            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-            {
-                IOManager::GetThis()->delEvent(fd, event);
-                BLUE_LOG_ERROR(xx::g_logger) << " Asyncio error, fd : " << fd
-                                             << " error : " << errno
-                                             << " strerrno : " << strerror(errno)
-                                             << event
-                                             << " event be canceled";
-                return 0; // 超时返回 0
-            }
-            // 到这里要么出错且不是EAGIN等,要么成功
             if (timer)
             {
                 timer->cancel();
                 timer = nullptr;
+            }
+            if (is_timeout)
+            {
+                IOManager::GetThis()->delEvent(fd, event);
+                errno = ETIMEDOUT;
+                return 0;
+            }
+            // errno == EAGIN 或 EWOULDBLOCK 再试一次
+            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            {
+                ret = std::apply(func, std::tuple_cat(std::make_tuple(fd), io_args));
             }
             return ret;
         }
@@ -176,7 +174,7 @@ namespace blue
     }
 
     // accept 超时
-    inline auto AcceptT(int sockfd, struct sockaddr *addr, socklen_t len, uint64_t ms = 0)
+    inline auto AcceptT(int sockfd, struct sockaddr *addr, socklen_t *len, uint64_t ms = 0)
     {
         return AsyncIo{sockfd, ::accept, IOManager::READ, with_timeout, ms, addr, len};
     }

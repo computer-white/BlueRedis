@@ -93,19 +93,15 @@ namespace blue
     Task<void> TcpServer<T>::startAccept(MSocket::MSocketPtr sock)
     {
         // 处在连接状态
-        auto self = this->shared_from_this();
         while (!m_isStop.load(std::memory_order_acquire))
         {
-            MSocket::MSocketPtr client = co_await sock->accept();
+            MSocket::MSocketPtr client = co_await sock->acceptT(500);
             if (client)
             {
                 BLUE_LOG_INFO(g_logger) << "accept new client, ptr=" << client.get() 
                             << " fd=" << client->getSocketfd();
                 client->setRecvTimeout(m_RecvTimeOut);
-                // auto task = self->handleClient(client);
-                // auto handle = task.getHandleNoType();
-                // m_worker->schedule(handle);
-                m_worker->schedule(self->handleClient(client));
+                m_worker->schedule(handleClient(client));
             }
             else
             {
@@ -119,7 +115,7 @@ namespace blue
                 
                 BLUE_LOG_ERROR(g_logger) << "tcp accept failed error : " << errno
                                         << " strerror : " << strerror(errno);
-                
+
                 co_await sleepFor(1);
             }
         }
@@ -143,19 +139,27 @@ namespace blue
     }
 
     template <typename T>
-    bool TcpServer<T>::stop()
+    Task<bool> TcpServer<T>::stop()
     {
+        // m_isStop.store(true,std::memory_order_release);
+        // auto self = this->shared_from_this();
+        // m_worker->schedule([s = self](){
+        //     for (auto& sock : s->m_socks)
+        //     {
+        //         sock->cancelAll();
+        //         sock->close();
+        //     }
+        //     s->m_socks.clear();
+        // });
+
         m_isStop.store(true,std::memory_order_release);
-        auto self = this->shared_from_this();
-        m_worker->schedule([s = self](){
-            for (auto& sock : s->m_socks)
-            {
-                sock->cancelAll();
-                sock->close();
-            }
-            s->m_socks.clear();
-        });
-        return true;
+        for (auto& sock : m_socks)
+        {
+            sock->cancelAll();
+            sock->close();
+        }
+        m_socks.clear();
+        co_return true;
     }
 
     template <typename T>

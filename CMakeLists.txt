@@ -130,6 +130,7 @@ set(LIB_SRC
     blue/scheduler.cpp
     blue/io_manager.cpp
     blue/timer.cpp
+    blue/resp_parser.cpp
     http/http.cpp
     http/httpconnection.cpp
     http/httpParser.cpp
@@ -285,6 +286,8 @@ add_newblue_test(test_httpconnection)
 add_newblue_test(test_benchmark)
 add_newblue_test(test_debug)
 add_newblue_test(test_asynclog)
+add_newblue_test(test_resp)
+add_newblue_test(test_commandHandler)
 
 # 打印构建信息
 message(STATUS "========================")

@@ -405,6 +405,169 @@ namespace blue
         co_return -1;
     }
 
+    Task<std::shared_ptr<MSocket>> MSocket::acceptT(uint64_t ms)
+    {
+        if (ms == 0)
+        {
+            auto res = co_await accept();
+            co_return res;
+        }
+        std::shared_ptr<MSocket> newsockfd =
+        std::make_shared<MSocket>(m_family, m_type, m_protocol);
+
+        int connfd = co_await AcceptT(m_sockfd, nullptr, nullptr, ms);
+        if (connfd == -1)
+        {
+            BLUE_LOG_ERROR(g_logger) << "::accpet(" << m_sockfd
+                                    << "),errno : " << errno << ",strerrno : "
+                                    << strerror(errno);
+            co_return nullptr;
+        }
+        if (connfd >= 0)
+        {
+            FdManagerPtr::GetInstance()->get(connfd,true);      // 没有了hook需要我们手动来设置
+        }
+        if (newsockfd->_init(connfd))
+        {
+            co_return newsockfd;
+        }
+        co_return nullptr;
+    }
+    Task<ssize_t> MSocket::sendT(const void *buf, size_t len, int flags, uint64_t ms)
+    {
+        if (ms == 0)
+        {
+            ssize_t ret = co_await send(buf, len, flags);
+            co_return ret;
+        }
+        if (isConnected())
+        {
+            ssize_t ret = co_await SendT(m_sockfd, buf, len, flags, ms);
+            co_return ret;
+        }
+        co_return -1;
+    }
+    Task<ssize_t> MSocket::sendT(const iovec *bufs, size_t len, int flags, uint64_t ms)
+    {
+        if (ms == 0)
+        {
+            ssize_t ret = co_await send(bufs, len, flags);
+            co_return ret;
+        }
+        if (isConnected())
+        {
+            struct msghdr msg;
+            memset(&msg, 0, sizeof(msg));
+            msg.msg_iov = (iovec *)bufs;
+            msg.msg_iovlen = len;
+            ssize_t ret = co_await SendmsgT(m_sockfd, &msg, flags, ms);
+            co_return ret;
+        }
+        co_return -1;
+    }
+    Task<ssize_t> MSocket::sendToT(const void *buf, size_t len, Address::AddressPtr dest_addr, int flags, uint64_t ms)
+    {
+        if (ms == 0)
+        {
+            ssize_t ret = co_await sendTo(buf,len,dest_addr,flags);
+            co_return ret;
+        }
+        if (isConnected())
+        {
+            ssize_t ret = co_await SendtoT(m_sockfd, buf, len, flags, 
+                                dest_addr->getAddr(), dest_addr->getAddrLen(),ms);
+            co_return ret;
+        }
+        co_return -1;
+    }
+    Task<ssize_t> MSocket::sendToT(const iovec *bufs, size_t len, Address::AddressPtr dest_addr, int flags, uint64_t ms)
+    {
+        if (ms == 0)
+        {
+            ssize_t ret = co_await sendTo(bufs,len,dest_addr,flags);
+            co_return ret;
+        }
+        if (isConnected())
+        {
+            struct msghdr msg;
+            memset(&msg, 0, sizeof(msg));
+            msg.msg_iov = (iovec *)bufs;
+            msg.msg_iovlen = len;
+            msg.msg_name = dest_addr->getAddr();
+            msg.msg_namelen = dest_addr->getAddrLen();
+            ssize_t ret = co_await SendmsgT(m_sockfd, &msg, flags,ms);
+            co_return ret;
+        }
+        co_return -1;
+    }
+    Task<ssize_t> MSocket::recvT(void *buf, size_t len, int flags, uint64_t ms)
+    {
+        if (ms == 0)
+        {
+            ssize_t ret = co_await recv(buf, len, flags);
+            co_return ret;
+        }
+        if (isConnected())
+        {
+            ssize_t ret = co_await RecvT(m_sockfd, buf, len, flags, ms);
+            co_return ret;
+        }
+        co_return -1;
+    }
+    Task<ssize_t> MSocket::recvT(iovec *buf, size_t len, int flags, uint64_t ms)
+    {
+        if (ms == 0)
+        {
+            ssize_t ret = co_await recv(buf,len,flags);
+            co_return ret;
+        }
+        if (isConnected())
+        {
+            struct msghdr msg;
+            memset(&msg, 0, sizeof(msg));
+            msg.msg_iov = (iovec *)buf;
+            msg.msg_iovlen = len;
+            ssize_t ret = co_await RecvmsgT(m_sockfd, &msg, flags,ms);
+            co_return ret;
+        }
+        co_return -1;
+    }
+    Task<ssize_t> MSocket::recvFromT(void *buf, size_t len, Address::AddressPtr src_addr, int flags, uint64_t ms)
+    {
+        if (ms == 0)
+        {
+            ssize_t ret = co_await recvFrom(buf,len,src_addr,flags);
+            co_return ret;
+        }
+        if (isConnected())
+        {
+            socklen_t length = src_addr->getAddrLen();
+            ssize_t ret = co_await RecvfromT(m_sockfd,buf,len,flags,
+                                    src_addr->getAddr(),&length, ms);
+            co_return ret;
+        }
+        co_return -1;
+    }
+    Task<ssize_t> MSocket::recvFromT(iovec *buf, size_t len, Address::AddressPtr src_addr, int flags, uint64_t ms)
+    {
+        if (ms == 0)
+        {
+            ssize_t ret = co_await recvFrom(buf,len,src_addr,flags);
+            co_return ret;
+        }
+        if (isConnected())
+        {
+            struct msghdr msg;
+            msg.msg_iov = (iovec *)buf;
+            msg.msg_iovlen = len;
+            msg.msg_name = src_addr->getAddr();
+            msg.msg_namelen = src_addr->getAddrLen();
+            ssize_t ret = co_await RecvmsgT(m_sockfd, &msg, flags, ms);
+            co_return ret;
+        }
+        co_return -1;
+    }
+
     std::shared_ptr<Address> MSocket::getRemoteAddress()
     {
         if (m_remoteAddress)
