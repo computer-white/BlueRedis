@@ -30,7 +30,7 @@ namespace blue
         
         static int GetThreadIndex();
         static int GetThreadCount();
-        
+        static void setThreadIndex(int index) { t_threadIndex = index; }
         template <typename T>
         void schedule(Task<T> task, int thr = -1)
         {

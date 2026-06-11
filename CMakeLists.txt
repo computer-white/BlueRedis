@@ -288,6 +288,8 @@ add_newblue_test(test_debug)
 add_newblue_test(test_asynclog)
 add_newblue_test(test_resp)
 add_newblue_test(test_commandHandler)
+add_newblue_test(test_resp_parser)
+add_newblue_test(test_redis_stress)
 
 # 打印构建信息
 message(STATUS "========================")

@@ -295,6 +295,10 @@ namespace blue
         // 调度所有过期的定时器回调（不持有锁）
         for (auto &timer : to_process)
         {
+            if (!timer->m_valid.load(std::memory_order_acquire))
+            {
+                continue;
+            }
             std::function<void()> cb;
             std::coroutine_handle<> handle = nullptr;
 

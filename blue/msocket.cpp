@@ -109,6 +109,34 @@ namespace blue
         return true;
     }
 
+    bool MSocket::setNoBlocking()
+    {
+        if (isVaild())
+        {
+            int flags = fcntl(m_sockfd,F_GETFL,0);
+            if (flags == -1)
+            {
+                return false;
+            }
+            return fcntl(m_sockfd,F_SETFL,flags | O_NONBLOCK) == 0;
+        }
+        return false;
+    }
+
+    bool MSocket::setBlocking()
+    {
+        if (isVaild())
+        {
+            int flags = fcntl(m_sockfd, F_GETFL,0);
+            if (flags == -1)
+            {
+                return false;
+            }
+            return fcntl(m_sockfd,F_SETFL,flags & ~O_NONBLOCK) == 0;
+        }
+        return false;
+    }
+
     int64_t MSocket::getSendTimeout() const
     {
         blue::FdCxt::FdCxtPtr cxt = FdManagerPtr::GetInstance()->get(m_sockfd);
@@ -290,6 +318,16 @@ namespace blue
             ::close(m_sockfd);
             m_sockfd = -1;
             return true;
+        }
+        return false;
+    }
+
+    bool MSocket::shutdown(int how)
+    {
+        if (isVaild())
+        {
+            int ret = ::shutdown(m_sockfd,how);
+            return ret == 0;
         }
         return false;
     }

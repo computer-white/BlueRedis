@@ -33,6 +33,7 @@ namespace blue
         ssize_t ret = -1;
         Timer::TimerPtr timer;
         bool is_timeout = false;
+        bool event_added = false;
 
     public:
         AsyncIo(int f, OriginFunc fun, IOManager::Event event, Args... args)
@@ -57,7 +58,7 @@ namespace blue
                                          << " strerrno : " << strerror(errno);
             return true; // error
         }
-        void await_suspend(std::coroutine_handle<> h)
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h)
         {
             auto *iom = IOManager::GetThis();
             if (!iom)
@@ -65,8 +66,7 @@ namespace blue
                 BLUE_LOG_ERROR(xx::g_logger) << "not have iom";
                 ret = -1;
                 errno = EIO;
-                h.resume();
-                return;
+                return h;
             }
             int tem = iom->addEvent(fd, event, h, nullptr);
             if (tem)
@@ -74,16 +74,26 @@ namespace blue
                 BLUE_LOG_ERROR(xx::g_logger) << " await_suspend addEvent() error, fd : " << fd;
                 ret = -1;
                 errno = EIO;
-                h.resume();
-                return;
+                return h;
             }
+            event_added = true;
             if (has_timer)
             {
-                timer = iom->addTimer(timeout_ms, nullptr, [this, h] {
+                timer = iom->addTimer(timeout_ms, nullptr, [this, h]
+                {
                     is_timeout = true;
-                    h.resume();
+                    if (event_added)
+                    {
+                        IOManager::GetThis()->delEvent(fd,event);
+                        event_added = false;
+                    }
+                    if (h && !h.done())
+                    {
+                        h.resume();
+                    } 
                 });
             }
+            return std::noop_coroutine();
         }
         ssize_t await_resume()
         {
@@ -92,14 +102,18 @@ namespace blue
                 timer->cancel();
                 timer = nullptr;
             }
-            if (is_timeout)
+            if (event_added)
             {
                 IOManager::GetThis()->delEvent(fd, event);
+                event_added = false;
+            }
+            if (is_timeout)
+            {
                 errno = ETIMEDOUT;
-                return 0;
+                return -1;
             }
             // errno == EAGIN 或 EWOULDBLOCK 再试一次
-            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
             {
                 ret = std::apply(func, std::tuple_cat(std::make_tuple(fd), io_args));
             }

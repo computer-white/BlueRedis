@@ -10,7 +10,7 @@ using namespace blue;
 Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();
 
 std::atomic<bool> g_running(true);
-
+IOManager* g_iom = nullptr;
 void signalHandler(int signum) {
     BLUE_LOG_INFO(g_logger) << "Received signal " << signum << ", shutting down...";
     g_running.store(false);
@@ -38,7 +38,7 @@ Task<void> test()
     {
         BLUE_LOG_INFO(g_logger) << "Server started successfully on port 6666";
     }
-    // 一直运行
+    // 保持服务器运行，直到收到停止信号
     while (!comm->getIsStop())
     {
         co_await sleepFor(1);

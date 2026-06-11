@@ -87,16 +87,30 @@ namespace blue
                 return {RespValue(), 0};
             }
             
-            int64_t count = std::stoll(std::string(data.substr(1, pos - 1)));
-            if (count < 0) {
+            int64_t count;
+            try
+            {
+                count = std::stoll(std::string(data.substr(1, pos - 1)));
+            }
+            catch(...)
+            {
+                return {RespValue(),0};
+            }
+            if (count < 0)
+            {
                 return {RespValue(), 0};
             }
             
             res.type = Type::ARRAY;
             size_t start_pos = pos + 2;
+            size_t total_consumed = start_pos;
             
             for (int64_t i = 0; i < count; ++i)
             {
+                if (start_pos >= data.size())
+                {
+                    return {RespValue(), 0};  // 数据不完整
+                }
                 auto [elem, consumed] = parse(data.substr(start_pos));
                 if (consumed == 0)
                 {
@@ -104,9 +118,10 @@ namespace blue
                 }
                 res.arr.push_back(std::move(elem));
                 start_pos += consumed;
+                total_consumed += consumed;
             }
             
-            return {res, start_pos};
+            return {res, total_consumed};
         }
         break;
         };
@@ -201,5 +216,55 @@ namespace blue
         res.arr = std::move(elems);
         res.type = Type::ARRAY;
         return res;
+    }
+
+    bool RespStreamParser::feed(std::string_view data)
+    {
+        if (buffer_.size() + data.size() > max_buffer_size_)
+        {
+            return false;
+        }
+        buffer_.append(data);
+        return true;
+    }
+
+    bool RespStreamParser::next(RespValue& out)
+    {
+        if (parse_offset_ >= buffer_.size())
+        {
+            return false;
+        }
+
+        auto [cmd, consumed] = RespValue::parse(
+            std::string_view(buffer_.data() + parse_offset_, 
+                           buffer_.size() - parse_offset_)
+        );
+
+        if (consumed == 0)
+        {
+            return false;
+        }
+
+        parse_offset_ += consumed;
+        out = std::move(cmd);
+
+        // 定期清理已解析的数据，避免缓冲区无限增长
+        if (parse_offset_ == buffer_.size())
+        {
+            buffer_.clear();
+            parse_offset_ = 0;
+        }
+        else if (parse_offset_ > 65536)  // 每64KB清理一次
+        {
+            buffer_.erase(0, parse_offset_);
+            parse_offset_ = 0;
+        }
+
+        return true;
+    }
+    void RespStreamParser::reset()
+    {
+        buffer_.clear();
+        parse_offset_ = 0;
     }
 }

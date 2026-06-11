@@ -570,6 +570,8 @@ namespace blue
             {
                 total += queue->pending.load(std::memory_order_acquire);
             }
+            BLUE_LOG_INFO(g_logger) << "total: " << total << " m_pendingEventCounts: " << m_pendingEventCounts.load(std::memory_order_acquire)
+                                    << " hasTimer: " << TimerManager::hasTimer();
             return total == 0 
                    && m_pendingEventCounts.load(std::memory_order_acquire) == 0
                    && !TimerManager::hasTimer();; });

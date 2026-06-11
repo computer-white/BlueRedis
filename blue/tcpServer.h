@@ -97,6 +97,21 @@ namespace blue
          */
         bool getIsStop() const noexcept { return m_isStop.load(std::memory_order_acquire); }
 
+        /**
+         * @brief 增加连接数
+         */
+        void addConnection() noexcept { m_connections.fetch_add(1); }
+
+        /**
+         * @brief 减少连接
+         */
+        void subConnection() noexcept { m_connections.fetch_sub(1); }
+
+        /**
+         * @brief 获取当前连接数量
+         * @return 当前连接数量
+         */
+        uint32_t getConnection() const noexcept { return m_connections.load(std::memory_order_acquire); }
     protected:
         /**
          * @brief 处理client事件
@@ -120,6 +135,7 @@ namespace blue
         int m_option_name;
         T m_option;
         std::atomic<bool> m_isStop = {true};
+        std::atomic<uint32_t> m_connections{0};
     };
 }
 

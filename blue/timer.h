@@ -118,6 +118,15 @@ namespace blue
          */
         bool hasTimer();
 
+        /**
+         * @brief 清空所有定时器
+         */
+        void clear()
+        {
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
+            m_timers.clear();
+        }
+
     protected:
         /**
          * @brief 当有新的定时器插入到队首时调用

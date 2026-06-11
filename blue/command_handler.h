@@ -37,20 +37,21 @@ namespace blue
     private:
         Task<void> expireTime();
         void removeExpireCycle();
-        std::string format_score(double score) 
+        std::string format_score(double score)
         {
             std::string s = std::to_string(score);
             // 去掉末尾多余的0
             s.erase(s.find_last_not_of('0') + 1, std::string::npos);
             // 去掉可能的小数点
-            if (s.back() == '.') {
+            if (!s.empty() && s.back() == '.')
+            {
                 s.pop_back();
             }
             return s;
         }
 
     private:
-        std::mutex m_mutex;
+        std::shared_mutex m_mutex;
         std::unordered_map<std::string, std::string> m_store;
         std::unordered_map<std::string, TimePoint> m_expire;
         std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_hash;
@@ -79,7 +80,7 @@ namespace blue
     {
         int count = 0;
         auto now = SteadyClock::now();
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::unique_lock<std::shared_mutex> lock(m_mutex);
         auto it = m_expire.begin();
         while (it != m_expire.end() && count < 20)
         {
@@ -128,7 +129,7 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'SET'");
             }
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
+                std::unique_lock<std::shared_mutex> lock(m_mutex);
                 m_store[args[1].str] = args[2].str;
                 if (args.size() >= 5)
                 {
@@ -149,22 +150,123 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'GET'");
             }
+            std::shared_lock<std::shared_mutex> redlock(m_mutex);
+            auto it = m_store.find(args[1].str);
+            if (it == m_store.end())
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                auto it = m_store.find(args[1].str);
+                return RespValue::null_bulk();
+            }
+            redlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
+            if (it == m_store.end())
+            {
+                return RespValue::null_bulk();
+            }
+            auto expire_it = m_expire.find(args[1].str);
+            if (expire_it != m_expire.end() && expire_it->second < SteadyClock::now())
+            {
+                m_expire.erase(expire_it);
+                m_store.erase(it);
+                return RespValue::null_bulk();
+            }
+            return RespValue::bulk_string(it->second);
+        }
+        else if (cmd == "MSET") // MSET key val [key val]
+        {
+            if (args.size() < 3 || (args.size() & 1) != 1)
+            {
+                return RespValue::error("ERR wrong of arguments for 'MSET'");
+            }
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
+            for (size_t i = 1; i < args.size(); i += 2)
+            {
+                const std::string key = args[i].str;
+                const std::string val = args[i + 1].str;
+                m_store[key] = val;
+            }
+            return RespValue::simple_string("OK");
+        }
+        else if (cmd == "MGET") // MGET key [key...]
+        {
+            if (args.size() < 2)
+            {
+                return RespValue::error("ERR wrong of arguments for 'MGET'");
+            }
+            std::vector<RespValue> results;
+            std::shared_lock<std::shared_mutex> lock(m_mutex);
+            for (size_t i = 1; i < args.size(); i++)
+            {
+                auto it = m_store.find(args[i].str);
                 if (it == m_store.end())
                 {
-                    return RespValue::null_bulk();
+                    results.push_back(RespValue::null_bulk());
+                    continue;
                 }
-                auto expire_it = m_expire.find(args[1].str);
+                auto expire_it = m_expire.find(args[i].str);
                 if (expire_it != m_expire.end() && expire_it->second < SteadyClock::now())
                 {
                     m_expire.erase(expire_it);
                     m_store.erase(it);
-                    return RespValue::null_bulk();
+                    results.push_back(RespValue::null_bulk());
+                    continue;
                 }
-                return RespValue::bulk_string(it->second);
+                results.push_back(RespValue::bulk_string(it->second));
             }
+            return RespValue::array(std::move(results));
+        }
+        else if (cmd == "APPEND") // APPEND key val
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong of arguments for 'APPEND'");
+            }
+            const std::string key = args[1].str;
+            const std::string val = args[2].str;
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
+            auto it = m_store.find(key);
+            if (it == m_store.end())
+            {
+                m_store[key] = val;
+            }
+            else
+            {
+                it->second.append(val);
+            }
+            return RespValue::integer(m_store[key].size());
+        }
+        else if (cmd == "SETNX") // SETNX key val
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong of arguments for 'SEtNX'");
+            }
+            const std::string key = args[1].str;
+            const std::string val = args[2].str;
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
+            auto it = m_store.find(key);
+            if (it == m_store.end())
+            {
+                m_store[key] = val;
+                return RespValue::integer(1);
+            }
+            return RespValue::integer(0);
+        }
+        else if (cmd == "EXISTS") // EXISTS key [key...]
+        {
+            if (args.size() < 2)
+            {
+                return RespValue::error("ERR wrong of arguments for 'EXISTS'");
+            }
+            int64_t count = 0;
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
+            for (size_t i = 1; i < args.size(); i++)
+            {
+                if (m_store.find(args[i].str) != m_store.end())
+                {
+                    count++;
+                }
+            }
+            return RespValue::integer(count);
         }
         else if (cmd == "DEL") // DEL key [key...]
         {
@@ -173,7 +275,7 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'DEL'");
             }
             int count = 0;
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
             for (size_t i = 1; i < args.size(); i++)
             {
                 auto it = m_store.find(args[i].str);
@@ -197,8 +299,8 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'HSET'");
             }
             int count = 0;
-            std::lock_guard<std::mutex> lock(m_mutex);
             std::string key = args[1].str;
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
             for (size_t i = 2; i < args.size(); i += 2)
             {
                 auto &field = args[i].str;
@@ -217,8 +319,14 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'HGET'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             auto it = m_hash.find(args[1].str);
+            if (it == m_hash.end())
+            {
+                return RespValue::null_bulk();
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
             if (it == m_hash.end())
             {
                 return RespValue::null_bulk();
@@ -236,16 +344,23 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'HGETALL'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
             std::vector<RespValue> result;
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             auto it = m_hash.find(args[1].str);
-            if (it != m_hash.end())
+            if (it == m_hash.end())
             {
-                for (auto &[field, value] : it->second)
-                {
-                    result.push_back(RespValue::bulk_string(field));
-                    result.push_back(RespValue::bulk_string(value));
-                }
+                return RespValue::array(std::move(result));
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
+            if (it == m_hash.end())
+            {
+                return RespValue::array(std::move(result));
+            }
+            for (auto &[field, value] : it->second)
+            {
+                result.push_back(RespValue::bulk_string(field));
+                result.push_back(RespValue::bulk_string(value));
             }
             return RespValue::array(std::move(result));
         }
@@ -255,25 +370,166 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'HDEL'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
             int count = 0;
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             auto it = m_hash.find(args[1].str);
-            if (it != m_hash.end())
+            if (it == m_hash.end())
             {
-                for (size_t i = 2; i < args.size(); i++)
+                return RespValue::integer(count);
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
+            if (it == m_hash.end())
+            {
+                return RespValue::integer(count);
+            }
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                if (it->second.contains(args[i].str))
                 {
-                    if (it->second.contains(args[i].str))
-                    {
-                        it->second.erase(args[i].str);
-                        ++count;
-                    }
-                }
-                if (it->second.empty())
-                {
-                    m_hash.erase(it);
+                    it->second.erase(args[i].str);
+                    ++count;
                 }
             }
+            if (it->second.empty())
+            {
+                m_hash.erase(it);
+            }
             return RespValue::integer(count);
+        }
+        else if (cmd == "HLEN") // HLEN key
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong of arguments for 'HLEN'");
+            }
+            const std::string key = args[1].str;
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
+            auto it = m_hash.find(key);
+            if (it == m_hash.end())
+            {
+                if (m_store.find(key) != m_store.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_lists.find(key) != m_lists.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_zset.find(key) != m_zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+                return RespValue::integer(0);
+            }
+            return RespValue::integer(it->second.size());
+        }
+        else if (cmd == "HEXISTS") // HEXISTS key field
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong of arguments for 'HEXISTS'");
+            }
+            const std::string key = args[1].str;
+            const std::string field = args[2].str;
+            std::shared_lock<std::shared_mutex> lock(m_mutex);
+            auto it = m_hash.find(key);
+            if (it == m_hash.end())
+            {
+                if (m_store.find(key) != m_store.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_lists.find(key) != m_lists.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_zset.find(key) != m_zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+                return RespValue::integer(0);
+            }
+            auto filed_it = it->second.find(field);
+            if (filed_it == it->second.end())
+            {
+                return RespValue::integer(0);
+            }
+            return RespValue::integer(1);
+        }
+        else if (cmd == "HKEYS") // HKEYS key
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong of arguments for 'HKEYS'");
+            }
+            const std::string key = args[1].str;
+            std::vector<RespValue> results;
+            std::shared_lock<std::shared_mutex> lock(m_mutex);
+            auto it = m_hash.find(key);
+            if (it == m_hash.end())
+            {
+                if (m_store.find(key) != m_store.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_lists.find(key) != m_lists.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_zset.find(key) != m_zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                return RespValue::array(std::move(results));
+            }
+            for (auto& [field,_] : it->second)
+            {
+                results.push_back(RespValue::bulk_string(field));
+            }
+            return RespValue::array(std::move(results));
+        }
+        else if (cmd == "HVALS") // HVALS key
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong of arguments for 'HKEYS'");
+            }
+            const std::string key = args[1].str;
+            std::vector<RespValue> results;
+            std::shared_lock<std::shared_mutex> lock(m_mutex);
+            auto it = m_hash.find(key);
+            if (it == m_hash.end())
+            {
+                if (m_store.find(key) != m_store.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_lists.find(key) != m_lists.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_zset.find(key) != m_zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                return RespValue::array(std::move(results));
+            }
+            for (auto& [_,val] : it->second)
+            {
+                results.push_back(RespValue::bulk_string(val));
+            }
+            return RespValue::array(std::move(results));
         }
         else if (cmd == "KEYS") // KEYS *
         {
@@ -310,7 +566,7 @@ namespace blue
             std::regex re(regex_str);
             std::vector<RespValue> result;
 
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::shared_lock<std::shared_mutex> lock(m_mutex);
             // 遍历 m_store
             for (auto &[key, value] : m_store)
             {
@@ -343,7 +599,7 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'LPUSH'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
             auto &lhs = m_lists[args[1].str];
             for (size_t i = 2; i < args.size(); i++)
             {
@@ -357,7 +613,7 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'RPUSH'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
             auto &lhs = m_lists[args[1].str];
             for (size_t i = 2; i < args.size(); i++)
             {
@@ -372,8 +628,14 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'LPOP'");
             }
             int count = args.size() == 3 ? std::stoi(args[2].str) : 1;
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             auto it = m_lists.find(args[1].str);
+            if (it == m_lists.end() || it->second.empty())
+            {
+                return RespValue::null_bulk();
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
             if (it == m_lists.end() || it->second.empty())
             {
                 return RespValue::null_bulk();
@@ -401,8 +663,14 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'LPOP'");
             }
             int count = args.size() == 3 ? std::stoi(args[2].str) : 1;
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             auto it = m_lists.find(args[1].str);
+            if (it == m_lists.end() || it->second.empty())
+            {
+                return RespValue::null_bulk();
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
             if (it == m_lists.end() || it->second.empty())
             {
                 return RespValue::null_bulk();
@@ -429,8 +697,14 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'LRANGE'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             auto it = m_lists.find(args[1].str);
+            if (it == m_lists.end())
+            {
+                return RespValue::array({});
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
             if (it == m_lists.end())
             {
                 return RespValue::array({});
@@ -473,14 +747,14 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'ZADD'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
             int count = 0;
             const std::string key = args[1].str;
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
 
             m_zset_score.try_emplace(key);
             m_zset.try_emplace(key);
-            auto& score_map = m_zset_score[key];
-            auto& skiplist = m_zset[key];
+            auto &score_map = m_zset_score[key];
+            auto &skiplist = m_zset[key];
 
             for (size_t i = 2; i < args.size(); i += 2)
             {
@@ -489,15 +763,15 @@ namespace blue
                 {
                     score = std::stod(args[i].str);
                 }
-                catch (const std::exception& e)
+                catch (const std::exception &e)
                 {
                     return RespValue::error("ERR value is not a valid float");
                 }
                 std::string member = args[i + 1].str;
-                
+
                 auto it = score_map.find(member);
                 if (it != score_map.end())
-                { 
+                {
                     // 已存在，删掉旧的
                     ZSetKey old_key(it->second, it->first);
                     skiplist.remove(old_key);
@@ -507,19 +781,25 @@ namespace blue
                     count++;
                 }
                 score_map[member] = score;
-                ZSetKey newkey(score,member);
+                ZSetKey newkey(score, member);
                 skiplist.insert(newkey, member);
             }
             return RespValue::integer(count);
         }
-        else if (cmd == "ZRANGE")       // ZRANGE key start stop [WITHSCORES]
+        else if (cmd == "ZRANGE") // ZRANGE key start stop [WITHSCORES]
         {
             if (args.size() < 4 || args.size() > 5)
             {
                 return RespValue::error("ERR wrong number of arguments for 'ZRANGE'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             auto it = m_zset.find(args[1].str);
+            if (it == m_zset.end())
+            {
+                return RespValue::array({});
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
             if (it == m_zset.end())
             {
                 return RespValue::array({});
@@ -527,7 +807,7 @@ namespace blue
             int start = std::stoi(args[2].str);
             int stop = std::stoi(args[3].str);
             bool withscores = (args.size() == 5 && args[4].str == "WITHSCORES");
-            auto& skiplist_map = it->second;
+            auto &skiplist_map = it->second;
             int size = skiplist_map.size();
             if (start < 0)
             {
@@ -560,93 +840,257 @@ namespace blue
                 results.push_back(RespValue::bulk_string(node->val));
                 if (withscores)
                 {
-                    results.push_back(RespValue::bulk_string(std::to_string(node->key.score)));
+                    results.push_back(RespValue::bulk_string(format_score(node->key.score)));
                 }
             }
             return RespValue::array(std::move(results));
         }
-        else if (cmd == "ZREM")     // ZREM key member [member...]
+        else if (cmd == "ZREM") // ZREM key member [member...]
         {
             if (args.size() < 3)
             {
                 return RespValue::error("ERR wrong number of arguments for 'ZREM'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
             int count = 0;
             const std::string key = args[1].str;
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
 
             auto it = m_zset.find(key);
-            if (it != m_zset.end())
+            if (it == m_zset.end())
             {
-                auto sit = m_zset_score.find(key);
-                if (sit != m_zset_score.end())
-                {
-                    auto& skiplist_map = it->second;
-                    auto& scores = sit->second;
+                return RespValue::integer(count);
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
+            if (it == m_zset.end())
+            {
+                return RespValue::integer(count);
+            }
+            auto sit = m_zset_score.find(key);
+            if (sit != m_zset_score.end())
+            {
+                auto &skiplist_map = it->second;
+                auto &scores = sit->second;
 
-                    for (size_t i = 2; i < args.size(); i++)
+                for (size_t i = 2; i < args.size(); i++)
+                {
+                    const std::string member = args[i].str;
+                    auto member_score = scores.find(member);
+                    if (member_score != scores.end())
                     {
-                        const std::string member = args[i].str;
-                        auto member_score = scores.find(member);
-                        if (member_score != scores.end()) 
-                        {
-                            // key = {score,member}
-                            skiplist_map.remove({member_score->second, member_score->first});
-                            scores.erase(member_score);
-                            count++;
-                        }
+                        // key = {score,member}
+                        skiplist_map.remove({member_score->second, member_score->first});
+                        scores.erase(member_score);
+                        count++;
                     }
-                    if (skiplist_map.empty())
-                    {
-                        m_zset.erase(it);
-                        m_zset_score.erase(key);
-                    }
+                }
+                if (skiplist_map.empty())
+                {
+                    m_zset.erase(it);
+                    m_zset_score.erase(key);
                 }
             }
             return RespValue::integer(count);
         }
-        else if (cmd == "ZSCORE")     // // ZSCORE key member
+        else if (cmd == "ZSCORE") // // ZSCORE key member
         {
             if (args.size() != 3)
             {
                 return RespValue::error("ERR wrong number of arguments for 'ASCORE'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
             const std::string key = args[1].str;
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             auto it = m_zset_score.find(key);
-            if (it != m_zset_score.end())
+            if (it == m_zset_score.end())
             {
-                auto& skiplist_map = it->second;
-                auto sit = skiplist_map.find(args[2].str);
-                if (sit != skiplist_map.end())
-                {
-                    return RespValue::bulk_string(format_score(sit->second));
-                }
+                return RespValue::null_bulk();
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
+            if (it == m_zset_score.end())
+            {
+                return RespValue::null_bulk();
+            }
+            auto &skiplist_map = it->second;
+            auto sit = skiplist_map.find(args[2].str);
+            if (sit != skiplist_map.end())
+            {
+                return RespValue::bulk_string(format_score(sit->second));
             }
             return RespValue::null_bulk();
         }
-        else if (cmd == "ZRANK")        // ZRANK key member
+        else if (cmd == "ZRANK") // ZRANK key member
         {
             if (args.size() != 3)
             {
                 return RespValue::error("ERR wrong number of arguments for 'ZRANK'");
             }
-            std::lock_guard<std::mutex> lock(m_mutex);
             const std::string key = args[1].str, member = args[2].str;
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             auto it = m_zset_score.find(key);
-            if (it != m_zset_score.end())
+            if (it == m_zset_score.end())
             {
-                auto& score_map = it->second;
-                auto sit = score_map.find(member);
-                if (sit != score_map.end())
+                return RespValue::null_bulk();
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
+            if (it == m_zset_score.end())
+            {
+                return RespValue::null_bulk();
+            }
+            auto &score_map = it->second;
+            auto sit = score_map.find(member);
+            if (sit != score_map.end())
+            {
+                // key  = {score,member}
+                int rank = m_zset[key].getRank({sit->second, member});
+                if (rank >= 0)
                 {
-                    // key  = {score,member}
-                    int rank = m_zset[key].getRank({sit->second,member});
-                    if (rank >= 0)
-                    {
-                        return RespValue::integer(rank);
-                    }
+                    return RespValue::integer(rank);
                 }
+            }
+            return RespValue::null_bulk();
+        }
+        else if (cmd == "INCR") // INCR key
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'INCR'");
+            }
+            const std::string key = args[1].str;
+            int64_t val = 0;
+            std::unique_lock<std::shared_mutex> rdlock(m_mutex);
+            auto it = m_store.find(key);
+            if (it != m_store.end())
+            {
+                try
+                {
+                    val = std::stoll(it->second);
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR value is not a integer or out of range");
+                }
+            }
+            val++;
+            m_store[key] = std::to_string(val);
+            return RespValue::integer(val);
+        }
+        else if (cmd == "INCRBY") // INCR key integer
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'INCRBY'");
+            }
+            const std::string key = args[1].str;
+            int64_t increment;
+            try
+            {
+                increment = std::stoll(args[2].str);
+            }
+            catch (const std::exception &e)
+            {
+                return RespValue::error("ERR value is not an integer or out of range");
+            }
+            std::unique_lock<std::shared_mutex> lock(m_mutex);
+            auto it = m_store.find(key);
+            int64_t val = 0;
+            if (it != m_store.end())
+            {
+                try
+                {
+                    val = std::stoll(it->second);
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR value is not a integer or out of range");
+                }
+            }
+            val += increment;
+            m_store[key] = std::to_string(val);
+            return RespValue::integer(val);
+        }
+        else if (cmd == "STRLEN") // STRLEN key
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'STRLEN'");
+            }
+            const std::string key = args[1].str;
+            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
+            auto it = m_store.find(key);
+            if (it == m_store.end())
+            {
+                if (m_hash.find(key) != m_hash.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_lists.find(key) != m_lists.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_zset.find(key) != m_zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                return RespValue::integer(0);
+            }
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
+            if (it == m_store.end())
+            {
+                if (m_hash.find(key) != m_hash.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_lists.find(key) != m_lists.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (m_zset.find(key) != m_zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                return RespValue::integer(0);
+            }
+            auto expire_it = m_expire.find(key);
+            if (expire_it != m_expire.end() && expire_it->second < SteadyClock::now())
+            {
+                m_expire.erase(expire_it);
+                m_store.erase(it);
+                return RespValue::integer(0);
+            }
+            return RespValue::integer(it->second.size());
+        }
+        else if (cmd == "TYPE") // TYPE key
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'TYPE'");
+            }
+            const std::string key = args[1].str;
+            std::shared_lock<std::shared_mutex> lock(m_mutex);
+            if (m_store.find(key) != m_store.end())
+            {
+                return RespValue::bulk_string("string");
+            }
+            if (m_hash.find(key) != m_hash.end())
+            {
+                return RespValue::bulk_string("hash");
+            }
+            if (m_lists.find(key) != m_lists.end())
+            {
+                return RespValue::bulk_string("list");
+            }
+            if (m_zset.find(key) != m_zset.end())
+            {
+                return RespValue::bulk_string("zset");
             }
             return RespValue::null_bulk();
         }
@@ -657,8 +1101,8 @@ namespace blue
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
         BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
-        std::string buffer;
-        int batch = 0;
+        RespStreamParser parser;
+        const size_t MAX_COMMAND_SIZE = 1024 * 1024;
         do
         {
             char tmp[4096];
@@ -669,27 +1113,96 @@ namespace blue
                 {
                     BLUE_LOG_INFO(xx::g_logger) << "[client " << sock->getSocketfd() << "] 正常关闭";
                 }
-                else if (ret < 0)
+                else
                 {
-                    BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd() << "] 读取出错";
+                    BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
+                                                 << "] 读取出错: " << strerror(errno);
                 }
                 break;
             }
 
-            buffer.append(tmp, ret);
-            auto [cmd, consumed] = RespValue::parse(buffer);
-            if (consumed == 0)
+            BLUE_LOG_DEBUGE(xx::g_logger) << "Received " << ret << " bytes from fd " << sock->getSocketfd();
+
+            // 喂入数据
+            if (!parser.feed({tmp, static_cast<size_t>(ret)}))
             {
-                continue; // 数据不完整，继续读
+                BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
+                                             << "] 缓冲区溢出，关闭连接";
+                break;
             }
 
-            buffer.erase(0, consumed); // 处理完的删掉
+            // 处理所有完整的命令
+            RespValue cmd;
+            while (parser.next(cmd))
+            {
+                if (cmd.type == RespValue::Type::ARRAY && cmd.arr.size() > 1000)
+                {
+                    BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
+                                                << "] 命令数组过大: " << cmd.arr.size();
+                    auto error_resp = RespValue::error("ERR command too large");
+                    auto data = RespValue::encode(error_resp);
+                    size_t sent = 0;
+                    while (sent < data.size())
+                    {
+                        ssize_t n = co_await sock->send(data.data() + sent, data.size() - sent);
+                        if (n <= 0)
+                        {
+                            BLUE_LOG_ERROR(xx::g_logger) << "Send failed";
+                            break;
+                        }
+                        sent += n;
+                    }
+                    continue;
+                }
 
-            auto response = execute(cmd.arr);
-            auto data = RespValue::encode(response);
-            co_await sock->send(data.data(), data.size());
+                // 执行命令
+                auto start = std::chrono::steady_clock::now();
+                auto response = execute(cmd.arr);
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+                if (duration.count() > 100)
+                {
+                    BLUE_LOG_WARN(xx::g_logger) << "Slow command: " << duration.count() << "us";
+                }
+                auto data = RespValue::encode(response);
+
+                BLUE_LOG_DEBUGE(xx::g_logger) << "Sending response, size=" << data.size();
+                // 发送响应
+                size_t sent = 0;
+                while (sent < data.size())
+                {
+                    ssize_t n = co_await sock->send(data.data() + sent, data.size() - sent);
+                    if (n <= 0)
+                    {
+                        BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
+                                                     << "] 发送失败";
+                        break;
+                    }
+                    sent += n;
+                }
+                if (sent == data.size())
+                {
+                    BLUE_LOG_DEBUGE(xx::g_logger) << "Response sent successfully";
+                }
+            }
+
+            // 定期检查缓冲区大小，防止内存泄漏
+            if (parser.bufferSize() > MAX_COMMAND_SIZE)
+            {
+                BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
+                                             << "] 命令过大，关闭连接";
+                break;
+            }
+
         } while (true);
         sock->close();
+        TcpServer<T>::subConnection();
+        if (TcpServer<T>::getConnection() == 0)
+        {
+            bool end = co_await TcpServer<T>::stop();
+            if (end)
+                BLUE_LOG_INFO(xx::g_logger) << "tcpserver stoped";
+        }
+        BLUE_LOG_INFO(xx::g_logger) << "handleClient end, fd=" << sock->getSocketfd();
         co_return;
     }
 }

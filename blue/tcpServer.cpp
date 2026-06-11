@@ -102,6 +102,7 @@ namespace blue
                             << " fd=" << client->getSocketfd();
                 client->setRecvTimeout(m_RecvTimeOut);
                 m_worker->schedule(handleClient(client));
+                addConnection();
             }
             else
             {
@@ -151,11 +152,15 @@ namespace blue
         //     }
         //     s->m_socks.clear();
         // });
-
+        if (m_connections.load(std::memory_order_acquire))
+        {
+            co_return false;
+        }
         m_isStop.store(true,std::memory_order_release);
         for (auto& sock : m_socks)
         {
             sock->cancelAll();
+            sock->shutdown(SHUT_RD);        // 关闭读端不在接收连接
             sock->close();
         }
         m_socks.clear();

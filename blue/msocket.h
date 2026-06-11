@@ -161,6 +161,16 @@ namespace blue
         }
 
         /**
+         * @brief 设置为非阻塞socket fd
+         */
+        bool setNoBlocking();
+
+        /**
+         * @brief 设置为阻塞socket fd
+         */
+        bool setBlocking();
+
+        /**
          * @brief 接受一个客户端连接，返回封装好的 MSocket 对象
          * @return 成功时返回一个复用当前 socket 协议族、类型、协议的新连接 MSocket 对象；
          *         失败时返回 nullptr（通常可检查 errno）
@@ -194,6 +204,15 @@ namespace blue
          * @return 成功返回true 失败返回 false
          */
         bool close();
+
+        /**
+         * @brief shutdown关闭
+         * @param how 关闭方式
+         * @note SHUT_RD = No more receptions;
+         * @note SHUT_WR = No more transmissions; 
+         * @note SHUT_RDWR = No more receptions or transmissions.
+         */
+        bool shutdown(int how);
 
         /**
          * @brief 向已连接的远程主机发送数据（TCP/SCTP 等）

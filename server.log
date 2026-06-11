@@ -1,0 +1,62 @@
+2026-06-10 19:57:46	89990	NOKNOW	0	[INFO]	[root]	./newtests/test_commandHandler.cpp:52	main begin
+
+2026-06-10 19:57:46	89990	NOKNOW	0	[INFO]	[root]	./newtests/test_commandHandler.cpp:57	calling wait_all()
+
+2026-06-10 19:57:46	89993	NOKNOW	0	[ERROR]	[system]	./blue/address.cpp:108	url parser failed, host : 0.0.0.0:6666 降级为我们自己的处理
+
+2026-06-10 19:57:46	89993	NOKNOW	0	[INFO]	[system]	./blue/tcpServer.cpp:87	tcp server bind success : [Socket socketfd : 5,family : 2,type : 1,protocl : 0,isconnected : 0,localAddress : 0.0.0.0:6666]
+
+2026-06-10 19:57:46	89993	NOKNOW	0	[INFO]	[root]	./newtests/test_commandHandler.cpp:39	Server started successfully on port 6666
+
+2026-06-10 19:57:49	89992	NOKNOW	0	[INFO]	[system]	./blue/msocket.cpp:741	cxt : 0x71359c000e10
+
+2026-06-10 19:57:49	89992	NOKNOW	0	[INFO]	[system]	./blue/tcpServer.cpp:101	accept new client, ptr=0x71359c000d30 fd=6
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[INFO]	[system]	././blue/command_handler.h:659	handleClient begin, fd=6
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[DEBUG]	[system]	././blue/command_handler.h:681	Received 34 bytes from fd 6
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[DEBUG]	[system]	././blue/command_handler.h:724	Sending response, size=5
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[DEBUG]	[system]	././blue/command_handler.h:739	Response sent successfully
+
+2026-06-10 19:57:49	89994	NOKNOW	0	[INFO]	[system]	./blue/io_manager.cpp:46	[trigger] fd: 6 event: 1 has_handle: 1 has_cb: 0
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[INFO]	[system]	././blue/command_handler.h:671	[client 6] 正常关闭
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[INFO]	[system]	././blue/command_handler.h:754	handleClient end, fd=-1
+
+2026-06-10 19:57:49	89992	NOKNOW	0	[INFO]	[system]	./blue/msocket.cpp:741	cxt : 0x71359c001680
+
+2026-06-10 19:57:49	89992	NOKNOW	0	[INFO]	[system]	./blue/tcpServer.cpp:101	accept new client, ptr=0x71359c003a50 fd=7
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[INFO]	[system]	././blue/command_handler.h:659	handleClient begin, fd=7
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[DEBUG]	[system]	././blue/command_handler.h:681	Received 23 bytes from fd 7
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[DEBUG]	[system]	././blue/command_handler.h:724	Sending response, size=11
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[DEBUG]	[system]	././blue/command_handler.h:739	Response sent successfully
+
+2026-06-10 19:57:49	89994	NOKNOW	0	[INFO]	[system]	./blue/io_manager.cpp:46	[trigger] fd: 7 event: 1 has_handle: 1 has_cb: 0
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[INFO]	[system]	././blue/command_handler.h:671	[client 7] 正常关闭
+
+2026-06-10 19:57:49	89993	NOKNOW	0	[INFO]	[system]	././blue/command_handler.h:754	handleClient end, fd=-1
+
+2026-06-10 19:57:52	89992	NOKNOW	0	[INFO]	[system]	./blue/msocket.cpp:741	cxt : 0x71359c000e10
+
+2026-06-10 19:57:52	89992	NOKNOW	0	[INFO]	[system]	./blue/tcpServer.cpp:101	accept new client, ptr=0x71359c001980 fd=6
+
+2026-06-10 19:57:52	89993	NOKNOW	0	[INFO]	[system]	././blue/command_handler.h:659	handleClient begin, fd=6
+
+2026-06-10 19:57:52	89993	NOKNOW	0	[DEBUG]	[system]	././blue/command_handler.h:681	Received 34 bytes from fd 6
+
+2026-06-10 19:57:52	89993	NOKNOW	0	[DEBUG]	[system]	././blue/command_handler.h:724	Sending response, size=5
+
+2026-06-10 19:57:52	89993	NOKNOW	0	[DEBUG]	[system]	././blue/command_handler.h:739	Response sent successfully
+
+2026-06-10 19:57:52	89993	NOKNOW	0	[INFO]	[system]	././blue/command_handler.h:671	[client 6] 正常关闭
+
+2026-06-10 19:57:52	89993	NOKNOW	0	[INFO]	[system]	././blue/command_handler.h:754	handleClient end, fd=-1
+
