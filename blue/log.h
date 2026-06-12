@@ -8,18 +8,20 @@
 #include <sstream>
 #include <vector>
 #include <type_traits>
+#include <chrono>
 #include <map>
 #include "util.h"
 #include "singleton.h"
 #include "mthread.h"
 // 宏展开输出
-#define BLUE_LOG_LEVER(logger, level)                                                             \
-    if (logger->getlevel() <= level)                                                              \
-    blue::LogEventWrap(blue::LogEvent::LogEventPtr(new blue::LogEvent(logger, level, __FILE__,    \
-                                                                      time(0), __LINE__,          \
-                                                                      0, blue::GetThreadId(),     \
-                                                                      blue::GetFiberID(),         \
-                                                                      blue::Mthread::GetName()))) \
+#define BLUE_LOG_LEVER(logger, level)                                                                                                         \
+    if (logger->getlevel() <= level)                                                                                                          \
+    blue::LogEventWrap(blue::LogEvent::LogEventPtr(new blue::LogEvent(logger, level, __FILE__,                                                \
+                                                                      std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()), \
+                                                                      __LINE__,                                                               \
+                                                                      0, blue::GetThreadId(),                                                 \
+                                                                      blue::GetFiberID(),                                                     \
+                                                                      blue::Mthread::GetName())))                                             \
         .getstringstream()
 
 #define BLUE_LOG_DEBUGE(logger) BLUE_LOG_LEVER(logger, blue::Level::DEBUG)
@@ -29,14 +31,15 @@
 #define BLUE_LOG_FATAL(logger) BLUE_LOG_LEVER(logger, blue::Level::FATAL)
 
 // format输出
-#define BLUE_LOG_FORMAT_LEVEL(logger, fmt, level, ...)                                            \
-    if (logger->getlevel() <= level)                                                              \
-    blue::LogEventWrap(blue::LogEvent::LogEventPtr(new blue::LogEvent(logger, level, __FILE__,    \
-                                                                      time(0), __LINE__, 0,       \
-                                                                      blue::GetThreadId(),        \
-                                                                      blue::GetFiberID(),         \
-                                                                      blue::Mthread::GetName()))) \
-        .getEvent()                                                                               \
+#define BLUE_LOG_FORMAT_LEVEL(logger, fmt, level, ...)                                                                                        \
+    if (logger->getlevel() <= level)                                                                                                          \
+    blue::LogEventWrap(blue::LogEvent::LogEventPtr(new blue::LogEvent(logger, level, __FILE__,                                                \
+                                                                      std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()), \
+                                                                      __LINE__, 0,                                                            \
+                                                                      blue::GetThreadId(),                                                    \
+                                                                      blue::GetFiberID(),                                                     \
+                                                                      blue::Mthread::GetName())))                                             \
+        .getEvent()                                                                                                                           \
         ->format(fmt, ##__VA_ARGS__)
 
 #define BLUE_LOG_FORMAT_DEBUGE(logger, fmt, ...) BLUE_LOG_FORMAT_LEVEL(logger, fmt, blue::Level::DEBUG, ##__VA_ARGS__)
@@ -597,7 +600,7 @@ namespace blue
          * @param level 日志级别,枚举类型
          * @return string
          */
-        static std::string Getlevelstring(const Level& level)
+        static std::string Getlevelstring(const Level &level)
         {
             switch (level)
             {

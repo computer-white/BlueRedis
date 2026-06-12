@@ -162,12 +162,12 @@ namespace blue
         void format(std::ostream &os, std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event) override
         {
             uint64_t e_time = event->getTime();
-            time_t m_time = static_cast<time_t>(e_time);
+            std::time_t beijing_t= e_time + 8 * 3600;
             std::tm time_local;
 #ifdef _WIN32
-            localtime_s(&time_local, &m_time);
+    gmtime_s(&time_local, &beijing_t);
 #else
-            localtime_r(&m_time, &time_local);
+    gmtime_r(&beijing_t, &time_local);
 #endif
             // std::put_time转为当地时间(北京时间)
             os << std::put_time(&time_local, m_format.c_str());

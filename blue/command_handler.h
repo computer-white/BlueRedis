@@ -3,6 +3,7 @@
 #include <regex>
 #include <chrono>
 #include <list>
+#include <iomanip>
 #include <unordered_set>
 #include "config.h"
 #include "task.h"
@@ -322,6 +323,7 @@ namespace blue
             return RespValue::error("ERR empty command");
         }
 
+        thread_local std::string client_name;
         std::string cmd = args[0].str;
         std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
 
@@ -345,6 +347,37 @@ namespace blue
                 return RespValue::simple_string("OK");
             }
             return RespValue::error("ERR invalid password");
+        }
+        else if (cmd == "CLIENT") // CLIENT GETNAME/(SETNAME [name])
+        {
+            if (args.size() < 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'CLIENT'");
+            }
+            std::string subcmd = args[1].str;
+            std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
+            if (subcmd == "SETNAME")
+            {
+                if (args.size() != 3)
+                {
+                    return RespValue::error("ERR wrong number of arguments for 'CLIENT SETNAME'");
+                }
+                client_name = args[2].str;
+                return RespValue::simple_string("OK");
+            }
+            else if (subcmd == "GETNAME")
+            {
+                if (args.size() != 2)
+                {
+                    return RespValue::error("ERR wrong number of arguments for 'CLIENT GETNAME'");
+                }
+                if (client_name.empty())
+                {
+                    return RespValue::null_bulk();
+                }
+                return RespValue::bulk_string(client_name);
+            }
+            return RespValue::error("ERR wrong arguments for 'CLIENT'");
         }
         else if (cmd == "CONFIG") // CONFIG (GET [...])/SET [...], 获取给客户端的配置信息
         {
@@ -2319,6 +2352,48 @@ namespace blue
                         { saveToFile(); })
                 .detach();
             return RespValue::simple_string("OK");
+        }
+        else if (cmd == "ECHO") // ECHO meaasge
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'ECHO'");
+            }
+            return RespValue::bulk_string(args[1].str);
+        }
+        else if (cmd == "TIME") // TIME, 返回当前服务器的秒和微妙
+        {
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'TIME'");
+            }
+            auto now = SteadyClock::now();
+            auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+            auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() %  1000000;
+            std::vector<RespValue> results;
+            results.push_back(RespValue::bulk_string(std::to_string(seconds)));
+            results.push_back(RespValue::bulk_string(std::to_string(microseconds)));
+            return RespValue::array(std::move(results));
+        }
+        else if (cmd == "LOCALTIME") // LOCALTIME, 返回当前北京时间
+        {
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'LOCALTIME'");
+            }
+            auto now = std::chrono::system_clock::now();
+            auto now_t = std::chrono::system_clock::to_time_t(now);
+            
+            std::time_t beijing_t= now_t + 8 * 3600;
+            std::tm time_local;
+        #ifdef _WIN32
+            gmtime_s(&time_local, &beijing_t);
+        #else
+            gmtime_r(&beijing_t, &time_local);
+        #endif
+            std::ostringstream os;
+            os << std::put_time(&time_local, "%Y-%m-%d %H:%M:%S");
+            return RespValue::bulk_string(os.str());
         }
         else if (cmd == "SHUTDOWN") // SHUTDOWN 关闭服务器,如果连接数为0
         {
