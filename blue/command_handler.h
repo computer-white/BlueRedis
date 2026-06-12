@@ -3,6 +3,8 @@
 #include <regex>
 #include <chrono>
 #include <list>
+#include <unordered_set>
+#include "config.h"
 #include "task.h"
 #include "tcpServer.h"
 #include "resp_parser.h"
@@ -12,20 +14,50 @@
 
 namespace blue
 {
+    // redis-cli admin
+    static blue::ConfigVar<std::string>::ConfigVarPtr g_admin_password =
+        blue::Config::Lookup<std::string>("admin.password", "admin123", "admin password");
+
+    static std::string s_admin_password = "";
+    struct __AdminIniter__
+    {
+        __AdminIniter__()
+        {
+            s_admin_password = g_admin_password->getValue();
+            g_admin_password->addListener([](const std::string &old_val, const std::string &new_val)
+                                          { s_admin_password = new_val; });
+        }
+    };
+    using TimePoint = std::chrono::steady_clock::time_point;
+    constexpr int SHARD_COUNT = 32;
+    // 单个分片的结构
+    struct DataShard
+    {
+        std::shared_mutex mutex;
+        std::unordered_map<std::string, std::string> store;
+        std::unordered_map<std::string, TimePoint> expire;
+        std::unordered_map<std::string, std::unordered_map<std::string, std::string>> hash;
+        std::unordered_map<std::string, std::list<std::string>> lists;
+        std::unordered_map<std::string, std::unordered_set<std::string>> sets;
+        // key -> 跳表(ZSetKey{score + member} -> member)
+        std::unordered_map<std::string, SkipList<ZSetKey, std::string>> zset;
+        // key -> (member-> score)
+        std::unordered_map<std::string, std::unordered_map<std::string, double>> zset_score;
+    };
     template <typename T>
     class CommandHandler : public TcpServer<T>
     {
     public:
         using CommandHandlerPtr = std::shared_ptr<CommandHandler>;
         using SteadyClock = std::chrono::steady_clock;
-        using TimePoint = SteadyClock::time_point;
+        // using TimePoint = SteadyClock::time_point;
 
     public:
         CommandHandler(int level = -1, int option_name = -1, T option = T(), IOManager *manager = IOManager::GetThis(),
                        IOManager *acceptmanager = IOManager::GetThis());
 
         ~CommandHandler();
-        RespValue execute(const std::vector<RespValue> &args);
+        RespValue execute(std::vector<RespValue> args);
 
     protected:
         /**
@@ -50,16 +82,178 @@ namespace blue
             return s;
         }
 
+        // 获取 key 对应的分片
+        int getShardIndex(const std::string &key) const
+        {
+            return std::hash<std::string>{}(key) % SHARD_COUNT;
+        }
+
+        // 获取分片引用
+        DataShard &getShard(const std::string &key)
+        {
+            return m_shards[getShardIndex(key)];
+        }
+
+        const DataShard &getShard(const std::string &key) const
+        {
+            return m_shards[getShardIndex(key)];
+        }
+
+        // 持久化到文件
+        void saveToFile()
+        {
+            const std::string filename = "dump.rdb";
+            std::ofstream file(filename, std::ios::binary);
+
+            if (!file)
+            {
+                BLUE_LOG_ERROR(xx::g_logger) << "Failed to open " << filename;
+                return;
+            }
+            for (auto &shard : m_shards)
+            {
+                std::shared_lock lock(shard.mutex);
+
+                for (auto &[key, value] : shard.store)
+                {
+                    file << "STR|" << key << "|" << value;
+
+                    auto it = shard.expire.find(key);
+                    if (it != shard.expire.end())
+                    {
+                        auto expire_time = it->second.time_since_epoch().count();
+                        file << "|" << expire_time;
+                    }
+                    file << "\n";
+                }
+
+                for (auto &[key, fields] : shard.hash)
+                {
+                    for (auto &[field, value] : fields)
+                    {
+                        file << "HASH|" << key << "|" << field << "|" << value << "\n";
+                    }
+                }
+
+                for (auto &[key, list] : shard.lists)
+                {
+                    for (auto &value : list)
+                    {
+                        file << "LIST|" << key << "|" << value << "\n";
+                    }
+                }
+
+                for (auto &[key, set] : shard.sets)
+                {
+                    for (auto &member : set)
+                    {
+                        file << "SET|" << key << "|" << member << "\n";
+                    }
+                }
+
+                for (auto &[key, zset] : shard.zset_score)
+                {
+                    for (auto &[member, score] : zset)
+                    {
+                        file << "ZSET|" << key << "|" << score << "|" << member << "\n";
+                    }
+                }
+            }
+
+            BLUE_LOG_INFO(xx::g_logger) << "RDB saved to " << filename;
+        }
+
+        // 从文件加载
+        void loadFromFile()
+        {
+            const std::string filename = "dump.rdb";
+            std::ifstream file(filename);
+
+            if (!file)
+            {
+                BLUE_LOG_INFO(xx::g_logger) << "No existing RDB file";
+                return;
+            }
+
+            std::string line;
+            while (std::getline(file, line))
+            {
+                std::vector<std::string> parts;
+                size_t pos = 0;
+                std::string token;
+
+                while ((pos = line.find('|')) != std::string::npos)
+                {
+                    token = line.substr(0, pos);
+                    parts.push_back(token);
+                    line.erase(0, pos + 1);
+                }
+                parts.push_back(line); // 最后一部分
+
+                if (parts.empty())
+                    continue;
+
+                if (parts[0] == "STR" && parts.size() >= 3)
+                {
+                    auto &shard = getShard(parts[1]);
+                    std::unique_lock lock(shard.mutex);
+                    shard.store[parts[1]] = parts[2];
+
+                    if (parts.size() >= 4)
+                    {
+                        int64_t expire_time = std::stoll(parts[3]);
+                        shard.expire[parts[1]] = TimePoint(std::chrono::nanoseconds(expire_time));
+                    }
+                }
+                else if (parts[0] == "HASH" && parts.size() >= 4)
+                {
+                    auto &shard = getShard(parts[1]);
+                    std::unique_lock lock(shard.mutex);
+                    shard.hash[parts[1]][parts[2]] = parts[3];
+                }
+                else if (parts[0] == "LIST" && parts.size() >= 3)
+                {
+                    auto &shard = getShard(parts[1]);
+                    std::unique_lock lock(shard.mutex);
+                    shard.lists[parts[1]].push_back(parts[2]);
+                }
+                else if (parts[0] == "SET" && parts.size() >= 3)
+                {
+                    auto &shard = getShard(parts[1]);
+                    std::unique_lock lock(shard.mutex);
+                    shard.sets[parts[1]].insert(parts[2]);
+                }
+                else if (parts[0] == "ZSET" && parts.size() >= 4)
+                {
+                    auto &shard = getShard(parts[1]);
+                    std::unique_lock lock(shard.mutex);
+                    double score = std::stod(parts[2]);
+                    std::string member = parts[3];
+                    shard.zset_score[parts[1]][member] = score;
+                    shard.zset[parts[1]].insert({score, member}, member);
+                }
+            }
+            BLUE_LOG_INFO(xx::g_logger) << "RDB loaded from " << filename;
+        }
+
     private:
-        std::shared_mutex m_mutex;
-        std::unordered_map<std::string, std::string> m_store;
-        std::unordered_map<std::string, TimePoint> m_expire;
-        std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_hash;
-        std::unordered_map<std::string, std::list<std::string>> m_lists;
-        // key -> 跳表(ZSetKey{score + member} -> member)
-        std::unordered_map<std::string, SkipList<ZSetKey, std::string>> m_zset;
-        // key -> (member-> score)
-        std::unordered_map<std::string, std::unordered_map<std::string, double>> m_zset_score;
+        // commandserver 配置
+        struct CommConfig
+        {
+            std::string requirepassword; // 认证密码
+            int32_t maxClients;          // 最大客户端数量
+            int32_t timeout_s;           // 客户端超时(s)
+            std::string save;            // 保存策略
+        } m_config;
+
+        static CommConfig s_commConfig;
+
+    private:
+        std::array<DataShard, SHARD_COUNT> m_shards;
+        std::atomic<uint32_t> m_commands{0};
+        std::atomic<bool> m_shutdown{false};
+        std::atomic<bool> m_authenticated{false};
+        std::string m_password = "";
     };
 
     template <typename T>
@@ -67,12 +261,22 @@ namespace blue
                                       IOManager *acceptmanager)
         : TcpServer<T>(level, option_name, option, manager, acceptmanager)
     {
+        loadFromFile();
         IOManager::GetThis()->schedule(expireTime());
+        if (s_admin_password.empty())
+        {
+            s_admin_password = "admin123";
+        }
+        m_password = s_admin_password;
+        m_config.requirepassword = "admin123";
+        m_config.maxClients = 1000;
+        m_config.timeout_s = 0;
     }
 
     template <typename T>
     CommandHandler<T>::~CommandHandler()
     {
+        saveToFile();
     }
 
     template <typename T>
@@ -80,20 +284,23 @@ namespace blue
     {
         int count = 0;
         auto now = SteadyClock::now();
-        std::unique_lock<std::shared_mutex> lock(m_mutex);
-        auto it = m_expire.begin();
-        while (it != m_expire.end() && count < 20)
+        for (auto &shards : m_shards)
         {
-            if (it->second < now)
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.expire.begin();
+            while (it != shards.expire.end() && count < 20)
             {
-                m_store.erase(it->first);
-                it = m_expire.erase(it);
+                if (it->second < now)
+                {
+                    shards.store.erase(it->first);
+                    it = shards.expire.erase(it);
+                }
+                else
+                {
+                    it++;
+                }
+                ++count;
             }
-            else
-            {
-                it++;
-            }
-            ++count;
         }
     }
 
@@ -108,7 +315,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandler<T>::execute(const std::vector<RespValue> &args)
+    RespValue CommandHandler<T>::execute(std::vector<RespValue> args)
     {
         if (args.empty())
         {
@@ -120,26 +327,152 @@ namespace blue
 
         if (cmd == "PING")
         {
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'PING'");
+            }
             return RespValue::simple_string("PONG");
         }
-        else if (cmd == "SET") // SET key val [EX [s]]
+        else if (cmd == "AUTH") // AUTH password
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'AUTH'");
+            }
+            if (args[1].str == m_password)
+            {
+                m_authenticated.store(true, std::memory_order_release);
+                return RespValue::simple_string("OK");
+            }
+            return RespValue::error("ERR invalid password");
+        }
+        else if (cmd == "CONFIG") // CONFIG (GET [...])/SET [...], 获取给客户端的配置信息
+        {
+            if (args.size() < 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'CONFIG'");
+            }
+            std::string subcmd = args[1].str;
+            std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
+            if (subcmd == "GET")
+            {
+                if (args.size() != 3)
+                {
+                    return RespValue::error("ERR wrong number of arguments for 'CONFIG GET'");
+                }
+                std::string pattern = args[2].str;
+                std::vector<RespValue> result;
+
+                if (pattern == "*" || pattern == "requirepass")
+                {
+                    result.push_back(RespValue::bulk_string("requirepass"));
+                    result.push_back(RespValue::bulk_string(m_config.requirepassword));
+                }
+                if (pattern == "*" || pattern == "maxclients")
+                {
+                    result.push_back(RespValue::bulk_string("maxclients"));
+                    result.push_back(RespValue::bulk_string(std::to_string(m_config.maxClients)));
+                }
+                if (pattern == "*" || pattern == "timeout")
+                {
+                    result.push_back(RespValue::bulk_string("timeout"));
+                    result.push_back(RespValue::bulk_string(std::to_string(m_config.timeout_s)));
+                }
+                return RespValue::array(std::move(result));
+            }
+            else if (subcmd == "SET")
+            {
+                if (args.size() != 4)
+                {
+                    return RespValue::error("ERR wrong number of arguments for 'CONFIG SET'");
+                }
+
+                std::string param = args[2].str;
+                std::string value = args[3].str;
+
+                if (param == "requirepass")
+                {
+                    m_config.requirepassword = value;
+                    m_password = value; // 同步更新认证密码
+                    return RespValue::simple_string("OK");
+                }
+                else if (param == "maxclients")
+                {
+                    try
+                    {
+                        m_config.maxClients = std::stoi(value);
+                        return RespValue::simple_string("OK");
+                    }
+                    catch (...)
+                    {
+                        return RespValue::error("ERR invalid integer value");
+                    }
+                }
+                else if (param == "timeout")
+                {
+                    try
+                    {
+                        m_config.timeout_s = std::stoi(value);
+                        return RespValue::simple_string("OK");
+                    }
+                    catch (...)
+                    {
+                        return RespValue::error("ERR invalid integer value");
+                    }
+                }
+
+                return RespValue::error("ERR Unsupported CONFIG parameter: " + param);
+            }
+            return RespValue::error("ERR wrong arguments for 'CONFIG'");
+        } // string
+        else if (cmd == "SET") // SET key val [EX [s]]/[PX [ms]]
         {
             if (args.size() < 3)
             {
                 return RespValue::error("ERR wrong number of arguments for 'SET'");
             }
+            const std::string key = args[1].str;
+            const std::string val = args[2].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            shards.store[key] = val;
+            if (args.size() >= 5)
             {
-                std::unique_lock<std::shared_mutex> lock(m_mutex);
-                m_store[args[1].str] = args[2].str;
-                if (args.size() >= 5)
+                std::string subcmd = args[3].str;
+                std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
+                if (subcmd == "EX")
                 {
-                    std::string subcmd = args[3].str;
-                    std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
-                    if (subcmd == "EX")
+                    int64_t seconds;
+                    try
                     {
-                        int64_t seconds = std::stoll(args[4].str);
-                        m_expire[args[1].str] = SteadyClock::now() + std::chrono::seconds(seconds);
+                        seconds = std::stoll(args[4].str);
+                        if (seconds < 0)
+                        {
+                            return RespValue::error("ERR value can't be nagative");
+                        }
                     }
+                    catch (...)
+                    {
+                        return RespValue::error("ERR value is not a integer or out of range");
+                    }
+                    shards.expire[key] = SteadyClock::now() + std::chrono::seconds(seconds);
+                }
+                else if (subcmd == "PX")
+                {
+                    int64_t milliseconds;
+                    try
+                    {
+                        milliseconds = std::stoll(args[4].str);
+                        if (milliseconds < 0)
+                        {
+                            return RespValue::error("ERR value can't be nagative");
+                        }
+                    }
+                    catch (...)
+                    {
+                        return RespValue::error("ERR value is not a integer or out of range");
+                    }
+                    shards.expire[key] = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
                 }
             }
             return RespValue::simple_string("OK");
@@ -150,26 +483,23 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'GET'");
             }
-            std::shared_lock<std::shared_mutex> redlock(m_mutex);
-            auto it = m_store.find(args[1].str);
-            if (it == m_store.end())
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            if (it == shards.store.end())
             {
                 return RespValue::null_bulk();
             }
-            redlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_store.end())
+            auto expire_it = shards.expire.find(key);
+            if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
             {
+                shards.expire.erase(expire_it);
+                shards.store.erase(it);
                 return RespValue::null_bulk();
             }
-            auto expire_it = m_expire.find(args[1].str);
-            if (expire_it != m_expire.end() && expire_it->second < SteadyClock::now())
-            {
-                m_expire.erase(expire_it);
-                m_store.erase(it);
-                return RespValue::null_bulk();
-            }
-            return RespValue::bulk_string(it->second);
+            const std::string val = it->second;
+            return RespValue::bulk_string(val);
         }
         else if (cmd == "MSET") // MSET key val [key val]
         {
@@ -177,12 +507,14 @@ namespace blue
             {
                 return RespValue::error("ERR wrong of arguments for 'MSET'");
             }
-            std::unique_lock<std::shared_mutex> lock(m_mutex);
+
             for (size_t i = 1; i < args.size(); i += 2)
             {
                 const std::string key = args[i].str;
                 const std::string val = args[i + 1].str;
-                m_store[key] = val;
+                auto &shards = getShard(key);
+                std::unique_lock<std::shared_mutex> lock(shards.mutex);
+                shards.store[key] = val;
             }
             return RespValue::simple_string("OK");
         }
@@ -193,24 +525,31 @@ namespace blue
                 return RespValue::error("ERR wrong of arguments for 'MGET'");
             }
             std::vector<RespValue> results;
-            std::shared_lock<std::shared_mutex> lock(m_mutex);
+
             for (size_t i = 1; i < args.size(); i++)
             {
-                auto it = m_store.find(args[i].str);
-                if (it == m_store.end())
+                auto &shards = getShard(args[i].str);
+                std::shared_lock<std::shared_mutex> lock(shards.mutex);
+                auto it = shards.store.find(args[i].str);
+                if (it == shards.store.end())
                 {
                     results.push_back(RespValue::null_bulk());
-                    continue;
                 }
-                auto expire_it = m_expire.find(args[i].str);
-                if (expire_it != m_expire.end() && expire_it->second < SteadyClock::now())
+                else
                 {
-                    m_expire.erase(expire_it);
-                    m_store.erase(it);
-                    results.push_back(RespValue::null_bulk());
-                    continue;
+                    auto expire_it = shards.expire.find(args[i].str);
+                    if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
+                    {
+                        shards.expire.erase(expire_it);
+                        shards.store.erase(it);
+                        results.push_back(RespValue::null_bulk());
+                    }
+                    else
+                    {
+                        const std::string val = it->second;
+                        results.push_back(RespValue::bulk_string(val));
+                    }
                 }
-                results.push_back(RespValue::bulk_string(it->second));
             }
             return RespValue::array(std::move(results));
         }
@@ -222,31 +561,33 @@ namespace blue
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
-            std::unique_lock<std::shared_mutex> lock(m_mutex);
-            auto it = m_store.find(key);
-            if (it == m_store.end())
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            if (it == shards.store.end())
             {
-                m_store[key] = val;
+                shards.store[key] = val;
             }
             else
             {
                 it->second.append(val);
             }
-            return RespValue::integer(m_store[key].size());
+            return RespValue::integer(shards.store[key].size());
         }
-        else if (cmd == "SETNX") // SETNX key val
+        else if (cmd == "SETNX") // SETNX key val, 没有才设置
         {
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong of arguments for 'SEtNX'");
+                return RespValue::error("ERR wrong of arguments for 'SETNX'");
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
-            std::unique_lock<std::shared_mutex> lock(m_mutex);
-            auto it = m_store.find(key);
-            if (it == m_store.end())
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            if (it == shards.store.end())
             {
-                m_store[key] = val;
+                shards.store[key] = val;
                 return RespValue::integer(1);
             }
             return RespValue::integer(0);
@@ -258,10 +599,16 @@ namespace blue
                 return RespValue::error("ERR wrong of arguments for 'EXISTS'");
             }
             int64_t count = 0;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
             for (size_t i = 1; i < args.size(); i++)
             {
-                if (m_store.find(args[i].str) != m_store.end())
+                const std::string key = args[i].str;
+                auto &shards = getShard(key);
+                std::shared_lock<std::shared_mutex> lock(shards.mutex);
+                if (shards.store.find(key) != shards.store.end() ||
+                    shards.hash.find(key) != shards.hash.end() ||
+                    shards.lists.find(key) != shards.lists.end() ||
+                    shards.sets.find(key) != shards.sets.end() ||
+                    shards.zset.find(key) != shards.zset.end())
                 {
                     count++;
                 }
@@ -275,18 +622,16 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'DEL'");
             }
             int count = 0;
-            std::unique_lock<std::shared_mutex> lock(m_mutex);
             for (size_t i = 1; i < args.size(); i++)
             {
-                auto it = m_store.find(args[i].str);
-                if (it != m_store.end())
+                const std::string key = args[i].str;
+                auto &shards = getShard(key);
+                std::unique_lock<std::shared_mutex> lock(shards.mutex);
+                auto it = shards.store.find(key);
+                if (it != shards.store.end())
                 {
-                    std::string key = it->first;
-                    m_store.erase(it);
-                    if (m_expire.contains(key))
-                    {
-                        m_expire.erase(key);
-                    }
+                    shards.store.erase(it);
+                    shards.expire.erase(key);
                     count++;
                 }
             }
@@ -300,43 +645,42 @@ namespace blue
             }
             int count = 0;
             std::string key = args[1].str;
-            std::unique_lock<std::shared_mutex> lock(m_mutex);
             for (size_t i = 2; i < args.size(); i += 2)
             {
+                auto &shards = getShard(key);
+                std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 auto &field = args[i].str;
                 auto &value = args[i + 1].str; // size 是偶数所以不会出界
-                if (m_hash[key].find(field) == m_hash[key].end())
+                if (shards.hash[key].find(field) == shards.hash[key].end())
                 {
                     ++count; // 新字段
                 }
-                m_hash[key][field] = value;
+                shards.hash[key][field] = value;
             }
             return RespValue::integer(count);
-        }
+        } // 哈希集合操作
         else if (cmd == "HGET") // HGET key field
         {
             if (args.size() < 3)
             {
                 return RespValue::error("ERR wrong number of arguments for 'HGET'");
             }
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_hash.find(args[1].str);
-            if (it == m_hash.end())
+            const std::string key = args[1].str;
+            const std::string field = args[2].str;
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.hash.find(key);
+            if (it == shards.hash.end())
             {
                 return RespValue::null_bulk();
             }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_hash.end())
-            {
-                return RespValue::null_bulk();
-            }
-            auto fit = it->second.find(args[2].str);
+            auto fit = it->second.find(field);
             if (fit == it->second.end())
             {
                 return RespValue::null_bulk();
             }
-            return RespValue::bulk_string(fit->second);
+            const std::string val = fit->second;
+            return RespValue::bulk_string(val);
         }
         else if (cmd == "HGETALL") // HGETALL key
         {
@@ -345,15 +689,11 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'HGETALL'");
             }
             std::vector<RespValue> result;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_hash.find(args[1].str);
-            if (it == m_hash.end())
-            {
-                return RespValue::array(std::move(result));
-            }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_hash.end())
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.hash.find(key);
+            if (it == shards.hash.end())
             {
                 return RespValue::array(std::move(result));
             }
@@ -371,29 +711,21 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'HDEL'");
             }
             int count = 0;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_hash.find(args[1].str);
-            if (it == m_hash.end())
-            {
-                return RespValue::integer(count);
-            }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_hash.end())
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.hash.find(key);
+            if (it == shards.hash.end())
             {
                 return RespValue::integer(count);
             }
             for (size_t i = 2; i < args.size(); i++)
             {
-                if (it->second.contains(args[i].str))
-                {
-                    it->second.erase(args[i].str);
-                    ++count;
-                }
+                count += it->second.erase(args[i].str);
             }
             if (it->second.empty())
             {
-                m_hash.erase(it);
+                shards.hash.erase(it);
             }
             return RespValue::integer(count);
         }
@@ -401,24 +733,30 @@ namespace blue
         {
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong of arguments for 'HLEN'");
+                return RespValue::error("ERR wrong number of arguments for 'HLEN'");
             }
             const std::string key = args[1].str;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_hash.find(key);
-            if (it == m_hash.end())
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> rdlock(shards.mutex);
+            auto it = shards.hash.find(key);
+            if (it == shards.hash.end())
             {
-                if (m_store.find(key) != m_store.end())
+                if (shards.store.find(key) != shards.store.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_lists.find(key) != m_lists.end())
+                if (shards.lists.find(key) != shards.lists.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_zset.find(key) != m_zset.end())
+                if (shards.zset.find(key) != shards.zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (shards.sets.find(key) != shards.sets.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
@@ -430,25 +768,31 @@ namespace blue
         {
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong of arguments for 'HEXISTS'");
+                return RespValue::error("ERR wrong number of arguments for 'HEXISTS'");
             }
             const std::string key = args[1].str;
             const std::string field = args[2].str;
-            std::shared_lock<std::shared_mutex> lock(m_mutex);
-            auto it = m_hash.find(key);
-            if (it == m_hash.end())
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.hash.find(key);
+            if (it == shards.hash.end())
             {
-                if (m_store.find(key) != m_store.end())
+                if (shards.store.find(key) != shards.store.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_lists.find(key) != m_lists.end())
+                if (shards.lists.find(key) != shards.lists.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_zset.find(key) != m_zset.end())
+                if (shards.zset.find(key) != shards.zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (shards.sets.find(key) != shards.sets.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
@@ -465,32 +809,38 @@ namespace blue
         {
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong of arguments for 'HKEYS'");
+                return RespValue::error("ERR wrong number of arguments for 'HKEYS'");
             }
             const std::string key = args[1].str;
             std::vector<RespValue> results;
-            std::shared_lock<std::shared_mutex> lock(m_mutex);
-            auto it = m_hash.find(key);
-            if (it == m_hash.end())
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.hash.find(key);
+            if (it == shards.hash.end())
             {
-                if (m_store.find(key) != m_store.end())
+                if (shards.store.find(key) != shards.store.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_lists.find(key) != m_lists.end())
+                if (shards.lists.find(key) != shards.lists.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_zset.find(key) != m_zset.end())
+                if (shards.zset.find(key) != shards.zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (shards.sets.find(key) != shards.sets.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
                 return RespValue::array(std::move(results));
             }
-            for (auto& [field,_] : it->second)
+            for (auto &[field, _] : it->second)
             {
                 results.push_back(RespValue::bulk_string(field));
             }
@@ -500,32 +850,38 @@ namespace blue
         {
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong of arguments for 'HKEYS'");
+                return RespValue::error("ERR wrong number of arguments for 'HKEYS'");
             }
             const std::string key = args[1].str;
             std::vector<RespValue> results;
-            std::shared_lock<std::shared_mutex> lock(m_mutex);
-            auto it = m_hash.find(key);
-            if (it == m_hash.end())
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.hash.find(key);
+            if (it == shards.hash.end())
             {
-                if (m_store.find(key) != m_store.end())
+                if (shards.store.find(key) != shards.store.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_lists.find(key) != m_lists.end())
+                if (shards.lists.find(key) != shards.lists.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_zset.find(key) != m_zset.end())
+                if (shards.zset.find(key) != shards.zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (shards.sets.find(key) != shards.sets.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
                 return RespValue::array(std::move(results));
             }
-            for (auto& [_,val] : it->second)
+            for (auto &[_, val] : it->second)
             {
                 results.push_back(RespValue::bulk_string(val));
             }
@@ -563,44 +919,72 @@ namespace blue
                 }
             }
 
+            constexpr size_t MAX_KEYS = 10000;
             std::regex re(regex_str);
             std::vector<RespValue> result;
 
-            std::shared_lock<std::shared_mutex> lock(m_mutex);
-            // 遍历 m_store
-            for (auto &[key, value] : m_store)
+            // 遍历所有分片
+            for (auto &shard : m_shards)
             {
-                if (std::regex_match(key, re))
+                if (result.size() >= MAX_KEYS)
                 {
-                    result.push_back(RespValue::bulk_string(key));
+                    break;
                 }
-            }
-            // 遍历 m_hash
-            for (auto &[key, fields] : m_hash)
-            {
-                for (auto &[field, val] : fields)
+                std::shared_lock<std::shared_mutex> lock(shard.mutex);
+
+                for (auto &[key, value] : shard.store)
                 {
-                    if (std::regex_match(field, re))
+                    if (std::regex_match(key, re))
                     {
-                        result.push_back(RespValue::bulk_string(field));
+                        result.push_back(RespValue::bulk_string(key));
                     }
                 }
-                if (std::regex_match(key, re))
+                // Hash 类型的 key
+                for (auto &[key, fields] : shard.hash)
                 {
-                    result.push_back(RespValue::bulk_string(key));
+                    if (std::regex_match(key, re))
+                    {
+                        result.push_back(RespValue::bulk_string(key));
+                    }
+                }
+                // List 类型的 key
+                for (auto &[key, list] : shard.lists)
+                {
+                    if (std::regex_match(key, re))
+                    {
+                        result.push_back(RespValue::bulk_string(key));
+                    }
+                }
+                // Set 类型的 key
+                for (auto &[key, set] : shard.sets)
+                {
+                    if (std::regex_match(key, re))
+                    {
+                        result.push_back(RespValue::bulk_string(key));
+                    }
+                }
+                // ZSet 类型的 key
+                for (auto &[key, zset] : shard.zset)
+                {
+                    if (std::regex_match(key, re))
+                    {
+                        result.push_back(RespValue::bulk_string(key));
+                    }
                 }
             }
 
             return RespValue::array(std::move(result));
-        }
+        } // 链表操作
         else if (cmd == "LPUSH") // LPUSH key val [val...]
         {
             if (args.size() < 3)
             {
                 return RespValue::error("ERR wrong number of arguments for 'LPUSH'");
             }
-            std::unique_lock<std::shared_mutex> lock(m_mutex);
-            auto &lhs = m_lists[args[1].str];
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto &lhs = shards.lists[key];
             for (size_t i = 2; i < args.size(); i++)
             {
                 lhs.push_front(args[i].str);
@@ -613,8 +997,10 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'RPUSH'");
             }
-            std::unique_lock<std::shared_mutex> lock(m_mutex);
-            auto &lhs = m_lists[args[1].str];
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto &lhs = shards.lists[key];
             for (size_t i = 2; i < args.size(); i++)
             {
                 lhs.push_back(args[i].str);
@@ -627,16 +1013,24 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'LPOP'");
             }
-            int count = args.size() == 3 ? std::stoi(args[2].str) : 1;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_lists.find(args[1].str);
-            if (it == m_lists.end() || it->second.empty())
+            int count;
+            try
             {
-                return RespValue::null_bulk();
+                count = args.size() == 3 ? std::stoi(args[2].str) : 1;
+                if (count < 0)
+                {
+                    return RespValue::error("ERR count can't be nagative");
+                }
             }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_lists.end() || it->second.empty())
+            catch (...)
+            {
+                return RespValue::error("ERR value is not a integer or out of range");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.lists.find(key);
+            if (it == shards.lists.end() || it->second.empty())
             {
                 return RespValue::null_bulk();
             }
@@ -648,7 +1042,7 @@ namespace blue
             }
             if (it->second.empty())
             {
-                m_lists.erase(it);
+                shards.lists.erase(it);
             }
             if (results.size() == 1 && args.size() == 2)
             {
@@ -662,16 +1056,24 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'LPOP'");
             }
-            int count = args.size() == 3 ? std::stoi(args[2].str) : 1;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_lists.find(args[1].str);
-            if (it == m_lists.end() || it->second.empty())
+            int count;
+            try
             {
-                return RespValue::null_bulk();
+                count = args.size() == 3 ? std::stoi(args[2].str) : 1;
+                if (count < 0)
+                {
+                    return RespValue::error("ERR count can't be nagative");
+                }
             }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_lists.end() || it->second.empty())
+            catch (...)
+            {
+                return RespValue::error("ERR value is not a integer or out of range");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.lists.find(key);
+            if (it == shards.lists.end() || it->second.empty())
             {
                 return RespValue::null_bulk();
             }
@@ -683,7 +1085,7 @@ namespace blue
             }
             if (it->second.empty())
             {
-                m_lists.erase(it);
+                shards.lists.erase(it);
             }
             if (results.size() == 1 && args.size() == 2)
             {
@@ -697,20 +1099,24 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'LRANGE'");
             }
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_lists.find(args[1].str);
-            if (it == m_lists.end())
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            int start, stop;
+            try
+            {
+                start = std::stoi(args[2].str);
+                stop = std::stoi(args[3].str);
+            }
+            catch (...)
+            {
+                return RespValue::error("ERR value is not a integer or out of range");
+            }
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.lists.find(key);
+            if (it == shards.lists.end())
             {
                 return RespValue::array({});
             }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_lists.end())
-            {
-                return RespValue::array({});
-            }
-            int start = std::stoi(args[2].str);
-            int stop = std::stoi(args[3].str);
             int size = it->second.size();
             if (start < 0)
             {
@@ -740,7 +1146,7 @@ namespace blue
                 result.push_back(RespValue::bulk_string(*iter));
             }
             return RespValue::array(std::move(result));
-        }
+        } // 有序集合操作
         else if (cmd == "ZADD") // ZADD key score member [score member]
         {
             if (args.size() < 4 || args.size() % 2 != 0)
@@ -749,12 +1155,13 @@ namespace blue
             }
             int count = 0;
             const std::string key = args[1].str;
-            std::unique_lock<std::shared_mutex> lock(m_mutex);
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
 
-            m_zset_score.try_emplace(key);
-            m_zset.try_emplace(key);
-            auto &score_map = m_zset_score[key];
-            auto &skiplist = m_zset[key];
+            shards.zset_score.try_emplace(key);
+            shards.zset.try_emplace(key);
+            auto &score_map = shards.zset_score[key];
+            auto &skiplist = shards.zset[key];
 
             for (size_t i = 2; i < args.size(); i += 2)
             {
@@ -765,7 +1172,7 @@ namespace blue
                 }
                 catch (const std::exception &e)
                 {
-                    return RespValue::error("ERR value is not a valid float");
+                    return RespValue::error("ERR value is not a double or out of range");
                 }
                 std::string member = args[i + 1].str;
 
@@ -792,20 +1199,24 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'ZRANGE'");
             }
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_zset.find(args[1].str);
-            if (it == m_zset.end())
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            int start, stop;
+            try
+            {
+                start = std::stoi(args[2].str);
+                stop = std::stoi(args[3].str);
+            }
+            catch (...)
+            {
+                return RespValue::error("ERR value is not a integer or out of range");
+            }
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.zset.find(key);
+            if (it == shards.zset.end())
             {
                 return RespValue::array({});
             }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_zset.end())
-            {
-                return RespValue::array({});
-            }
-            int start = std::stoi(args[2].str);
-            int stop = std::stoi(args[3].str);
             bool withscores = (args.size() == 5 && args[4].str == "WITHSCORES");
             auto &skiplist_map = it->second;
             int size = skiplist_map.size();
@@ -853,21 +1264,15 @@ namespace blue
             }
             int count = 0;
             const std::string key = args[1].str;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-
-            auto it = m_zset.find(key);
-            if (it == m_zset.end())
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.zset.find(key);
+            if (it == shards.zset.end())
             {
                 return RespValue::integer(count);
             }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_zset.end())
-            {
-                return RespValue::integer(count);
-            }
-            auto sit = m_zset_score.find(key);
-            if (sit != m_zset_score.end())
+            auto sit = shards.zset_score.find(key);
+            if (sit != shards.zset_score.end())
             {
                 auto &skiplist_map = it->second;
                 auto &scores = sit->second;
@@ -886,8 +1291,8 @@ namespace blue
                 }
                 if (skiplist_map.empty())
                 {
-                    m_zset.erase(it);
-                    m_zset_score.erase(key);
+                    shards.zset.erase(it);
+                    shards.zset_score.erase(key);
                 }
             }
             return RespValue::integer(count);
@@ -899,15 +1304,10 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'ASCORE'");
             }
             const std::string key = args[1].str;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_zset_score.find(key);
-            if (it == m_zset_score.end())
-            {
-                return RespValue::null_bulk();
-            }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_zset_score.end())
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.zset_score.find(key);
+            if (it == shards.zset_score.end())
             {
                 return RespValue::null_bulk();
             }
@@ -926,15 +1326,10 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'ZRANK'");
             }
             const std::string key = args[1].str, member = args[2].str;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_zset_score.find(key);
-            if (it == m_zset_score.end())
-            {
-                return RespValue::null_bulk();
-            }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_zset_score.end())
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.zset_score.find(key);
+            if (it == shards.zset_score.end())
             {
                 return RespValue::null_bulk();
             }
@@ -943,7 +1338,7 @@ namespace blue
             if (sit != score_map.end())
             {
                 // key  = {score,member}
-                int rank = m_zset[key].getRank({sit->second, member});
+                int rank = shards.zset[key].getRank({sit->second, member});
                 if (rank >= 0)
                 {
                     return RespValue::integer(rank);
@@ -951,7 +1346,7 @@ namespace blue
             }
             return RespValue::null_bulk();
         }
-        else if (cmd == "INCR") // INCR key
+        else if (cmd == "INCR") // INCR key 自增
         {
             if (args.size() != 2)
             {
@@ -959,9 +1354,10 @@ namespace blue
             }
             const std::string key = args[1].str;
             int64_t val = 0;
-            std::unique_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_store.find(key);
-            if (it != m_store.end())
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> rdlock(shards.mutex);
+            auto it = shards.store.find(key);
+            if (it != shards.store.end())
             {
                 try
                 {
@@ -973,10 +1369,10 @@ namespace blue
                 }
             }
             val++;
-            m_store[key] = std::to_string(val);
+            shards.store[key] = std::to_string(val);
             return RespValue::integer(val);
         }
-        else if (cmd == "INCRBY") // INCR key integer
+        else if (cmd == "INCRBY") // INCR key integer 自增或自减 integer
         {
             if (args.size() != 3)
             {
@@ -992,10 +1388,11 @@ namespace blue
             {
                 return RespValue::error("ERR value is not an integer or out of range");
             }
-            std::unique_lock<std::shared_mutex> lock(m_mutex);
-            auto it = m_store.find(key);
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
             int64_t val = 0;
-            if (it != m_store.end())
+            if (it != shards.store.end())
             {
                 try
                 {
@@ -1007,92 +1404,934 @@ namespace blue
                 }
             }
             val += increment;
-            m_store[key] = std::to_string(val);
+            shards.store[key] = std::to_string(val);
             return RespValue::integer(val);
         }
-        else if (cmd == "STRLEN") // STRLEN key
+        else if (cmd == "STRLEN") // STRLEN key, 返回key对于val的长度
         {
             if (args.size() != 2)
             {
                 return RespValue::error("ERR wrong number of arguments for 'STRLEN'");
             }
             const std::string key = args[1].str;
-            std::shared_lock<std::shared_mutex> rdlock(m_mutex);
-            auto it = m_store.find(key);
-            if (it == m_store.end())
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.store.find(key);
+            if (it == shards.store.end())
             {
-                if (m_hash.find(key) != m_hash.end())
+                if (shards.hash.find(key) != shards.hash.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_lists.find(key) != m_lists.end())
+                if (shards.lists.find(key) != shards.lists.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
-                if (m_zset.find(key) != m_zset.end())
+                if (shards.zset.find(key) != shards.zset.end())
+                {
+                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                }
+
+                if (shards.sets.find(key) != shards.sets.end())
                 {
                     return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
                 }
 
                 return RespValue::integer(0);
             }
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> wrlock(m_mutex);
-            if (it == m_store.end())
+            auto expire_it = shards.expire.find(key);
+            if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
             {
-                if (m_hash.find(key) != m_hash.end())
-                {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
-                }
-
-                if (m_lists.find(key) != m_lists.end())
-                {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
-                }
-
-                if (m_zset.find(key) != m_zset.end())
-                {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
-                }
-
-                return RespValue::integer(0);
-            }
-            auto expire_it = m_expire.find(key);
-            if (expire_it != m_expire.end() && expire_it->second < SteadyClock::now())
-            {
-                m_expire.erase(expire_it);
-                m_store.erase(it);
+                shards.expire.erase(expire_it);
+                shards.store.erase(it);
                 return RespValue::integer(0);
             }
             return RespValue::integer(it->second.size());
         }
-        else if (cmd == "TYPE") // TYPE key
+        else if (cmd == "TYPE") // TYPE key, key的类型
         {
             if (args.size() != 2)
             {
                 return RespValue::error("ERR wrong number of arguments for 'TYPE'");
             }
             const std::string key = args[1].str;
-            std::shared_lock<std::shared_mutex> lock(m_mutex);
-            if (m_store.find(key) != m_store.end())
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            if (shards.store.find(key) != shards.store.end())
             {
                 return RespValue::bulk_string("string");
             }
-            if (m_hash.find(key) != m_hash.end())
+            if (shards.hash.find(key) != shards.hash.end())
             {
                 return RespValue::bulk_string("hash");
             }
-            if (m_lists.find(key) != m_lists.end())
+            if (shards.lists.find(key) != shards.lists.end())
             {
                 return RespValue::bulk_string("list");
             }
-            if (m_zset.find(key) != m_zset.end())
+            if (shards.zset.find(key) != shards.zset.end())
             {
                 return RespValue::bulk_string("zset");
             }
+            if (shards.sets.find(key) != shards.sets.end())
+            {
+                return RespValue::bulk_string("set");
+            }
             return RespValue::null_bulk();
+        } // 无序集合操作
+        else if (cmd == "SADD") // SADD key member [member...]
+        {
+            if (args.size() < 3)
+            {
+                return RespValue::error("ERR wrong number of argument for 'SADD'");
+            }
+            const std::string key = args[1].str;
+            int32_t count = 0;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                const std::string member = args[i].str;
+                if (shards.sets[key].find(member) == shards.sets[key].end())
+                {
+                    auto [_, res] = shards.sets[key].insert(member);
+                    if (res)
+                    {
+                        count++;
+                    }
+                }
+            }
+            return RespValue::integer(count);
+        }
+        else if (cmd == "SMEMBERS") // SMEMBERS key, 返回key所有的成员
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'SMEMBERS'");
+            }
+            const std::string key = args[1].str;
+            std::vector<RespValue> results;
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.sets.find(key);
+            if (it == shards.sets.end())
+            {
+                return RespValue::array(std::move(results));
+            }
+            for (auto &member : it->second)
+            {
+                results.push_back(RespValue::bulk_string(member));
+            }
+            return RespValue::array(std::move(results));
+        }
+        else if (cmd == "SREM") // SREM key member [member...]
+        {
+            if (args.size() < 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'SREM'");
+            }
+            const std::string key = args[1].str;
+            int32_t count = 0;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.sets.find(key);
+            if (it == shards.sets.end())
+            {
+                return RespValue::integer(0);
+            }
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                count += it->second.erase(args[i].str);
+            }
+            if (it->second.empty())
+            {
+                shards.sets.erase(it);
+            }
+            return RespValue::integer(count);
+        }
+        else if (cmd == "SISMEMBER") // SISMEMBER key member
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR number wrong of arguments for 'SISMEMBER'");
+            }
+            const std::string key = args[1].str;
+            const std::string member = args[2].str;
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.sets.find(key);
+            if (it == shards.sets.end())
+            {
+                return RespValue::integer(0);
+            }
+            return RespValue::integer(it->second.count(member));
+        }
+        else if (cmd == "SCARD") // SCARD key, key的集合大小
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR number wrong of arguments for 'SCARD'");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.sets.find(key);
+            if (it == shards.sets.end())
+            {
+                return RespValue::integer(0);
+            }
+            return RespValue::integer(it->second.size());
+        }
+        else if (cmd == "SRANDMEMBER") // SRANDMEMBER key [count], 随机返回count个member,count < 0可包含重复值, > 0不重复
+        {
+            if (args.size() < 2 && args.size() > 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'SRANDMEMBER'");
+            }
+            int32_t count;
+            try
+            {
+                count = args.size() == 3 ? std::stoi(args[2].str) : 0;
+            }
+            catch (...)
+            {
+                return RespValue::error("ERR value is not an integer or out of range");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.sets.find(key);
+            if (it == shards.sets.end())
+            {
+                if (args.size() == 2)
+                {
+                    return RespValue::null_bulk();
+                }
+                else
+                {
+                    return RespValue::array({});
+                }
+            }
+            const auto &set = it->second;
+            std::vector<std::string> members(set.begin(), set.end());
+            std::vector<RespValue> results;
+            if (args.size() == 2)
+            {
+                int idx = rand() % members.size();
+                return RespValue::bulk_string(members[idx]);
+            }
+
+            if (count >= 0)
+            {
+                // 正数：不重复
+                int num = std::min(count, (int32_t)(members.size()));
+                std::shuffle(members.begin(), members.end(), std::mt19937(std::random_device()()));
+                for (int i = 0; i < num; i++)
+                {
+                    results.push_back(RespValue::bulk_string(members[i]));
+                }
+            }
+            else
+            {
+                // 负数：可重复
+                int num = -count;
+                for (int i = 0; i < num; i++)
+                {
+                    int idx = rand() % members.size();
+                    results.push_back(RespValue::bulk_string(members[idx]));
+                }
+            }
+            return RespValue::array(std::move(results));
+        }
+        else if (cmd == "SPOP") // SPOP key [count], 随机返回并删除count个member,count只能大于0
+        {
+            if (args.size() < 2 && args.size() > 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'SRANDMEMBER'");
+            }
+            int32_t count;
+            try
+            {
+                count = args.size() == 3 ? std::stoi(args[2].str) : 0;
+                if (count < 0)
+                {
+                    return RespValue::error("ERR value can't be nagative");
+                }
+            }
+            catch (...)
+            {
+                return RespValue::error("ERR value is not an integer or out of range");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            auto it = shards.sets.find(key);
+            if (it == shards.sets.end())
+            {
+                if (args.size() == 2)
+                {
+                    return RespValue::null_bulk();
+                }
+                else
+                {
+                    return RespValue::array({});
+                }
+            }
+            auto &set = it->second;
+            std::vector<std::string> members(set.begin(), set.end());
+            std::vector<RespValue> results;
+            if (args.size() == 2)
+            {
+                int idx = rand() % members.size();
+                set.erase(members[idx]);
+                return RespValue::bulk_string(members[idx]);
+            }
+
+            if (count >= 0)
+            {
+                // 正数：不重复
+                int num = std::min(count, (int32_t)(members.size()));
+                std::shuffle(members.begin(), members.end(), std::mt19937(std::random_device()()));
+                for (int i = 0; i < num; i++)
+                {
+                    set.erase(members[i]);
+                    results.push_back(RespValue::bulk_string(members[i]));
+                }
+            }
+            return RespValue::array(std::move(results));
+        }
+        else if (cmd == "FLUSHDB") // FLUSHDB, 清空数据库(还没有持久化)
+        {
+            if (!m_authenticated.load(std::memory_order_acquire))
+            {
+                return RespValue::error("ERR permission denied");
+            }
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'FLUSHDB'");
+            }
+            for (auto &shards : m_shards)
+            {
+                std::unique_lock<std::shared_mutex> lock(shards.mutex);
+                shards.store.clear();
+                shards.expire.clear();
+                shards.lists.clear();
+                shards.hash.clear();
+                shards.sets.clear();
+                shards.zset.clear();
+                shards.zset_score.clear();
+            }
+            return RespValue::simple_string("OK");
+        }
+        else if (cmd == "DBSIZE") // DBSIZE, 当前数据库大小
+        {
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'DBSIZE'");
+            }
+            int64_t count = 0;
+            for (auto &shards : m_shards)
+            {
+                std::shared_lock<std::shared_mutex> lock(shards.mutex);
+                count += shards.store.size() + shards.lists.size() + shards.hash.size() + shards.zset.size();
+            }
+            return RespValue::integer(count);
+        }
+        else if (cmd == "EXPIRE") // EXPIRE key seconds, 设置key的过期时间
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'EXPIRE'");
+            }
+            int64_t second;
+            try
+            {
+                second = std::stoll(args[2].str);
+                if (second <= 0)
+                {
+                    return RespValue::error("ERR invalid expire time");
+                }
+            }
+            catch (...)
+            {
+                return RespValue::error("ERR value is not an integer or out of range");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            if (it == shards.store.end())
+            {
+                return RespValue::integer(0);
+            }
+            shards.expire[key] = SteadyClock::now() + std::chrono::seconds(second);
+            return RespValue::integer(1);
+        }
+        else if (cmd == "TTL") // TTL key, 查看key的过期时间
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'TTL'");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            auto expire_it = shards.expire.find(key);
+            if (it == shards.store.end())
+            {
+                return RespValue::integer(-2);
+            }
+            else if (expire_it == shards.expire.end())
+            {
+                return RespValue::integer(-1);
+            }
+            // 计算剩余秒数
+            auto now = SteadyClock::now();
+            if (now >= expire_it->second)
+            {
+                return RespValue::integer(-2);
+            }
+
+            auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+                                 expire_it->second - now)
+                                 .count();
+
+            return RespValue::integer(remaining);
+        }
+        else if (cmd == "PEXPIRE") // PEXPIRE key milliseconds
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'PEXPIRE'");
+            }
+            int64_t milliseconds;
+            try
+            {
+                milliseconds = std::stoll(args[2].str);
+                if (milliseconds <= 0)
+                {
+                    return RespValue::error("ERR invalid expire time");
+                }
+            }
+            catch (...)
+            {
+                return RespValue::error("ERR value is not an integer or out of range");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            if (it == shards.store.end())
+            {
+                return RespValue::integer(0);
+            }
+            shards.expire[key] = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
+            return RespValue::integer(1);
+        }
+        else if (cmd == "PTTL") // PTTL key
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'PTTL'");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            auto expire_it = shards.expire.find(key);
+            if (it == shards.store.end())
+            {
+                return RespValue::integer(-2);
+            }
+            else if (expire_it == shards.expire.end())
+            {
+                return RespValue::integer(-1);
+            }
+            // 计算剩余秒数
+            auto now = SteadyClock::now();
+            if (now >= expire_it->second)
+            {
+                return RespValue::integer(-2);
+            }
+
+            auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 expire_it->second - now)
+                                 .count();
+
+            return RespValue::integer(remaining);
+        }
+        else if (cmd == "PERSIST") // PERSIST key, 撤销key的过期时间
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of argument for 'PERSIST'");
+            }
+            const std::string key = args[1].str;
+            auto &shards = getShard(key);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            auto expire_it = shards.expire.find(key);
+            // 不存在或没有过期时间
+            if (it == shards.store.end() || expire_it == shards.expire.end())
+            {
+                return RespValue::integer(0);
+            }
+            shards.expire.erase(expire_it);
+            return RespValue::integer(1);
+        }
+        else if (cmd == "RENAME") // RENAME key newkey
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'RENAME'");
+            }
+            const std::string key = args[1].str;
+            const std::string newkey = args[2].str;
+
+            if (key == newkey)
+            {
+                return RespValue::simple_string("OK");
+            }
+
+            int old_shard_idx = getShardIndex(key);
+            int new_shard_idx = getShardIndex(newkey);
+
+            // 按顺序锁，避免死锁
+            int first = old_shard_idx;
+            int second = new_shard_idx;
+            if (first > second)
+            {
+                std::swap(first, second);
+            }
+
+            std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
+            std::unique_lock<std::shared_mutex> lock2;
+            if (old_shard_idx != new_shard_idx)
+            {
+                lock2 = std::unique_lock<std::shared_mutex>(m_shards[second].mutex);
+            }
+
+            auto &old_shard = m_shards[old_shard_idx];
+            auto &new_shard = m_shards[new_shard_idx];
+
+            // 检查 key 是否存在
+            bool exists = false;
+            int type = -1; // 0:string, 1:hash, 2:list, 3:set, 4:zset
+
+            if (old_shard.store.find(key) != old_shard.store.end())
+            {
+                exists = true;
+                type = 0;
+            }
+            else if (old_shard.hash.find(key) != old_shard.hash.end())
+            {
+                exists = true;
+                type = 1;
+            }
+            else if (old_shard.lists.find(key) != old_shard.lists.end())
+            {
+                exists = true;
+                type = 2;
+            }
+            else if (old_shard.sets.find(key) != old_shard.sets.end())
+            {
+                exists = true;
+                type = 3;
+            }
+            else if (old_shard.zset.find(key) != old_shard.zset.end())
+            {
+                exists = true;
+                type = 4;
+            }
+
+            if (!exists)
+            {
+                return RespValue::error("ERR no such key");
+            }
+
+            // 删除 newkey（如果存在）
+            if (new_shard.store.find(newkey) != new_shard.store.end())
+            {
+                new_shard.store.erase(newkey);
+                new_shard.expire.erase(newkey);
+            }
+            else if (new_shard.hash.find(newkey) != new_shard.hash.end())
+            {
+                new_shard.hash.erase(newkey);
+            }
+            else if (new_shard.lists.find(newkey) != new_shard.lists.end())
+            {
+                new_shard.lists.erase(newkey);
+            }
+            else if (new_shard.sets.find(newkey) != new_shard.sets.end())
+            {
+                new_shard.sets.erase(newkey);
+            }
+            else if (new_shard.zset.find(newkey) != new_shard.zset.end())
+            {
+                new_shard.zset.erase(newkey);
+                new_shard.zset_score.erase(newkey);
+            }
+            new_shard.expire.erase(newkey);
+
+            // 移动数据
+            if (old_shard_idx == new_shard_idx)
+            {
+                // 同分片：直接移动
+                if (type == 0)
+                {
+                    new_shard.store[newkey] = std::move(old_shard.store[key]);
+                    old_shard.store.erase(key);
+                }
+                else if (type == 1)
+                {
+                    new_shard.hash[newkey] = std::move(old_shard.hash[key]);
+                    old_shard.hash.erase(key);
+                }
+                else if (type == 2)
+                {
+                    new_shard.lists[newkey] = std::move(old_shard.lists[key]);
+                    old_shard.lists.erase(key);
+                }
+                else if (type == 3)
+                {
+                    new_shard.sets[newkey] = std::move(old_shard.sets[key]);
+                    old_shard.sets.erase(key);
+                }
+                else if (type == 4)
+                {
+                    new_shard.zset[newkey] = std::move(old_shard.zset[key]);
+                    new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
+                    old_shard.zset.erase(key);
+                    old_shard.zset_score.erase(key);
+                }
+
+                // 移动过期时间
+                auto expire_it = old_shard.expire.find(key);
+                if (expire_it != old_shard.expire.end())
+                {
+                    new_shard.expire[newkey] = expire_it->second;
+                    old_shard.expire.erase(expire_it);
+                }
+            }
+            else
+            {
+                // 跨分片：复制到新分片，删除旧分片
+                if (type == 0)
+                {
+                    new_shard.store[newkey] = old_shard.store[key];
+                    old_shard.store.erase(key);
+                }
+                else if (type == 1)
+                {
+                    new_shard.hash[newkey] = old_shard.hash[key];
+                    old_shard.hash.erase(key);
+                }
+                else if (type == 2)
+                {
+                    new_shard.lists[newkey] = old_shard.lists[key];
+                    old_shard.lists.erase(key);
+                }
+                else if (type == 3)
+                {
+                    new_shard.sets[newkey] = old_shard.sets[key];
+                    old_shard.sets.erase(key);
+                }
+                else if (type == 4)
+                {
+                    new_shard.zset[newkey] = std::move(old_shard.zset[key]);
+                    new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
+                    old_shard.zset.erase(key);
+                    old_shard.zset_score.erase(key);
+                }
+
+                auto expire_it = old_shard.expire.find(key);
+                if (expire_it != old_shard.expire.end())
+                {
+                    new_shard.expire[newkey] = expire_it->second;
+                    old_shard.expire.erase(expire_it);
+                }
+            }
+            return RespValue::simple_string("OK");
+        }
+        else if (cmd == "RENAMENX") // RENAMENX key newkey 当newkey不存在时创建
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'RENAME'");
+            }
+            const std::string key = args[1].str;
+            const std::string newkey = args[2].str;
+
+            if (key == newkey)
+            {
+                return RespValue::integer(1);
+            }
+
+            int old_shard_idx = getShardIndex(key);
+            int new_shard_idx = getShardIndex(newkey);
+
+            // 按顺序锁，避免死锁
+            int first = old_shard_idx;
+            int second = new_shard_idx;
+            if (first > second)
+            {
+                std::swap(first, second);
+            }
+
+            std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
+            std::unique_lock<std::shared_mutex> lock2;
+            if (old_shard_idx != new_shard_idx)
+            {
+                lock2 = std::unique_lock<std::shared_mutex>(m_shards[second].mutex);
+            }
+
+            auto &old_shard = m_shards[old_shard_idx];
+            auto &new_shard = m_shards[new_shard_idx];
+
+            // 检查 key 是否存在
+            bool exists = false;
+            int type = -1; // 0:string, 1:hash, 2:list, 3:set, 4:zset
+
+            if (old_shard.store.find(key) != old_shard.store.end())
+            {
+                exists = true;
+                type = 0;
+            }
+            else if (old_shard.hash.find(key) != old_shard.hash.end())
+            {
+                exists = true;
+                type = 1;
+            }
+            else if (old_shard.lists.find(key) != old_shard.lists.end())
+            {
+                exists = true;
+                type = 2;
+            }
+            else if (old_shard.sets.find(key) != old_shard.sets.end())
+            {
+                exists = true;
+                type = 3;
+            }
+            else if (old_shard.zset.find(key) != old_shard.zset.end())
+            {
+                exists = true;
+                type = 4;
+            }
+
+            if (!exists)
+            {
+                return RespValue::error("ERR no such key");
+            }
+
+            // 查看newkey是否存在
+            bool newkey_exists = false;
+            if (new_shard.store.find(newkey) != new_shard.store.end())
+            {
+                newkey_exists = true;
+            }
+            else if (new_shard.hash.find(newkey) != new_shard.hash.end())
+            {
+                newkey_exists = true;
+            }
+            else if (new_shard.lists.find(newkey) != new_shard.lists.end())
+            {
+                newkey_exists = true;
+            }
+            else if (new_shard.sets.find(newkey) != new_shard.sets.end())
+            {
+                newkey_exists = true;
+            }
+            else if (new_shard.zset.find(newkey) != new_shard.zset.end())
+            {
+                newkey_exists = true;
+            }
+            if (newkey_exists)
+            {
+                return RespValue::integer(0);
+            }
+
+            // 移动数据
+            if (old_shard_idx == new_shard_idx)
+            {
+                // 同分片：直接移动
+                if (type == 0)
+                {
+                    new_shard.store[newkey] = std::move(old_shard.store[key]);
+                    old_shard.store.erase(key);
+                }
+                else if (type == 1)
+                {
+                    new_shard.hash[newkey] = std::move(old_shard.hash[key]);
+                    old_shard.hash.erase(key);
+                }
+                else if (type == 2)
+                {
+                    new_shard.lists[newkey] = std::move(old_shard.lists[key]);
+                    old_shard.lists.erase(key);
+                }
+                else if (type == 3)
+                {
+                    new_shard.sets[newkey] = std::move(old_shard.sets[key]);
+                    old_shard.sets.erase(key);
+                }
+                else if (type == 4)
+                {
+                    new_shard.zset[newkey] = std::move(old_shard.zset[key]);
+                    new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
+                    old_shard.zset.erase(key);
+                    old_shard.zset_score.erase(key);
+                }
+
+                // 移动过期时间
+                auto expire_it = old_shard.expire.find(key);
+                if (expire_it != old_shard.expire.end())
+                {
+                    new_shard.expire[newkey] = expire_it->second;
+                    old_shard.expire.erase(expire_it);
+                }
+            }
+            else
+            {
+                // 跨分片：复制到新分片，删除旧分片
+                if (type == 0)
+                {
+                    new_shard.store[newkey] = old_shard.store[key];
+                    old_shard.store.erase(key);
+                }
+                else if (type == 1)
+                {
+                    new_shard.hash[newkey] = old_shard.hash[key];
+                    old_shard.hash.erase(key);
+                }
+                else if (type == 2)
+                {
+                    new_shard.lists[newkey] = old_shard.lists[key];
+                    old_shard.lists.erase(key);
+                }
+                else if (type == 3)
+                {
+                    new_shard.sets[newkey] = old_shard.sets[key];
+                    old_shard.sets.erase(key);
+                }
+                else if (type == 4)
+                {
+                    new_shard.zset[newkey] = std::move(old_shard.zset[key]);
+                    new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
+                    old_shard.zset.erase(key);
+                    old_shard.zset_score.erase(key);
+                }
+
+                auto expire_it = old_shard.expire.find(key);
+                if (expire_it != old_shard.expire.end())
+                {
+                    new_shard.expire[newkey] = expire_it->second;
+                    old_shard.expire.erase(expire_it);
+                }
+            }
+            return RespValue::integer(1);
+        }
+        else if (cmd == "RANDOMKEY") // RANDOMKEY, 随机返回一个key
+        {
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'RANDOMKEY'");
+            }
+            std::vector<std::string> all_keys;
+            for (auto &shards : m_shards)
+            {
+                std::shared_lock<std::shared_mutex> lock(shards.mutex);
+                // string
+                for (auto &[key, _] : shards.store)
+                {
+                    all_keys.push_back(key);
+                }
+                // hash
+                for (auto &[key, _] : shards.hash)
+                {
+                    all_keys.push_back(key);
+                }
+                // lists
+                for (auto &[key, _] : shards.lists)
+                {
+                    all_keys.push_back(key);
+                }
+                // sets
+                for (auto &[key, _] : shards.sets)
+                {
+                    all_keys.push_back(key);
+                }
+                // zset
+                for (auto &[key, _] : shards.zset)
+                {
+                    all_keys.push_back(key);
+                }
+            }
+            if (all_keys.size() == 0)
+            {
+                return RespValue::null_bulk();
+            }
+            static std::random_device rd;
+            static std::mt19937 gen(rd());
+            std::uniform_int_distribution<> dis(0, all_keys.size() - 1);
+            return RespValue::bulk_string(all_keys[dis(gen)]);
+        }
+        else if (cmd == "INFO") // INFO 返回服务器信息
+        {
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'INFO'");
+            }
+            std::string info;
+            // Server
+            info += "# Server\r\n";
+            info += "redis_version:1.0.0\r\n";
+            info += "tcp_port:6666\r\n";
+            info += "\r\n";
+
+            // Stats
+            info += "# Stats\r\n";
+            info += "total_connections_received:" + std::to_string(TcpServer<T>::getConnection()) + "\r\n";
+            info += "total_commands_processed:" + std::to_string(m_commands.load(std::memory_order_acquire)) + "\r\n";
+            info += "\r\n";
+
+            // Memory
+            info += "# Memory\r\n";
+            size_t total_keys = 0;
+            for (auto &shard : m_shards)
+            {
+                std::shared_lock lock(shard.mutex);
+                total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
+            }
+            info += "total_keys:" + std::to_string(total_keys) + "\r\n";
+            return RespValue::bulk_string(info);
+        }
+        else if (cmd == "SAVE") // SAVE 持久化
+        {
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'SAVE'");
+            }
+            std::thread([this]
+                        { saveToFile(); })
+                .detach();
+            return RespValue::simple_string("OK");
+        }
+        else if (cmd == "SHUTDOWN") // SHUTDOWN 关闭服务器,如果连接数为0
+        {
+            if (!m_authenticated.load(std::memory_order_acquire))
+            {
+                return RespValue::error("ERR permission denied");
+            }
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'SHUTDOWN'");
+            }
+            m_shutdown.store(true, std::memory_order_release);
+            return RespValue::bulk_string("OK - waiting for clients to disconnect");
         }
         return RespValue::error("ERR unknown command");
     }
@@ -1101,11 +2340,13 @@ namespace blue
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
         BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
-        RespStreamParser parser;
-        const size_t MAX_COMMAND_SIZE = 1024 * 1024;
+        RespStreamParser parser;                     // 解析器
+        const size_t MAX_COMMAND_SIZE = 1024 * 1024; // 解析缓冲区最大大小
+        const size_t BATCH_SIZE = 8192;              // 批量响应大小阈值
+
         do
         {
-            char tmp[4096];
+            char tmp[8192];
             ssize_t ret = co_await sock->recv(tmp, sizeof(tmp));
             if (ret <= 0)
             {
@@ -1121,9 +2362,6 @@ namespace blue
                 break;
             }
 
-            BLUE_LOG_DEBUGE(xx::g_logger) << "Received " << ret << " bytes from fd " << sock->getSocketfd();
-
-            // 喂入数据
             if (!parser.feed({tmp, static_cast<size_t>(ret)}))
             {
                 BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
@@ -1131,46 +2369,62 @@ namespace blue
                 break;
             }
 
-            // 处理所有完整的命令
+            // 批量处理命令
+            std::string batch_response;
             RespValue cmd;
+            int cmd_count = 0;
+
+            // 喂入数据
             while (parser.next(cmd))
             {
-                if (cmd.type == RespValue::Type::ARRAY && cmd.arr.size() > 1000)
+                auto copy_arr = cmd.arr;
+                // 安全检查
+                if (cmd.type == RespValue::Type::ARRAY && copy_arr.size() > 1000)
                 {
                     BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
-                                                << "] 命令数组过大: " << cmd.arr.size();
+                                                << "] 命令数组过大: " << copy_arr.size();
                     auto error_resp = RespValue::error("ERR command too large");
-                    auto data = RespValue::encode(error_resp);
+                    batch_response += RespValue::encode(error_resp);
+                    break;
+                }
+
+                // 执行命令
+                auto response = execute(std::move(copy_arr));
+                batch_response += RespValue::encode(response);
+                cmd_count++;
+                m_commands.fetch_add(1, std::memory_order_acq_rel);
+
+                // 如果批量响应达到阈值，立即发送
+                if (batch_response.size() >= BATCH_SIZE)
+                {
                     size_t sent = 0;
-                    while (sent < data.size())
+                    while (sent < batch_response.size())
                     {
-                        ssize_t n = co_await sock->send(data.data() + sent, data.size() - sent);
+                        ssize_t n = co_await sock->send(batch_response.data() + sent,
+                                                        batch_response.size() - sent);
                         if (n <= 0)
                         {
-                            BLUE_LOG_ERROR(xx::g_logger) << "Send failed";
+                            BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
+                                                         << "] 发送失败";
                             break;
                         }
                         sent += n;
                     }
-                    continue;
-                }
+                    batch_response.clear();
 
-                // 执行命令
-                auto start = std::chrono::steady_clock::now();
-                auto response = execute(cmd.arr);
-                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-                if (duration.count() > 100)
-                {
-                    BLUE_LOG_WARN(xx::g_logger) << "Slow command: " << duration.count() << "us";
+                    // 让出 CPU，避免饿死其他协程
+                    co_await std::suspend_always{};
                 }
-                auto data = RespValue::encode(response);
+            }
 
-                BLUE_LOG_DEBUGE(xx::g_logger) << "Sending response, size=" << data.size();
-                // 发送响应
+            // 发送剩余的响应
+            if (!batch_response.empty())
+            {
                 size_t sent = 0;
-                while (sent < data.size())
+                while (sent < batch_response.size())
                 {
-                    ssize_t n = co_await sock->send(data.data() + sent, data.size() - sent);
+                    ssize_t n = co_await sock->send(batch_response.data() + sent,
+                                                    batch_response.size() - sent);
                     if (n <= 0)
                     {
                         BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
@@ -1179,13 +2433,16 @@ namespace blue
                     }
                     sent += n;
                 }
-                if (sent == data.size())
-                {
-                    BLUE_LOG_DEBUGE(xx::g_logger) << "Response sent successfully";
-                }
             }
 
-            // 定期检查缓冲区大小，防止内存泄漏
+            if (cmd_count > 0)
+            {
+                BLUE_LOG_DEBUGE(xx::g_logger) << "Processed " << cmd_count
+                                              << " commands in batch, batch_size="
+                                              << batch_response.size();
+            }
+
+            // 检查缓冲区大小
             if (parser.bufferSize() > MAX_COMMAND_SIZE)
             {
                 BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
@@ -1194,15 +2451,18 @@ namespace blue
             }
 
         } while (true);
+
         sock->close();
+        BLUE_LOG_INFO(xx::g_logger) << "one Client exit, fd:" << sock->getSocketfd();
         TcpServer<T>::subConnection();
-        if (TcpServer<T>::getConnection() == 0)
+        if (TcpServer<T>::getConnection() == 0 && m_shutdown.load(std::memory_order_acquire))
         {
             bool end = co_await TcpServer<T>::stop();
             if (end)
+            {
                 BLUE_LOG_INFO(xx::g_logger) << "tcpserver stoped";
+            }
         }
-        BLUE_LOG_INFO(xx::g_logger) << "handleClient end, fd=" << sock->getSocketfd();
         co_return;
     }
 }

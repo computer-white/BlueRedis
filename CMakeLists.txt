@@ -290,6 +290,7 @@ add_newblue_test(test_resp)
 add_newblue_test(test_commandHandler)
 add_newblue_test(test_resp_parser)
 add_newblue_test(test_redis_stress)
+add_newblue_test(test_sharded_redis)
 
 # 打印构建信息
 message(STATUS "========================")

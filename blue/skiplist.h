@@ -42,7 +42,7 @@ namespace blue
 
         SkipList& operator=(SkipList&& other) noexcept
         {
-            if (*this != other)
+            if (this != &other)     // 比较地址
             {
                 // 清理自己
                 Node* node = m_head->forward[0];

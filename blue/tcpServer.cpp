@@ -92,6 +92,7 @@ namespace blue
     template <typename T>
     Task<void> TcpServer<T>::startAccept(MSocket::MSocketPtr sock)
     {
+        sock->setNoBlocking();
         // 处在连接状态
         while (!m_isStop.load(std::memory_order_acquire))
         {
@@ -101,6 +102,7 @@ namespace blue
                 BLUE_LOG_INFO(g_logger) << "accept new client, ptr=" << client.get() 
                             << " fd=" << client->getSocketfd();
                 client->setRecvTimeout(m_RecvTimeOut);
+                client->setNoBlocking();
                 m_worker->schedule(handleClient(client));
                 addConnection();
             }

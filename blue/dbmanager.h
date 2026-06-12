@@ -24,13 +24,13 @@ namespace blue
              * @brief 创建数据库管理器实例
              * @param host 数据库主机
              * @param user 用户名
-             * @param passward 密码
+             * @param password 密码
              * @param database 数据库名
              * @param port 端口，默认 3306
              * @return 管理器实例，失败返回 nullptr
              */
             static std::shared_ptr<DbManager> Create(const std::string& host,const std::string &user,
-                                                    const std::string &passward, const std::string &database, uint16_t port = 3306);
+                                                    const std::string &password, const std::string &database, uint16_t port = 3306);
             ~DbManager() = default;
         
             /**

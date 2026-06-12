@@ -18,8 +18,8 @@ namespace blue
         static blue::ConfigVar<std::string>::ConfigVarPtr g_db_user = 
                 blue::Config::Lookup<std::string>("db.user","blue","db user");
         
-        static blue::ConfigVar<std::string>::ConfigVarPtr g_db_passward = 
-                blue::Config::Lookup<std::string>("db.passward","","db passward");
+        static blue::ConfigVar<std::string>::ConfigVarPtr g_db_password = 
+                blue::Config::Lookup<std::string>("db.password","","db password");
         
         static blue::ConfigVar<std::string>::ConfigVarPtr g_db_database = 
                 blue::Config::Lookup<std::string>("db.database","blue_proxy","db database");
@@ -34,8 +34,8 @@ namespace blue
         static blue::ConfigVar<uint16_t>::ConfigVarPtr g_redis_port = 
                 blue::Config::Lookup<uint16_t>("redis.port",6379,"redis port");
         
-        static blue::ConfigVar<std::string>::ConfigVarPtr g_redis_passward = 
-                blue::Config::Lookup<std::string>("redis.passward","","redis passward");
+        static blue::ConfigVar<std::string>::ConfigVarPtr g_redis_password = 
+                blue::Config::Lookup<std::string>("redis.password","","redis password");
 
         static blue::ConfigVar<uint64_t>::ConfigVarPtr g_rate_limit = 
                 blue::Config::Lookup<uint64_t>("redis.rate_limit",100,"redis rate limit");
@@ -63,10 +63,10 @@ namespace blue
             // db
             s_db_host = g_db_host->getValue();
             s_db_user = g_db_user->getValue();
-            s_db_passward = g_db_passward->getValue();
+            s_db_password = g_db_password->getValue();
             s_db_database = g_db_database->getValue();
             s_db_port = g_db_port->getValue();
-            s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_passward,s_db_database,s_db_port);
+            s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port);
             if (!s_dbmanager_ptr) 
             {
                 BLUE_LOG_ERROR(g_logger) << "Failed to create DbManager";
@@ -77,29 +77,29 @@ namespace blue
             }
             g_db_host->addListener([](const std::string &old_val, const std::string &new_val){
                 s_db_host = new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_passward,s_db_database,s_db_port);
+                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port);
             });
             g_db_user->addListener([](const std::string &old_val, const std::string &new_val){
                 s_db_user= new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_passward,s_db_database,s_db_port);
+                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port);
             });
-            g_db_passward->addListener([](const std::string &old_val, const std::string &new_val){
-                s_db_passward= new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_passward,s_db_database,s_db_port);
+            g_db_password->addListener([](const std::string &old_val, const std::string &new_val){
+                s_db_password= new_val;
+                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port);
             });
             g_db_database->addListener([](const std::string &old_val, const std::string &new_val){
                 s_db_database = new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_passward,s_db_database,s_db_port);
+                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port);
             });
             g_db_port->addListener([](const uint16_t &old_val, const uint16_t &new_val){
                 s_db_port = new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_passward,s_db_database,s_db_port);
+                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port);
             });
             // redis
             s_redis_host = g_redis_host->getValue();
-            s_redis_passward = g_redis_passward->getValue();
+            s_redis_password = g_redis_password->getValue();
             s_redis_port = g_redis_port->getValue();
-            s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_passward);
+            s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_password);
             if (!s_redismanager_ptr) 
             {
                 BLUE_LOG_ERROR(g_logger) << "Failed to create RedisManager";
@@ -110,15 +110,15 @@ namespace blue
             }
             g_redis_host->addListener([](const std::string &old_val, const std::string &new_val){
                 s_redis_host = new_val;
-                s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_passward);
+                s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_password);
             });
-            g_redis_passward->addListener([](const std::string &old_val, const std::string &new_val){
-                s_redis_passward = new_val;
-                s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_passward);
+            g_redis_password->addListener([](const std::string &old_val, const std::string &new_val){
+                s_redis_password = new_val;
+                s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_password);
             });
             g_redis_port->addListener([](const uint16_t &old_val, const uint16_t &new_val){
                 s_redis_port = new_val;
-                s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_passward);
+                s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_password);
             });
             s_rate_limit = g_rate_limit->getValue();
             s_rate_limit_expire = g_rate_limit_expire->getValue();

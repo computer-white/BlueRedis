@@ -34,6 +34,7 @@ namespace blue
         Timer::TimerPtr timer;
         bool is_timeout = false;
         bool event_added = false;
+        int old_error = 0;
 
     public:
         AsyncIo(int f, OriginFunc fun, IOManager::Event event, Args... args)
@@ -49,13 +50,14 @@ namespace blue
             {
                 return true;
             }
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            old_error = errno;
+            if (old_error == EAGAIN || old_error == EWOULDBLOCK)
             {
                 return false; // 挂起提交一个任务
             }
             BLUE_LOG_ERROR(xx::g_logger) << " AsyncRead error, fd : " << fd
-                                         << " error : " << errno
-                                         << " strerrno : " << strerror(errno);
+                                         << " error : " << old_error
+                                         << " strerrno : " << strerror(old_error);
             return true; // error
         }
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> h)
@@ -113,7 +115,7 @@ namespace blue
                 return -1;
             }
             // errno == EAGIN 或 EWOULDBLOCK 再试一次
-            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+            if (ret < 0 && (old_error == EAGAIN || old_error == EWOULDBLOCK || old_error == EINTR))
             {
                 ret = std::apply(func, std::tuple_cat(std::make_tuple(fd), io_args));
             }

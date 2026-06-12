@@ -1,5 +1,5 @@
 #include "resp_parser.h"
-
+#include "blue/log.h"
 namespace blue
 {
     /*
@@ -12,7 +12,7 @@ namespace blue
         数组	*	*元素个数\r\n元素...	*2\r\n$3\r\nGET\r\n$4\r\nkey\r\n
 
     */
-
+    static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
     std::pair<RespValue, size_t> RespValue::parse(std::string_view data)
     {
         RespValue res;
@@ -232,6 +232,8 @@ namespace blue
     {
         if (parse_offset_ >= buffer_.size())
         {
+            buffer_.clear();
+            parse_offset_ = 0;
             return false;
         }
 

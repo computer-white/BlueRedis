@@ -6,11 +6,11 @@ namespace blue
     Logger::LoggerPtr DbManager::s_logger = BLUE_LOG_NAME("system");
 
     std::shared_ptr<DbManager> DbManager::Create(const std::string& host,const std::string &user,
-                                                    const std::string &passward, const std::string &database, 
+                                                    const std::string &password, const std::string &database, 
                                                     uint16_t port)
     {
         std::shared_ptr<DbManager> mgr(new DbManager());
-        mgr->m_pool = MySQLPool::Create(host,user,passward,database,port,8);
+        mgr->m_pool = MySQLPool::Create(host,user,password,database,port,8);
         if (!mgr->m_pool) return nullptr;
         return mgr;
     }
