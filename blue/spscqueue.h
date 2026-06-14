@@ -34,15 +34,11 @@ namespace blue
          */
         bool push(const T &item)
         {
-            size_t w = m_write.load(std::memory_order_relaxed);
+            size_t w = m_write.load(std::memory_order_acquire);
             size_t next = (w + 1) & (Capacity - 1);     // (w + 1) % Capacity
-            if (next == m_read_cached)
+            if (next == m_read.load(std::memory_order_acquire))
             {
-                m_read_cached = m_read.load(std::memory_order_acquire);
-                if (next == m_read_cached)
-                {
-                    return false; // 满了
-                }
+                return false; // 满了
             }
             m_buffer[w] = item;
             m_write.store(next, std::memory_order_release);
@@ -60,7 +56,9 @@ namespace blue
             for (size_t i = 0; i < count; ++i)
             {
                 if (!push(items[i]))
+                {
                     break;
+                }
                 ++pushed;
             }
             return pushed;
@@ -72,14 +70,11 @@ namespace blue
          */
         bool pop(T &item)
         {
-            size_t r = m_read.load(std::memory_order_relaxed);
-            if (r == m_write_cached)
+            size_t r = m_read.load(std::memory_order_acquire);
+            size_t w = m_write.load(std::memory_order_acquire);
+            if (r == w)
             {
-                m_write_cached = m_write.load(std::memory_order_acquire);
-                if (r == m_write_cached)
-                {
-                    return false; // 空了
-                }
+                return false; // 空了
             }
             item = m_buffer[r];
             m_read.store((r + 1) & (Capacity - 1), std::memory_order_release);
@@ -124,9 +119,5 @@ namespace blue
         std::vector<T> m_buffer;
         std::atomic<size_t> m_write{0};
         std::atomic<size_t> m_read{0};
-        char padding1[64];        // 缓存行填充，防止 false sharing
-        size_t m_read_cached = 0; // 生产者缓存的读指针
-        char padding2[64];
-        size_t m_write_cached = 0; // 消费者缓存的写指针
     };
 }

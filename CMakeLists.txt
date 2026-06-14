@@ -140,6 +140,7 @@ set(LIB_SRC
     newblue/io_manager.cpp
     newblue/scheduler.cpp
     newblue/timer.cpp
+    proxy/url_rewriter.cpp
     ${LLHTTP_SRC}
     # 如果有更多源文件，在这里添加
 )
@@ -291,6 +292,7 @@ add_newblue_test(test_commandHandler)
 add_newblue_test(test_resp_parser)
 add_newblue_test(test_redis_stress)
 add_newblue_test(test_sharded_redis)
+add_newblue_test(test_proxy_urlrewrite)
 
 # 打印构建信息
 message(STATUS "========================")

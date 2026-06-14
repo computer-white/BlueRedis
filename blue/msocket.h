@@ -470,6 +470,49 @@ namespace blue
         */
         bool cancelAll();
 
+        /**
+         * @brief 获取客户端密码
+         */
+        const std::string &getClientPassword() const noexcept { return m_client_password; }
+
+        /**
+         * @brief 设置客户端密码
+         * @param val 客户端密码
+         */
+        void setClientPassword(const std::string &val) { m_client_password= val; }
+
+        /**
+         * @brief 获取客户端级别
+         */
+        const int getClientlevel() const noexcept { return m_auth_level; }
+
+        /**
+         * @brief 设置客户端级别
+         * @param val 级别
+         */
+        void setClientlevel(int val) noexcept { m_auth_level = val; }
+
+        /**
+         * @brief 获取客户端名称
+         */
+        const std::string &getClientName() const noexcept { return m_client_name; }
+
+        /**
+         * @brief 获取客户端数据库索引id
+         */
+        const int getClientId() const noexcept { return m_client_db_id; }
+
+        /**
+         * @brief 设置客户端名称
+         * @param 客户端名称
+         */
+        void setClientName(const std::string &val) { m_client_name = val; }
+
+        /**
+         * @brief 设置客户端数据库索引id
+         * @param val 客户端数据库索引id
+         */
+        void setClientId(int val) noexcept { m_client_db_id = val; }
     private:
         /**
          * @brief 初始化socket属性,TCP禁用nagle算法,socket本地地址重用
@@ -495,7 +538,10 @@ namespace blue
         int m_type;
         int m_protocol;
         bool m_isConnected;
-
+        std::string m_client_password = "client123";    // 客户端密码 = "client123", 供commandHandler使用
+        std::string m_client_name = "";                 // 客户端名称
+        int m_auth_level = 0;                           // 客户端级别, 供commandHandler使用, 0普通用户(不需要密码可以访问),1客户端(可以使用flushdb等危险命令),2管理员(最高权,主要负责shutdown)
+        int m_client_db_id = 0;                         // 客户端数据库的索引
         std::shared_ptr<Address> m_localAddress;
         std::shared_ptr<Address> m_remoteAddress;
     };

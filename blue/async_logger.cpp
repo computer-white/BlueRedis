@@ -41,7 +41,6 @@ namespace blue
         // 尝试放入队列，失败则丢弃
         if (!m_queue.push(std::move(entry)))
         {
-            // 可选：记录丢弃数量
             static std::atomic<uint64_t> dropped{0};
             dropped.fetch_add(1, std::memory_order_relaxed);
         }
@@ -105,8 +104,8 @@ namespace blue
         // 检查是否需要轮转
         if (m_currentSize >= m_maxFileSize)
         {
-            m_file.flush();
-            rotate();
+            m_file.flush();         // 刷新保存到磁盘
+            rotate();               // 继续轮转
         }
     }
 

@@ -96,6 +96,15 @@ namespace blue
         // 处在连接状态
         while (!m_isStop.load(std::memory_order_acquire))
         {
+            // 连接限制
+            if (m_connections.load(std::memory_order_acquire) >= getMaxClientCount())
+            {
+                BLUE_LOG_WARN(g_logger) << "Max clients reached: " << m_connections.load(std::memory_order_acquire) 
+                                    << "/" << getMaxClientCount();
+                m_rejected_connections++;
+                co_await sleepFor(60);  // 等待一分钟再试
+                continue;
+            }
             MSocket::MSocketPtr client = co_await sock->acceptT(500);
             if (client)
             {

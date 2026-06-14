@@ -112,6 +112,12 @@ namespace blue
          * @return 当前连接数量
          */
         uint32_t getConnection() const noexcept { return m_connections.load(std::memory_order_acquire); }
+
+        /**
+         * @brief 获取当前拒绝连接数量
+         * @return 当前连接数量
+         */
+        uint32_t getRejectConnection() const noexcept { return m_rejected_connections.load(std::memory_order_acquire); }
     protected:
         /**
          * @brief 处理client事件
@@ -125,6 +131,11 @@ namespace blue
          */
         virtual Task<void> startAccept(MSocket::MSocketPtr sock);
 
+        /**
+         * @brief 获取客户端最大连接数量
+         */
+        virtual const int getMaxClientCount() const noexcept { return -1; };
+
     private:
         std::vector<blue::MSocket::MSocketPtr> m_socks;
         IOManager *m_worker;
@@ -136,6 +147,7 @@ namespace blue
         T m_option;
         std::atomic<bool> m_isStop = {true};
         std::atomic<uint32_t> m_connections{0};
+        std::atomic<uint32_t> m_rejected_connections{0};
     };
 }
 

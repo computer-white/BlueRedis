@@ -14,11 +14,13 @@ namespace blue
         {
             K key;
             V val;
-            std::vector<Node *> forward;
+            std::vector<Node *> forward; // 链表的next
+            std::vector<int> span;       // 跨度：到下一个节点的距离
             Node(K k, V v, int level)
-                : key(k), val(v), forward(level, nullptr) {}
+                : key(k), val(v), forward(level, nullptr), span(level, 0) {}
         };
         using NodeType = Node;
+
     public:
         SkipList()
             : m_head(new Node(K{}, V{}, MAX_LEVEL)),
@@ -27,38 +29,36 @@ namespace blue
             m_head->forward.assign(MAX_LEVEL, nullptr);
         }
 
-        SkipList(const SkipList&) = delete;
-        SkipList& operator=(const SkipList&) = delete;
+        SkipList(const SkipList &) = delete;
+        SkipList &operator=(const SkipList &) = delete;
 
-        SkipList(SkipList&& other) noexcept
-            : m_head(other.m_head)
-            , m_level(other.m_level)
-            , m_size(other.m_size)
+        SkipList(SkipList &&other) noexcept
+            : m_head(other.m_head), m_level(other.m_level), m_size(other.m_size)
         {
             other.m_head = nullptr;
             other.m_level = 1;
             other.m_size = 0;
         }
 
-        SkipList& operator=(SkipList&& other) noexcept
+        SkipList &operator=(SkipList &&other) noexcept
         {
-            if (this != &other)     // 比较地址
+            if (this != &other) // 比较地址
             {
                 // 清理自己
-                Node* node = m_head->forward[0];
+                Node *node = m_head->forward[0];
                 while (node)
                 {
-                    Node* next = node->forward[0];
+                    Node *next = node->forward[0];
                     delete node;
                     node = next;
                 }
                 delete m_head;
-                
+
                 // 接管 other
                 m_head = other.m_head;
                 m_level = other.m_level;
                 m_size = other.m_size;
-                
+
                 other.m_head = nullptr;
                 other.m_level = 1;
                 other.m_size = 0;
@@ -82,17 +82,31 @@ namespace blue
             delete m_head;
         }
 
+        /*
+          span:4            span:4                    level
+            0 -------------- 20 -----------------30     2
+            |                 |                   |
+            | s:2      s:2    | s:2     s:2       |
+            0 --------10------20 ------25---------30    1
+            |         |       |         |         |
+            |         |       |         |         |
+全部s = 1   0_---5----10--15--20---24---25---27---30    0
+        */
+
         void insert(const K &key, const V &val)
         {
             std::vector<Node *> update(MAX_LEVEL, nullptr);
+            std::vector<int> rank(MAX_LEVEL, 0);
             Node *curr = m_head;
             for (int i = m_level - 1; i >= 0; i--)
             {
+                rank[i] = i == m_level - 1 ? 0 : rank[i + 1]; // 继承上一层的排名
                 while (curr->forward[i] && curr->forward[i]->key < key)
                 {
+                    rank[i] += curr->span[i]; // 拿到当前i层的key的排名
                     curr = curr->forward[i];
                 }
-                update[i] = curr;
+                update[i] = curr; // update[i]指向要插入key的位置的上一个位置
             }
 
             curr = curr->forward[0];
@@ -103,11 +117,14 @@ namespace blue
             }
 
             int newlevel = randomLevel();
+            int old_level = m_level;            // 保存old_level,假如随机出来的new_level比old_level小，需要更新new_level到old_level的Span
             if (newlevel > m_level)
             {
                 for (int i = m_level; i < newlevel; i++)
                 {
+                    rank[i] = 0;
                     update[i] = m_head;
+                    update[i]->span[i] = m_size;
                 }
                 m_level = newlevel;
             }
@@ -117,22 +134,42 @@ namespace blue
             {
                 node->forward[i] = update[i]->forward[i];
                 update[i]->forward[i] = node;
+
+                // 更新span
+                /*
+                    在上面的图中，加入插入17,那么update[i]->spac[i]可能的取值有15，10，0的span
+                    rank[0]表示到最后的15的累加排名，其实也就是15的排名,rank[i]表示从第level-1层到第i层插入节点前一个节点的累加排名
+
+                    i = 0,那么updata[0]->span[0] = 15->span[0] = 1,rank[0] = sum(到15->span[0]) = 3,rank[i] = 累加到(到插入节点
+                    17之前的15的span[0]) = 3(15的排名),所以node->span[0] = 1,update[0]->span[i] = 3 - 3 + 1 = 1，即就是15到17的跨度
+                    i = 1,那么update[1]->span[1] = 10->span[1] = 2,rank[0]不变=3,rank[i] = 一直累加到(10->span[i]),也就是10的排名=2
+                    所以node->span[1] = 1,update[1]->span[1] = (3 - 2) + 1 = 2,也就是从10到17
+                */
+                node->span[i] = update[i]->span[i] - (rank[0] - rank[i]); 
+                update[i]->span[i] = (rank[0] - rank[i]) + 1;
             }
 
+            for (int i = newlevel; i < old_level; i++)
+            {
+                update[i]->span[i]++;
+            }
             m_size++;
         }
 
         bool remove(const K &key)
         {
             std::vector<Node *> update(MAX_LEVEL, nullptr);
+            std::vector<int> rank(MAX_LEVEL, 0);
             Node *curr = m_head;
             for (int i = m_level - 1; i >= 0; i--)
             {
+                rank[i] = (i == m_level - 1) ? 0 : rank[i + 1];
                 while (curr->forward[i] && curr->forward[i]->key < key)
                 {
+                    rank[i] += curr->span[i];           // 拿到到目前i层的key的排名
                     curr = curr->forward[i];
                 }
-                update[i] = curr;
+                update[i] = curr; // 指向要删除位置的前一个位置
             }
 
             curr = curr->forward[0];
@@ -144,9 +181,13 @@ namespace blue
             {
                 if (update[i]->forward[i] != curr)
                 {
-                    break;
+                    update[i]->span[i]--; // 下一个不是删除的节点，但是删除的节点处在update[i] 到 curr之间，所以要减一
                 }
-                update[i]->forward[i] = curr->forward[i];
+                else
+                {
+                    update[i]->forward[i] = curr->forward[i];
+                    update[i]->span[i] += curr->span[i] - 1; // 更新删除后的span
+                }
             }
 
             delete curr;
@@ -201,7 +242,7 @@ namespace blue
             {
                 while (curr->forward[i] && curr->forward[i]->key < key)
                 {
-                    rank += (1 << i);
+                    rank += curr->span[i];
                     curr = curr->forward[i];
                 }
             }

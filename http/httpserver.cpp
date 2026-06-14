@@ -6,6 +6,9 @@
 #include "blue/config.h"
 #include "blue/dbmanager.h"
 #include "blue/redismanager.h"
+#include "proxy/rate_limiter.h"
+#include "proxy/tunnel.h"
+#include "proxy/url_rewriter.h"
 #include "httpserver.h"
 #include "httpconnection.h"
 #ifdef USE_GUMBO
@@ -880,21 +883,38 @@ namespace blue
                 }
             }
             // 对于同一个客户端请求进行限流
-            if (s_redismanager_ptr)
+            // if (s_redismanager_ptr)
+            // {
+            //     // 滑天下之大稽,自己把自己限流了
+            //     // ✅ 白名单：本地 IP 不限流
+            //     if (m_remoteIP == "127.0.0.1" || m_remoteIP == "::1" || m_remoteIP == "localhost")
+            //     {
+            //         // 跳过限流
+            //     }
+            //     else
+            //     {
+            //         std::string key = "rate:" + m_remoteIP;
+            //         long long count = s_redismanager_ptr->incr(key);
+            //         if (count == 1)
+            //         {
+            //             // 设置60秒窗口
+            //             s_redismanager_ptr->expire(key, s_rate_limit_expire);  // 窗口
+            //         }
+            //         if (count > s_rate_limit)  // 每分钟最多rate_limit个请求
+            //         {
+            //             response->setStatus(blue::http::HttpStatus::TOO_MANY_REQUESTS);
+            //             response->setBody("Rate limit exceeded");
+            //             co_return;
+            //         }
+            //     }
+            // }
+            // 对同一个客户端进行限流
+            blue::proxy::RateLimiter::instance().setLimit(s_rate_limit_expire);
+            if (!blue::proxy::RateLimiter::instance().allow(m_remoteIP))
             {
-                std::string key = "rate:" + m_remoteIP;
-                long long count = s_redismanager_ptr->incr(key);
-                if (count == 1)
-                {
-                    // 设置60秒窗口
-                    s_redismanager_ptr->expire(key, s_rate_limit_expire);  // 窗口
-                }
-                if (count > s_rate_limit)  // 每分钟最多rate_limit个请求
-                {
-                    response->setStatus(blue::http::HttpStatus::TOO_MANY_REQUESTS);
-                    response->setBody("Rate limit exceeded");
-                    co_return;
-                }
+                response->setStatus(blue::http::HttpStatus::TOO_MANY_REQUESTS);
+                response->setBody("Rate limit exceeded");
+                co_return;
             }
             // 设置下游(client)ip(remoteip)
             std::string xxf = request->getHeader("X-Forwarded-For");
@@ -1037,10 +1057,12 @@ namespace blue
                 }
 
                 std::string ContentType = result->response->getHeader("Content-Type");
+                blue::proxy::UrlRewriter rewriter(targeturl, "/blue");
                 if (ContentType.find("text/html") != std::string::npos)
                 {
                     auto original_html = result->response->getBody();
-                    auto modified_body = _process_html(original_html, targeturl, proxy_path);
+                    // auto modified_body = _process_html(original_html, targeturl, proxy_path);
+                    auto modified_body = rewriter.process_html(original_html);
                     response->setBody(modified_body);
                     response->setStatus((blue::http::HttpStatus)status);
                     // 设置的修改后未压缩大小,稍后在sendresponse时会设置压缩后的length
@@ -1049,7 +1071,8 @@ namespace blue
                 else if (ContentType.find("text/css") != std::string::npos)
                 {
                     auto original_css = result->response->getBody();
-                    auto modified_css = _process_css(original_css, targeturl, proxy_path);
+                    // auto modified_css = _process_css(original_css, targeturl, proxy_path);
+                    auto modified_css = rewriter.process_css(original_css);
                     response->setBody(modified_css);
                     response->setStatus((blue::http::HttpStatus)status);
                     // 设置的修改后未压缩大小,稍后在sendresponse时会设置压缩后的length
@@ -1327,30 +1350,31 @@ namespace blue
                 co_return;
             }
             
-            int client_fd = sock->getSocketfd();
-            int remote_fd = remote_sock->getSocketfd();
+            co_await blue::proxy::Tunnel::create(sock,remote_sock);
+            // int client_fd = sock->getSocketfd();
+            // int remote_fd = remote_sock->getSocketfd();
 
 
-            // 返回 200 给浏览器，表示隧道建立
-            std::string ok = "HTTP/1.1 200 Connection Established\r\n\r\n";
-            co_await Send(client_fd, ok.c_str(), ok.size(), 0);
-            BLUE_LOG_INFO(g_logger) << "CONNECT tunnel established";
+            // // 返回 200 给浏览器，表示隧道建立
+            // std::string ok = "HTTP/1.1 200 Connection Established\r\n\r\n";
+            // co_await Send(client_fd, ok.c_str(), ok.size(), 0);
+            // BLUE_LOG_INFO(g_logger) << "CONNECT tunnel established";
             
-            char buf[16384];
+            // char buf[16384];
     
-            while (true) {
-                // 客户端 → 远端
-                ssize_t n = co_await Recv(client_fd, buf, sizeof(buf), 0);
-                if (n <= 0) break;
-                ssize_t sent = co_await Send(remote_fd, buf, n, 0);
-                if (sent <= 0) break;
+            // while (true) {
+            //     // 客户端 → 远端
+            //     ssize_t n = co_await Recv(client_fd, buf, sizeof(buf), 0);
+            //     if (n <= 0) break;
+            //     ssize_t sent = co_await Send(remote_fd, buf, n, 0);
+            //     if (sent <= 0) break;
                 
-                // 远端 → 客户端
-                n = co_await Recv(remote_fd, buf, sizeof(buf), 0);
-                if (n <= 0) break;
-                sent = co_await Send(client_fd, buf, n, 0);
-                if (sent <= 0) break;
-            }
+            //     // 远端 → 客户端
+            //     n = co_await Recv(remote_fd, buf, sizeof(buf), 0);
+            //     if (n <= 0) break;
+            //     sent = co_await Send(client_fd, buf, n, 0);
+            //     if (sent <= 0) break;
+            // }
             
             remote_sock->close();
             BLUE_LOG_INFO(g_logger) << "CONNECT tunnel closed";
@@ -1384,22 +1408,23 @@ namespace blue
             // 4. 透传 101 给浏览器
             co_await Send(sock->getSocketfd(), buf, n, 0);
 
-            // 5. 双向透传 WebSocket 帧（和 CONNECT 隧道一样）
-            int client_fd = sock->getSocketfd();
-            int remote_fd = remote->getSocketfd();
+            // // 5. 双向透传 WebSocket 帧（和 CONNECT 隧道一样）
+            // int client_fd = sock->getSocketfd();
+            // int remote_fd = remote->getSocketfd();
 
-            while (true) 
-            {
-                // 客户端 → 远端
-                ssize_t n = co_await Recv(client_fd, buf, sizeof(buf), 0);
-                if (n <= 0) break;
-                co_await Send(remote_fd, buf, n, 0);
+            // while (true) 
+            // {
+            //     // 客户端 → 远端
+            //     ssize_t n = co_await Recv(client_fd, buf, sizeof(buf), 0);
+            //     if (n <= 0) break;
+            //     co_await Send(remote_fd, buf, n, 0);
                 
-                // 远端 → 客户端
-                n = co_await Recv(remote_fd, buf, sizeof(buf), 0);
-                if (n <= 0) break;
-                co_await Send(client_fd, buf, n, 0);
-            }
+            //     // 远端 → 客户端
+            //     n = co_await Recv(remote_fd, buf, sizeof(buf), 0);
+            //     if (n <= 0) break;
+            //     co_await Send(client_fd, buf, n, 0);
+            // }
+            co_await blue::proxy::Tunnel::create(sock, remote);
             remote->close();
             co_return;
         }

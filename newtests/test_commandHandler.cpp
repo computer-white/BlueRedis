@@ -44,6 +44,7 @@ Task<void> test()
         co_await sleepFor(1);
     }
     BLUE_LOG_INFO(g_logger) << "Server stopped";
+    IOManager::GetThis()->clear();
     co_return;
 }
 
