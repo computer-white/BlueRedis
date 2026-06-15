@@ -8,6 +8,55 @@ namespace blue
 
         static Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
 
+        /*
+            // 需要处理的标签和属性
+            struct ResourceRewrite {
+                GumboTag tag;
+                const char* attribute;
+            };
+
+            ResourceRewrite rewrites[] = {
+                {GUMBO_TAG_LINK,   "href"},      // CSS
+                {GUMBO_TAG_SCRIPT, "src"},       // JavaScript
+                {GUMBO_TAG_IMG,    "src"},       // 图片
+                {GUMBO_TAG_IMG,    "srcset"},    // 响应式图片
+                {GUMBO_TAG_SOURCE, "src"},       // <source> 标签
+                {GUMBO_TAG_SOURCE, "srcset"},    // <source> 的 srcset
+                {GUMBO_TAG_IFRAME, "src"},       // 内嵌框架
+                {GUMBO_TAG_EMBED,  "src"},       // 嵌入内容
+                {GUMBO_TAG_OBJECT, "data"},      // 对象数据
+                {GUMBO_TAG_VIDEO,  "src"},       // 视频
+                {GUMBO_TAG_AUDIO,  "src"},       // 音频
+                {GUMBO_TAG_INPUT,  "src"},       // <input type="image">
+            };
+
+
+            ┌─────────────────────────────────────────────────────────┐
+            │                    需要修改的内容                         │
+            ├──────────────────┬──────────────────────────────────────┤
+            │  HTML 元素/属性   │  示例                                │
+            ├──────────────────┼──────────────────────────────────────┤
+            │ <a href="">       │  链接跳转                            │
+            │ <link href="">    │  CSS 样式表                          │
+            │ <script src="">   │  JavaScript                         │
+            │ <img src="">      │  图片                                │
+            │ <img srcset="">   │  响应式图片                          │
+            │ <source src="">   │  媒体资源                            │
+            │ <iframe src="">   │  内嵌页面                            │
+            │ <embed src="">    │  嵌入内容                            │
+            │ <object data="">  │  对象数据                            │
+            │ <video src="">    │  视频                                │
+            │ <audio src="">    │  音频                                │
+            │ <form action="">  │  表单提交                            │
+            │ <input src="">    │  image 类型的 input                  │
+            │ <base href="">    │  基础 URL（整个页面的相对路径基准）   │
+            ├──────────────────┼──────────────────────────────────────┤
+            │ CSS 中            │  url()、@import                      │
+            │ 内联样式/脚本      │  style=""、onclick="" 中的 URL       │
+            │ HTTP 响应头       │  Location、Refresh、CSP              │
+            └──────────────────┴──────────────────────────────────────┘
+        */
+
         UrlRewriter::UrlRewriter(const std::string &target, const std::string &proxy_path)
             : m_target(target), m_proxy_path(proxy_path)
         {

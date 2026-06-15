@@ -28,6 +28,11 @@ namespace blue
         uint64_t timeout_ms = 0;
         ssize_t ret = -1;
         Timer::TimerPtr timer = nullptr;
+        int fd = -1;
+        IOManager::Event event;
+        bool is_timeout = false;
+        bool event_added = false;
+        int old_error = 0;
 
     public:
         SSLAsyncIo(SSL *ssl, void *buf, size_t len)
@@ -84,56 +89,103 @@ namespace blue
             if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
             {
                 errno = EAGAIN;
+                old_error = EAGAIN;
                 return false; // 挂起提交一个任务
             }
             if (err == SSL_ERROR_ZERO_RETURN)
             {
                 BLUE_LOG_ERROR(xx::g_logger) << "ssl 连接被关闭";
                 ret = 0;
-                return false;
+                return true;        // 返回0交给上级处理
             }
             return true; // error
         }
-        void await_suspend(std::coroutine_handle<> h)
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h)
         {
-            if (ret == 0)
-            {
-                h.resume();
-                return;
-            }
             int err = SSL_get_error(ssl, ret);
-            int fd = SSL_get_fd(ssl);  // 拿到底层 socket fd
-            
+            fd = SSL_get_fd(ssl);  // 拿到底层 socket fd
+
             auto *iom = IOManager::GetThis();
             if (!iom)
             {
                 BLUE_LOG_ERROR(xx::g_logger) << "not have iom";
                 ret = -1;
                 errno = EIO;
-                h.resume();
-                return;
+                return h;       // 对称转移
             }
             if (err == SSL_ERROR_WANT_READ)
             {
-                iom->addEvent(fd, IOManager::READ, h, nullptr);  // 等可读
+                int tem = iom->addEvent(fd, IOManager::READ, h, nullptr);  // 等可读
+                if (tem)
+                {
+                    BLUE_LOG_ERROR(xx::g_logger) << " await_suspend addEvent() error, fd : " << fd;
+                    ret = -1;
+                    errno = EIO;
+                    return h;
+                }
+                event = IOManager::READ;
+                event_added = true;
             } 
             else if (err == SSL_ERROR_WANT_WRITE) 
             {
-                iom->addEvent(fd, IOManager::WRITE, h, nullptr);  // 等可写
+                int tem = iom->addEvent(fd, IOManager::WRITE, h, nullptr);  // 等可写
+                if (tem)
+                {
+                    BLUE_LOG_ERROR(xx::g_logger) << " await_suspend addEvent() error, fd : " << fd;
+                    ret = -1;
+                    errno = EIO;
+                    return h;
+                }
+                event = IOManager::WRITE;
+                event_added = true;
             } 
             else 
             {
-                iom->schedule(h);  // 其他错误，直接调度
+                if constexpr (WithTimeOut)
+                {
+                    iom->schedule(h);  // 其他错误且是定时任务，直接调度
+                }
+                else
+                {
+                    return h;
+                }
             }
             if constexpr (WithTimeOut)
             {
-                timer = iom->addTimer(timeout_ms, h, nullptr);
+                timer = iom->addTimer(timeout_ms, nullptr, [this,h]{
+                    is_timeout = true;
+                    if (event_added)
+                    {
+                        IOManager::GetThis()->delEvent(fd,event);
+                        event_added = false;
+                    }
+                    if (h && !h.done())
+                    {
+                        h.resume();
+                    }
+                });
             }
+            return std::noop_coroutine();
         }
         ssize_t await_resume()
         {
+            if (timer)
+            {
+                timer->cancel();
+                timer = nullptr;
+            }
+            if (event_added)
+            {
+                IOManager::GetThis()->delEvent(fd, event);
+                event_added = false;
+            }
+            if (is_timeout)
+            {
+                errno = ETIMEDOUT;
+                return -1;
+            }
             // errno == EAGIN
-            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            if (ret < 0 && (old_error == EAGAIN || old_error == EWOULDBLOCK))
             {
                 ret = do_io();
             }
@@ -148,11 +200,6 @@ namespace blue
                 {
                     ret = 0; // 连接关闭
                 }
-            }
-            if (timer)
-            {
-                timer->cancel();
-                timer = nullptr;
             }
             return ret;
         }

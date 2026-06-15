@@ -73,6 +73,8 @@ blue::Task<void> test()
     {
         co_await blue::sleepFor(2);
     }
+    BLUE_LOG_INFO(g_logger) << "httpserver stop";
+    blue::IOManager::GetThis()->clear();
     co_return;
 }
 

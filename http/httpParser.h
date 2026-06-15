@@ -324,6 +324,11 @@ namespace blue
              */
             void _parseQuery();
 
+            /**
+             * @brief 解析post 的body
+             */
+            void _parsePostBody();
+
             /* 一些桥接函数(桥接用户和llhttp) */
 
             /**

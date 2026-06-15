@@ -346,6 +346,40 @@ namespace blue
             }
         }
 
+        void HttpRequestParser::_parsePostBody()
+        {
+            std::string content_type = m_data->getHeader("Content-Type");
+            if (content_type.find("application/x-www-form-urlencoded") == std::string::npos)
+            {
+                return;
+            }
+
+            std::string body = m_data->getBody();
+            if (body.empty())
+            {
+                return;
+            }
+
+            size_t start = 0;
+            while (start < body.size())
+            {
+                size_t key_pos_end = body.find('=', start);
+                size_t val_pos_end = body.find('&', start);
+                if (val_pos_end == std::string::npos)
+                {
+                    val_pos_end = body.size();
+                }
+
+                if (key_pos_end != std::string::npos && key_pos_end < val_pos_end)
+                {
+                    std::string key = _urlDecode(body.substr(start, key_pos_end - start));
+                    std::string val = _urlDecode(body.substr(key_pos_end + 1, val_pos_end - key_pos_end - 1));
+                    m_data->setParam(key, val);
+                }
+                start = val_pos_end + 1;
+            }
+        }
+
         std::string HttpRequestParser::_urlDecode(const std::string &param)
         {
             std::string result;
@@ -543,6 +577,7 @@ namespace blue
                 }
             }
             self->m_data->setBody(body);
+            self->_parsePostBody();
             auto old_data = self->m_data;
             int ret = self->m_messageCmpcb ? self->m_messageCmpcb(old_data) : 0;
             return ret;
