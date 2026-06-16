@@ -72,6 +72,7 @@ namespace blue
          * @brief 获取客户端最大连接数量
          */
         virtual const int getMaxClientCount() const noexcept override { return m_config.maxClients; }
+
     private:
         Task<void> expireTime();
         void removeExpireCycle();
@@ -106,191 +107,70 @@ namespace blue
         }
 
         // 持久化到文件
-        void saveToFile()
-        {
-            const std::string filename = "dump.rdb";
-            std::ofstream file(filename, std::ios::binary);
-
-            if (!file)
-            {
-                BLUE_LOG_ERROR(xx::g_logger) << "Failed to open " << filename;
-                return;
-            }
-            for (int db = 0; db < DB_COUNT; db++)
-            {
-                for (auto &shard : m_dbs[db])
-                {
-                    std::shared_lock lock(shard.mutex);
-
-                    for (auto &[key, value] : shard.store)
-                    {
-                        file << "DB|" << db << "|STR|" << key << "|" << value;
-
-                        auto it = shard.expire.find(key);
-                        if (it != shard.expire.end())
-                        {
-                            auto expire_time = it->second.time_since_epoch().count();
-                            file << "|" << expire_time;
-                        }
-                        file << "\n";
-                    }
-
-                    for (auto &[key, fields] : shard.hash)
-                    {
-                        for (auto &[field, value] : fields)
-                        {
-                            file << "DB|" << db << "|HASH|" << key << "|" << field << "|" << value << "\n";
-                        }
-                    }
-
-                    for (auto &[key, list] : shard.lists)
-                    {
-                        for (auto &value : list)
-                        {
-                            file << "DB|" << db << "|LIST|" << key << "|" << value << "\n";
-                        }
-                    }
-
-                    for (auto &[key, set] : shard.sets)
-                    {
-                        for (auto &member : set)
-                        {
-                            file << "DB|" << db << "|SET|" << key << "|" << member << "\n";
-                        }
-                    }
-
-                    for (auto &[key, zset] : shard.zset_score)
-                    {
-                        for (auto &[member, score] : zset)
-                        {
-                            file << "DB|" << db << "|ZSET|" << key << "|" << score << "|" << member << "\n";
-                        }
-                    }
-                }
-            }
-            m_last_time.store(time(nullptr), std::memory_order_release);
-            BLUE_LOG_INFO(xx::g_logger) << "RDB saved to " << filename;
-        }
+        void saveToFile();
 
         // 从文件加载
-        void loadFromFile()
-        {
-            BLUE_LOG_INFO(xx::g_logger) << "loadFromFile";
-            const std::string filename = "dump.rdb";
-            std::ifstream file(filename);
-
-            if (!file)
-            {
-                BLUE_LOG_INFO(xx::g_logger) << "No existing RDB file";
-                return;
-            }
-
-            std::string line;
-            while (std::getline(file, line))
-            {
-                std::vector<std::string> parts;
-                size_t pos = 0;
-                std::string token;
-
-                while ((pos = line.find('|')) != std::string::npos)
-                {
-                    token = line.substr(0, pos);
-                    parts.push_back(token);
-                    line.erase(0, pos + 1);
-                }
-                parts.push_back(line);
-
-                if (parts.empty())
-                {
-                    continue;
-                }
-
-                // parts[0] = "DB"
-                // parts[1] = 数据库编号
-                // parts[2] = 类型 (STR/HASH/LIST/SET/ZSET)
-
-                int db = 0;
-                try
-                {
-                    db = std::stoi(parts[1]);
-                }
-                catch (...)
-                {
-                    return;
-                }
-                std::string type = parts[2];
-
-                // 临时保存到对应的数据库
-                auto &target_db = m_dbs[db];
-
-                if (type == "STR" && parts.size() >= 5)
-                {
-                    std::string key = parts[3];
-                    std::string value = parts[4];
-
-                    // 找到正确的分片
-                    int shard_idx = getShardIndex(key);
-                    auto &shard = target_db[shard_idx];
-                    std::unique_lock lock(shard.mutex);
-                    shard.store[key] = value;
-
-                    if (parts.size() >= 6)
-                    {
-                        int64_t expire_time = std::stoll(parts[5]);
-                        shard.expire[key] = TimePoint(std::chrono::nanoseconds(expire_time));
-                    }
-                }
-                else if (type == "HASH" && parts.size() >= 6)
-                {
-                    std::string key = parts[3];
-                    std::string field = parts[4];
-                    std::string value = parts[5];
-
-                    int shard_idx = getShardIndex(key);
-                    auto &shard = target_db[shard_idx];
-                    std::unique_lock lock(shard.mutex);
-                    shard.hash[key][field] = value;
-                }
-                else if (type == "LIST" && parts.size() >= 5)
-                {
-                    std::string key = parts[3];
-                    std::string value = parts[4];
-
-                    int shard_idx = getShardIndex(key);
-                    auto &shard = target_db[shard_idx];
-                    std::unique_lock lock(shard.mutex);
-                    shard.lists[key].push_back(value);
-                }
-                else if (type == "SET" && parts.size() >= 5)
-                {
-                    std::string key = parts[3];
-                    std::string member = parts[4];
-
-                    int shard_idx = getShardIndex(key);
-                    auto &shard = target_db[shard_idx];
-                    std::unique_lock lock(shard.mutex);
-                    shard.sets[key].insert(member);
-                }
-                else if (type == "ZSET" && parts.size() >= 6)
-                {
-                    std::string key = parts[3];
-                    double score = std::stod(parts[4]);
-                    std::string member = parts[5];
-
-                    int shard_idx = getShardIndex(key);
-                    auto &shard = target_db[shard_idx];
-                    std::unique_lock lock(shard.mutex);
-                    shard.zset_score[key][member] = score;
-                    shard.zset[key].insert({score, member}, member);
-                }
-            }
-            BLUE_LOG_INFO(xx::g_logger) << "RDB loaded from " << filename;
-        }
+        void loadFromFile();
 
         bool isAdmin(MSocket::MSocketPtr sock) const
         {
             auto admin = m_admin_sock.lock();
             return admin && admin == sock;
+        }
+
+        /**
+         * @brief 获取key版本
+         */
+        uint64_t getKeyVersion(const std::string &key, MSocket::MSocketPtr sock)
+        {
+            auto &shard = getShard(key, sock);
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+
+            auto it = shard.store.find(key);
+            if (it != shard.store.end())
+            {
+                return std::hash<std::string>{}(it->second);
+            }
+            return 0;
+        }
+
+        /**
+         * @brief 同步推送订阅消息给订阅者
+         */
+        void publishMessage(MSocket::MSocketPtr sock,
+                            const std::string &channel,
+                            const std::string &message)
+        {
+            if (!sock || !sock->isConnected())
+            {
+                return;
+            }
+            // 构造 RESP 消息
+            std::vector<RespValue> msg;
+            msg.push_back(RespValue::bulk_string("message"));
+            msg.push_back(RespValue::bulk_string(channel));
+            msg.push_back(RespValue::bulk_string(message));
+
+            std::string data = RespValue::encode(RespValue::array(std::move(msg)));
+
+            // 使用阻塞发送，确保立即发出
+            size_t sent = 0;
+            while (sent < data.size())
+            {
+                ssize_t n = ::send(sock->getSocketfd(),
+                                   data.data() + sent,
+                                   data.size() - sent,
+                                   MSG_NOSIGNAL); // MSG_NOSIGNAL 防止 SIGPIPE
+                if (n <= 0)
+                {
+                    BLUE_LOG_ERROR(xx::g_logger) << "Failed to send subscription message";
+                    return;
+                }
+                sent += n;
+            }
+
+            BLUE_LOG_DEBUGE(xx::g_logger) << "Sent subscription message to " << sock->getSocketfd();
+            return;
         }
 
     private:
@@ -301,7 +181,7 @@ namespace blue
             int32_t timeout_s = 0;     // 客户端超时(s)
             std::string save;          // 保存策略
         };
-        
+
         CommConfig m_config;
 
     private:
@@ -312,6 +192,15 @@ namespace blue
         std::atomic<time_t> m_last_time{0};                             // 上一次保存文件事件
         std::atomic<bool> m_bgsave_running{false};                      // 后台保存
         MSocket::MSocketWPtr m_admin_sock;                              // 用于同一时间只能一个管理员上线
+    private:
+        // 订阅功能,类似go的channel
+        std::shared_mutex m_channels_mutex;
+        // 频道 -> 订阅者列表
+        std::unordered_map<std::string, std::vector<MSocket::MSocketWPtr>> m_channels;
+
+        std::shared_mutex m_patterns_mutex;
+        // 模式订阅,支持通配符
+        std::unordered_map<std::string, std::vector<MSocket::MSocketWPtr>> m_patterns;
     };
 
     template <typename T>
@@ -722,6 +611,30 @@ namespace blue
                 }
             }
             return RespValue::array(std::move(results));
+        }
+        else if (cmd == "GETSET") // GETSET key val 返回旧值设置新值
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong of arguments for 'GETSET'");
+            }
+            const std::string key = args[1].str;
+            const std::string val = args[2].str;
+            auto &shards = getShard(key, sock);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            if (it == shards.store.end())
+            {
+                shards.store[key] = val;
+                return RespValue::bulk_string(val);
+            }
+            std::string ans = it->second;
+            it->second = val;
+            return RespValue::bulk_string(ans);
         }
         else if (cmd == "APPEND") // APPEND key val
         {
@@ -1331,6 +1244,148 @@ namespace blue
             }
             return RespValue::array(std::move(results));
         }
+        else if (cmd == "LLEN") // LLEN key
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'LLEN'");
+            }
+            const std::string key = args[1].str;
+            auto &shard = getShard(key, sock);
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            auto it = shard.lists.find(key);
+            if (it == shard.lists.end())
+            {
+                return RespValue::integer(-1);
+            }
+            return RespValue::integer(it->second.size());
+        }
+        else if (cmd == "LINSERT") // LINSERT key pivot val, pivot 不存在插入末尾
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() != 4)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'LINSERT'");
+            }
+            const std::string key = args[1].str;
+            const std::string pivot = args[2].str;
+            const std::string val = args[3].str;
+            
+            auto &shard = getShard(key, sock);
+            std::unique_lock<std::shared_mutex> lock(shard.mutex);
+            auto it = shard.lists.find(key);
+            if (it == shard.lists.end())
+            {
+                return RespValue::null_bulk();
+            }
+            std::list<std::string> &lists = it->second;
+            auto list_it = lists.begin();
+            for ( ;list_it != lists.end(); list_it++)
+            {
+                if (*list_it == pivot)
+                {
+                    break;
+                }
+            }
+
+            lists.insert(list_it,val);
+            return RespValue::simple_string("OK");
+        }
+        else if (cmd == "LINDEX") // LINDEX key index
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'LINDEX'");
+            }
+            const std::string key = args[1].str;
+            int64_t idx = 0;
+            try
+            {
+                idx = std::stoll(args[2].str);
+            }
+            catch(...)
+            {
+                return RespValue::error("ERR value is not a integer or out of range");
+            }
+            auto &shard = getShard(key, sock);
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            auto it = shard.lists.find(key);
+            if (it == shard.lists.end())
+            {
+                return RespValue::null_bulk();
+            }
+            size_t size = it->second.size();
+            if (idx < 0)
+            {
+                idx += size;
+            }
+            if (idx < 0)
+            {
+                idx = 0;
+            }
+            auto list_it = it->second.begin();
+            while (idx--)
+            {
+                list_it++;
+            }
+            return RespValue::bulk_string(*list_it);
+        }
+        else if (cmd == "LSET") // LSET key index val
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() != 4)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'LSET'");
+            }
+            const std::string key = args[1].str;
+            const std::string val = args[3].str;
+            int64_t idx = 0;
+            try
+            {
+                idx = std::stoll(args[2].str);
+            }
+            catch(...)
+            {
+                return RespValue::error("ERR value is not a integer or out of range");
+            }
+            auto &shard = getShard(key, sock);
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            auto it = shard.lists.find(key);
+            if (it == shard.lists.end())
+            {
+                return RespValue::null_bulk();
+            }
+            size_t size = it->second.size();
+            if (idx < 0)
+            {
+                idx += size;
+            }
+            if (idx < 0)
+            {
+                idx = 0;
+            }
+            auto list_it = it->second.begin();
+            while (idx--)
+            {
+                list_it++;
+            }
+            *list_it = val;
+            return RespValue::simple_string("OK");
+        }
         else if (cmd == "LRANGE") // LRANGE key start stop
         {
             if (sock->getClientlevel() < 1)
@@ -1467,7 +1522,7 @@ namespace blue
             {
                 return RespValue::array({});
             }
-            bool withscores = (args.size() == 5 && args[4].str == "WITHSCORES");
+            bool withscores = (args.size() == 5 && (args[4].str == "WITHSCORES" || args[4].str == "withscores"));
             auto &skiplist_map = it->second;
             int size = skiplist_map.size();
             if (start < 0)
@@ -1607,6 +1662,202 @@ namespace blue
                 }
             }
             return RespValue::null_bulk();
+        }
+        else if (cmd == "ZINCRBY") // ZINCRBY key incr member
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() != 4)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'ZINCRBY'");
+            }
+            const std::string key = args[1].str;
+            const std::string member = args[3].str;
+            double incr;
+            try
+            {
+                incr = std::stod(args[2].str);
+            }
+            catch(...)
+            {
+                return RespValue::error("ERR value is not a double or out of range");
+            }
+            auto &shard = getShard(key,sock);
+            std::unique_lock<std::shared_mutex> lock(shard.mutex);
+            auto it = shard.zset.find(key);
+            if (it == shard.zset.end())
+            {
+                return RespValue::null_bulk();
+            }
+            auto sit = shard.zset_score.find(key);
+            if (sit == shard.zset_score.end())
+            {
+                return RespValue::null_bulk();
+            }
+            auto &skiplist = it->second;
+            auto &scores_map = sit->second;
+            if (scores_map.find(member) != scores_map.end())
+            {
+                ZSetKey old_val(scores_map[member],member);
+                scores_map[member] += incr;
+                skiplist.remove(old_val);
+                skiplist.insert({scores_map[member],member},member);
+                return RespValue::bulk_string(format_score(scores_map[member]));
+            }
+            return RespValue::null_bulk(); 
+        }
+        else if (cmd == "ZCOUNT") // ZCOUNT key min max
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() != 4)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'ZCOUNT'");
+            }
+            const std::string key = args[1].str;
+            double min = 0, max = 0;
+            try
+            {
+                min = std::stod(args[2].str);
+                max = std::stod(args[3].str);
+                if (min > max)
+                {
+                    return RespValue::error("ERR min can't greater than max");
+                }
+            }
+            catch(...)
+            {
+                return RespValue::error("ERR value is not a double or out of range");
+            }
+            int64_t count = 0;
+            auto &shard = getShard(key, sock);
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            auto it = shard.zset_score.find(key);
+            if (it == shard.zset_score.end())
+            {
+                return RespValue::integer(-1);
+            }
+            for (const auto& [_, score] : it->second)
+            {
+                if (score >= min && score <= max)
+                {
+                    count++;
+                }
+            }
+            return RespValue::integer(count);
+        }
+        else if (cmd == "ZRANGEBYSCORE") // ZRANGEBYSCORE key min max [WITHSCORE]
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() < 4 || args.size() > 5)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'ZRANGEBYSCORE'");
+            }
+            const std::string key = args[1].str;
+            double min = 0, max = 0;
+            try
+            {
+                min = std::stod(args[2].str);
+                max = std::stod(args[3].str);
+                if (min > max)
+                {
+                    return RespValue::error("ERR min can't greater than max");
+                }
+            }
+            catch(...)
+            {
+                return RespValue::error("ERR value is not a double or out of range");
+            }
+            std::vector<RespValue> results;
+            bool withscore = (args.size() == 5 && (args[4].str == "WITHSCORE" || args[4].str == "withscore"));
+            auto &shard = getShard(key, sock);
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            auto it = shard.zset_score.find(key);
+            if (it == shard.zset_score.end())
+            {
+                return RespValue::array({});
+            }
+            for (const auto& [member,score] : it->second)
+            {
+                if (score >= min && score <= max)
+                {
+                    results.push_back(RespValue::bulk_string(member));
+                    if (withscore)
+                    {
+                        results.push_back(RespValue::bulk_string((format_score(score))));
+                    }
+                }
+            }
+            return RespValue::array(std::move(results));
+       }
+        else if (cmd == "ZREMRANGEBYSCORE") // ZREMRANGEBYSCORE key min max
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() != 4)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'ZREMRANGEBYSCORE'");
+            }
+            const std::string key = args[1].str;
+            double min = 0, max = 0;
+            try
+            {
+                min = std::stod(args[2].str);
+                max = std::stod(args[3].str);
+                if (min > max)
+                {
+                    return RespValue::error("ERR min can't greater than max");
+                }
+            }
+            catch(...)
+            {
+                return RespValue::error("ERR value is not a double or out of range");
+            }
+            int64_t count = 0;
+            auto &shard = getShard(key, sock);
+            std::unique_lock<std::shared_mutex> lock(shard.mutex);
+            auto it = shard.zset.find(key);
+            if (it == shard.zset.end())
+            {
+                return RespValue::integer(-1);
+            }
+            auto sit = shard.zset_score.find(key);
+            if (sit == shard.zset_score.end())
+            {
+                return RespValue::integer(-1);
+            }
+            auto &skiplist = it->second;
+            auto &scores = sit->second;
+            std::vector<std::string> tem;
+            for (const auto& [member, score] : scores)
+            {
+                if (score >= min && score <= max)
+                {
+                    ZSetKey old_val(score,member);
+                    skiplist.remove(old_val);
+                    tem.push_back(member);
+                    count++;
+                }
+            }
+            for (auto & mem : tem)
+            {
+                scores.erase(mem);
+            }
+            if (scores.empty())
+            {
+                shard.zset.erase(it);
+                shard.zset_score.erase(sit);
+            }
+            return RespValue::integer(count);
         }
         else if (cmd == "INCR") // INCR key 自增
         {
@@ -2007,6 +2258,22 @@ namespace blue
                 }
             }
             return RespValue::array(std::move(results));
+        }
+        else if (cmd == "SDIFF") // SDIFF key [key...] 差集
+        {
+
+        }
+        else if (cmd == "SINTER") // SINTER key [key...] 交集
+        {
+
+        }
+        else if (cmd == "SUNION") // SUNION key [key...] 并集
+        {
+
+        }
+        else if (cmd == "SMOVE") // SMOVE source destination member
+        {
+            
         }
         else if (cmd == "FLUSHDB") // FLUSHDB [confirm], 清空数据库(还没有持久化)
         {
@@ -2838,20 +3105,26 @@ namespace blue
                 // string
                 "SET", "GET", "MSET", "MGET", "APPEND", "SETNX",
                 "INCR", "INCRBY", "DEL", "EXISTS", "STRLEN", "TYPE",
+                "GETSET",
                 // hash
                 "HSET", "HGET", "HGETALL", "HDEL", "HLEN", "HEXISTS", "HKEYS", "HVALS",
                 // list
-                "LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE",
+                "LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE", "LLEN", "LINSERT", "LINDEX", "LSET",
                 // set
-                "SADD", "SMEMBERS", "SREM", "SISMEMBER", "SCARD", "SRANDMEMBER", "SPOP",
+                "SADD", "SMEMBERS", "SREM", "SISMEMBER", "SCARD", "SRANDMEMBER", "SPOP", "SDIFF", "SINTER", "SUNION", "SMOVE",
                 // zset
-                "ZADD", "ZRANGE", "ZREM", "ZSCORE", "ZRANK",
+                "ZADD", "ZRANGE", "ZREM", "ZSCORE", "ZRANK", "ZINCRBY", "ZCOUNT", "ZRANGEBYSCORE", "ZREMRANGEBYSCORE",
                 // server
                 "KEYS", "FLUSHDB", "FLUSHDBALL", "DBSIZE", "INFO", "SAVE", "BGSAVE", "LASTSAVE",
                 "LASTSAVE1", "ECHO", "TIME", "LOCALTIME", "SHUTDOWN", "COMMAND",
                 "RENAME", "RENAMENX", "RANDOMKEY", "EXPIRE", "TTL", "PEXPIRE", "PTTL",
-                "PERSIST"};
-            
+                "PERSIST",
+                // 事务模式
+                "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH",
+                // 订阅模式
+                "SUBSCRIBE", "PUBLISH", "UNSUBSCRIBE"
+                };
+
             for (const auto &name : cmd_list)
             {
                 commands.push_back(RespValue::bulk_string(name));
@@ -2913,6 +3186,38 @@ namespace blue
             os << std::put_time(&time_local, "%Y-%m-%d %H:%M:%S");
             return RespValue::bulk_string(os.str());
         }
+        else if (cmd == "WATCH") // WATCH key [key...], 监视key
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() < 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'WATCH'");
+            }
+            sock->clearWatchedKey();
+
+            for (size_t i = 1; i < args.size(); i++)
+            {
+                const std::string key = args[i].str;
+                sock->addWatchKey(key, getKeyVersion(key, sock));
+            }
+            return RespValue::simple_string("OK");
+        }
+        else if (cmd == "UNWATCH") // UNWATCH, 取消所有监视
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (args.size() != 1)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'UNWATCH'");
+            }
+            sock->clearWatchedKey();
+            return RespValue::simple_string("OK");
+        }
         else if (cmd == "SHUTDOWN") // SHUTDOWN 关闭服务器,如果连接数为0
         {
             if (!isAdmin(sock))
@@ -2933,6 +3238,9 @@ namespace blue
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
         BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
+        // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
+        // BLUE_LOG_INFO(xx::g_logger) << "local address : " <<  sock->getLocalAddress()->toString();
+
         RespStreamParser parser;                     // 解析器
         const size_t MAX_COMMAND_SIZE = 1024 * 1024; // 解析缓冲区最大大小
         const size_t BATCH_SIZE = 8192;              // 批量响应大小阈值
@@ -2971,6 +3279,10 @@ namespace blue
             while (parser.next(cmd))
             {
                 auto copy_arr = cmd.arr;
+                if (copy_arr.empty())
+                {
+                    continue;
+                }
                 // 安全检查
                 if (cmd.type == RespValue::Type::ARRAY && copy_arr.size() > 1000)
                 {
@@ -2981,8 +3293,242 @@ namespace blue
                     break;
                 }
 
-                // 执行命令
-                auto response = execute(std::move(copy_arr), sock);
+                // 命令cmd
+                std::string cmd = copy_arr[0].str;
+                std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
+
+                blue::RespValue response;
+
+                if (sock->inTransaction()) // 事务模式
+                {
+                    if (cmd == "EXEC") // EXEC
+                    {
+                        if (sock->getClientlevel() < 1)
+                        {
+                            response = RespValue::error("ERR authentication required");
+                        }
+                        if (copy_arr.size() != 1)
+                        {
+                            response = RespValue::error("ERR wrong number of arguments for 'EXEC'");
+                        }
+                        sock->setVersionChecker([this, sock](const std::string &key) -> uint64_t
+                                                { return this->getKeyVersion(key, sock); });
+                        if (sock->hasKeyModified())
+                        {
+                            sock->clearTransaction();
+                            sock->clearWatchedKey();
+                            response = RespValue::null_bulk();
+                        }
+                        else
+                        {
+                            std::vector<RespValue> results;
+                            for (const auto &transaction : sock->getTransaction())
+                            {
+                                auto response = execute(transaction, sock);
+                                results.push_back(response);
+                            }
+                            sock->clearTransaction();
+                            sock->clearWatchedKey();
+                            response = RespValue::array(std::move(results));
+                        }
+                    }
+                    else if (cmd == "DISCARD") // DISCARD 清除所有事务,会退出事务模式
+                    {
+                        if (sock->getClientlevel() < 1)
+                        {
+                            response = RespValue::error("ERR authentication required");
+                        }
+                        if (copy_arr.size() != 1)
+                        {
+                            response = RespValue::error("ERR wrong number of arguments for 'DISCARD'");
+                        }
+                        sock->clearTransaction();
+                        response = RespValue::simple_string("OK");
+                    }
+                    else
+                    {
+                        sock->addTransaction(std::move(copy_arr));
+                        response = RespValue::simple_string("QUEUED");
+                    }
+                }
+                else if (sock->inSubScription()) // 订阅模式
+                {
+                    if (cmd == "UNSUBSCRIBE") // UNSUBSCRIBE [channel...], 并退出订阅模式
+                    {
+                        if (sock->getClientlevel() < 1)
+                        {
+                            response = RespValue::error("ERR authentication required");
+                        }
+                        std::vector<std::string> channels;
+                        if (copy_arr.size() == 1) // 取消所有订阅
+                        {
+                            channels.assign(sock->getSubScriptionChannels().begin(), sock->getSubScriptionChannels().end());
+                        }
+                        else
+                        {
+                            for (size_t i = 1; i < copy_arr.size(); i++)
+                            {
+                                channels.push_back(copy_arr[i].str);
+                            }
+                        }
+
+                        std::vector<RespValue> results;
+
+                        for (const auto &channel : channels)
+                        {
+                            // 从全局列表删除
+                            {
+                                std::unique_lock<std::shared_mutex> lock(m_channels_mutex);
+                                auto it = m_channels.find(channel);
+                                if (it != m_channels.end())
+                                {
+                                    auto &subs = it->second;
+                                    subs.erase(std::remove_if(subs.begin(), subs.end(), [sock](const auto &weak)
+                                                              {
+                                        auto ptr = weak.lock();
+                                        return !ptr || ptr.get() == sock.get(); }),
+                                               subs.end());
+                                    if (subs.empty())
+                                    {
+                                        m_channels.erase(it);
+                                    }
+                                }
+                            }
+                            // 从连接订阅列表移除
+                            sock->removeSubScriptionChannel(channel);
+
+                            // 返回取消订阅消息
+                            std::vector<RespValue> msg;
+                            msg.push_back(RespValue::bulk_string("unsubscribe"));
+                            msg.push_back(RespValue::bulk_string(channel));
+                            msg.push_back(RespValue::integer(sock->getSubScriptionChannels().size()));
+                            results.push_back(RespValue::array(std::move(msg)));
+                        }
+                        sock->endSubScription();
+                        response = RespValue::array(std::move(results));
+                    }
+                    else if (cmd == "PING") // PING [message]
+                    {
+                        if (sock->getClientlevel() < 1)
+                        {
+                            response = RespValue::error("ERR authentication required");
+                        }
+                        if (copy_arr.size() < 1 || copy_arr.size() > 2)
+                        {
+                            response = RespValue::error("ERR wrong number of arguments for 'PING'");
+                        }
+                        if (copy_arr.size() == 1)
+                            response = RespValue::simple_string("PONG");
+                        else
+                            response = RespValue::bulk_string(copy_arr[1].str);
+                    }
+                    else
+                    {
+                        response = RespValue::error("ERR in SubScription, only 'UNSUBSCRIBE' and 'PING'");
+                    }
+                }
+                else
+                {
+                    if (cmd == "MULTI") // MULTI, 进入事务模式
+                    {
+                        if (sock->getClientlevel() < 1)
+                        {
+                            response = RespValue::error("ERR authentication required");
+                        }
+                        if (copy_arr.size() != 1)
+                        {
+                            response = RespValue::error("ERR wrong number of arguments for 'MULTI'");
+                        }
+                        if (!sock->beginTransaction())
+                        {
+                            response = RespValue::error("ERR already in SubScription");
+                        }
+                        response = RespValue::simple_string("OK");
+                    }
+                    else if (cmd == "SUBSCRIBE") // SUBSCRIBE channel [channel...] 订阅channel 进入订阅模式
+                    {
+                        if (sock->getClientlevel() < 1)
+                        {
+                            response = RespValue::error("ERR authentication required");
+                        }
+                        if (copy_arr.size() < 2)
+                        {
+                            response = RespValue::error("ERR wrong number of arguments for 'SUBSCRIBE'");
+                        }
+                        if (!sock->beginSubScription())
+                        {
+                            response = RespValue::error("ERR already in Transaction");
+                        }
+                        std::vector<RespValue> results;
+
+                        for (size_t i = 1; i < copy_arr.size(); i++)
+                        {
+                            const std::string channel = copy_arr[i].str;
+                            // 添加到连接的订阅列表
+                            sock->addSubScriptionChannel(channel);
+
+                            // 添加到全局订阅列表
+                            {
+                                std::unique_lock<std::shared_mutex> lock(m_channels_mutex);
+                                m_channels[channel].push_back(sock);
+                            }
+
+                            // 返回订阅成功消息
+                            std::vector<RespValue> msg;
+                            msg.push_back(RespValue::bulk_string("subscribe"));
+                            msg.push_back(RespValue::bulk_string(channel));
+                            msg.push_back(RespValue::integer(1)); // 当前订阅数
+
+                            results.push_back(RespValue::array(std::move(msg)));
+                        }
+                        response = RespValue::array(std::move(results));
+                    }
+                    else if (cmd == "PUBLISH") // PUBLISH channel message 发布channel 内容为message
+                    {
+                        if (sock->getClientlevel() < 1)
+                        {
+                            response = RespValue::error("ERR authentication required");
+                        }
+                        if (copy_arr.size() != 3)
+                        {
+                            response = RespValue::error("ERR wrong number of arguments for 'PUBLISH'");
+                        }
+                        const std::string channel = copy_arr[1].str;
+                        const std::string message = copy_arr[2].str;
+
+                        int receiver_count = 0;
+                        std::vector<MSocket::MSocketWPtr> subscribers;
+
+                        // 获取订阅者
+                        {
+                            std::shared_lock lock(m_channels_mutex);
+                            auto it = m_channels.find(channel);
+                            if (it != m_channels.end())
+                            {
+                                subscribers = it->second;
+                            }
+                        }
+
+                        // 发送消息给所有订阅者
+                        for (auto &weak_sock : subscribers)
+                        {
+                            auto sub_sock = weak_sock.lock();
+                            if (sub_sock && sub_sock->isConnected())
+                            {
+                                // 同步发送
+                                publishMessage(sub_sock, channel, message);
+                                receiver_count++;
+                            }
+                        }
+                        response = RespValue::integer(receiver_count);
+                    }
+                    else
+                    {
+                        // 执行普通命令
+                        response = execute(std::move(copy_arr), sock);
+                    }
+                }
+
                 batch_response += RespValue::encode(response);
                 cmd_count++;
                 m_commands.fetch_add(1, std::memory_order_acq_rel);
@@ -3050,8 +3596,29 @@ namespace blue
         {
             m_admin_sock.reset();
         }
+        // 关闭前清理订阅
+        for (const auto &channel : sock->getSubScriptionChannels())
+        {
+            std::unique_lock<std::shared_mutex> lock(m_channels_mutex);
+            auto it = m_channels.find(channel);
+            if (it != m_channels.end())
+            {
+                auto &subs = it->second;
+                subs.erase(std::remove_if(subs.begin(), subs.end(), [sock](const auto &weak)
+                                          {
+                    auto ptr = weak.lock();
+                    return !ptr || ptr.get() == sock.get(); }),
+                           subs.end());
+                if (subs.empty())
+                {
+                    m_channels.erase(it);
+                }
+            }
+        }
+        sock->clearSubScription();
+        // BLUE_LOG_INFO(xx::g_logger) << "one Client exit, fd:" << sock->getSocketfd();
         sock->close();
-        BLUE_LOG_INFO(xx::g_logger) << "one Client exit, fd:" << sock->getSocketfd();
+
         TcpServer<T>::subConnection();
         if (TcpServer<T>::getConnection() == 0 && m_shutdown.load(std::memory_order_acquire))
         {
@@ -3062,5 +3629,187 @@ namespace blue
             }
         }
         co_return;
+    }
+
+    template <typename T>
+    void CommandHandler<T>::saveToFile()
+    {
+        const std::string filename = "dump.rdb";
+        std::ofstream file(filename, std::ios::binary);
+
+        if (!file)
+        {
+            BLUE_LOG_ERROR(xx::g_logger) << "Failed to open " << filename;
+            return;
+        }
+        for (int db = 0; db < DB_COUNT; db++)
+        {
+            for (auto &shard : m_dbs[db])
+            {
+                std::shared_lock lock(shard.mutex);
+
+                for (auto &[key, value] : shard.store)
+                {
+                    file << "DB|" << db << "|STR|" << key << "|" << value;
+
+                    auto it = shard.expire.find(key);
+                    if (it != shard.expire.end())
+                    {
+                        auto expire_time = it->second.time_since_epoch().count();
+                        file << "|" << expire_time;
+                    }
+                    file << "\n";
+                }
+
+                for (auto &[key, fields] : shard.hash)
+                {
+                    for (auto &[field, value] : fields)
+                    {
+                        file << "DB|" << db << "|HASH|" << key << "|" << field << "|" << value << "\n";
+                    }
+                }
+
+                for (auto &[key, list] : shard.lists)
+                {
+                    for (auto &value : list)
+                    {
+                        file << "DB|" << db << "|LIST|" << key << "|" << value << "\n";
+                    }
+                }
+
+                for (auto &[key, set] : shard.sets)
+                {
+                    for (auto &member : set)
+                    {
+                        file << "DB|" << db << "|SET|" << key << "|" << member << "\n";
+                    }
+                }
+
+                for (auto &[key, zset] : shard.zset_score)
+                {
+                    for (auto &[member, score] : zset)
+                    {
+                        file << "DB|" << db << "|ZSET|" << key << "|" << score << "|" << member << "\n";
+                    }
+                }
+            }
+        }
+        m_last_time.store(time(nullptr), std::memory_order_release);
+        BLUE_LOG_INFO(xx::g_logger) << "RDB saved to " << filename;
+    }
+
+    template <typename T>
+    void CommandHandler<T>::loadFromFile()
+    {
+        BLUE_LOG_INFO(xx::g_logger) << "loadFromFile";
+        const std::string filename = "dump.rdb";
+        std::ifstream file(filename);
+
+        if (!file)
+        {
+            BLUE_LOG_INFO(xx::g_logger) << "No existing RDB file";
+            return;
+        }
+
+        std::string line;
+        while (std::getline(file, line))
+        {
+            std::vector<std::string> parts;
+            size_t pos = 0;
+            std::string token;
+
+            while ((pos = line.find('|')) != std::string::npos)
+            {
+                token = line.substr(0, pos);
+                parts.push_back(token);
+                line.erase(0, pos + 1);
+            }
+            parts.push_back(line);
+
+            if (parts.empty())
+            {
+                continue;
+            }
+
+            // parts[0] = "DB"
+            // parts[1] = 数据库编号
+            // parts[2] = 类型 (STR/HASH/LIST/SET/ZSET)
+
+            int db = 0;
+            try
+            {
+                db = std::stoi(parts[1]);
+            }
+            catch (...)
+            {
+                return;
+            }
+            std::string type = parts[2];
+
+            // 临时保存到对应的数据库
+            auto &target_db = m_dbs[db];
+
+            if (type == "STR" && parts.size() >= 5)
+            {
+                std::string key = parts[3];
+                std::string value = parts[4];
+
+                // 找到正确的分片
+                int shard_idx = getShardIndex(key);
+                auto &shard = target_db[shard_idx];
+                std::unique_lock lock(shard.mutex);
+                shard.store[key] = value;
+
+                if (parts.size() >= 6)
+                {
+                    int64_t expire_time = std::stoll(parts[5]);
+                    shard.expire[key] = TimePoint(std::chrono::nanoseconds(expire_time));
+                }
+            }
+            else if (type == "HASH" && parts.size() >= 6)
+            {
+                std::string key = parts[3];
+                std::string field = parts[4];
+                std::string value = parts[5];
+
+                int shard_idx = getShardIndex(key);
+                auto &shard = target_db[shard_idx];
+                std::unique_lock lock(shard.mutex);
+                shard.hash[key][field] = value;
+            }
+            else if (type == "LIST" && parts.size() >= 5)
+            {
+                std::string key = parts[3];
+                std::string value = parts[4];
+
+                int shard_idx = getShardIndex(key);
+                auto &shard = target_db[shard_idx];
+                std::unique_lock lock(shard.mutex);
+                shard.lists[key].push_back(value);
+            }
+            else if (type == "SET" && parts.size() >= 5)
+            {
+                std::string key = parts[3];
+                std::string member = parts[4];
+
+                int shard_idx = getShardIndex(key);
+                auto &shard = target_db[shard_idx];
+                std::unique_lock lock(shard.mutex);
+                shard.sets[key].insert(member);
+            }
+            else if (type == "ZSET" && parts.size() >= 6)
+            {
+                std::string key = parts[3];
+                double score = std::stod(parts[4]);
+                std::string member = parts[5];
+
+                int shard_idx = getShardIndex(key);
+                auto &shard = target_db[shard_idx];
+                std::unique_lock lock(shard.mutex);
+                shard.zset_score[key][member] = score;
+                shard.zset[key].insert({score, member}, member);
+            }
+        }
+        BLUE_LOG_INFO(xx::g_logger) << "RDB loaded from " << filename;
     }
 }
