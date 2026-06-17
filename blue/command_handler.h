@@ -5,6 +5,7 @@
 #include <list>
 #include <iomanip>
 #include <unordered_set>
+#include "spscqueue.h"
 #include "config.h"
 #include "task.h"
 #include "tcpServer.h"
@@ -189,11 +190,11 @@ namespace blue
         std::atomic<uint32_t> m_commands{0};                            // 命令数量
         std::atomic<bool> m_shutdown{false};                            // 服务器关闭标识
         std::string m_password = "";                                    // 管理员密码
-        std::atomic<time_t> m_last_time{0};                             // 上一次保存文件事件
+        std::atomic<time_t> m_last_time{0};                             // 上一次保存文件时间
         std::atomic<bool> m_bgsave_running{false};                      // 后台保存
         MSocket::MSocketWPtr m_admin_sock;                              // 用于同一时间只能一个管理员上线
     private:
-        // 订阅功能,类似go的channel
+        // 订阅功能
         std::shared_mutex m_channels_mutex;
         // 频道 -> 订阅者列表
         std::unordered_map<std::string, std::vector<MSocket::MSocketWPtr>> m_channels;
@@ -201,6 +202,40 @@ namespace blue
         std::shared_mutex m_patterns_mutex;
         // 模式订阅,支持通配符
         std::unordered_map<std::string, std::vector<MSocket::MSocketWPtr>> m_patterns;
+
+    private:
+        // 慢查询日志
+        struct SlowLogEntry
+        {
+            int64_t id;                                      // 自增id
+            std::chrono::system_clock::time_point timestamp; // 时间戳
+            std::chrono::microseconds duration;              // 执行时间(微秒)
+            std::string command;                             // 命令字符串
+            std::string client_ip;                           // 客户端ip
+        };
+
+        SPSCQueue<SlowLogEntry, 2048> m_slow_logs;   // 慢查询日志队列
+        std::shared_mutex m_slow_logs_cache_mutex;   // 日志锁
+        std::vector<SlowLogEntry> m_slow_logs_cache; // 用于查询的缓存
+
+        std::atomic<int64_t> m_slow_log_id{0};              // 自增ID
+        std::atomic<int64_t> m_slow_log_slower_than{10000}; // 阈值（微秒），默认10ms
+        std::atomic<size_t> m_slow_log_max_len{128};        // 最大保存条数
+
+        void syncSlowLogs()
+        {
+            std::unique_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
+            SlowLogEntry entry;
+            size_t max_len = m_slow_log_max_len.load(std::memory_order_acquire);
+            while (m_slow_logs.pop(entry))
+            {
+                m_slow_logs_cache.push_back(std::move(entry));
+                if (m_slow_logs_cache.size() > max_len)
+                {
+                    m_slow_logs_cache.erase(m_slow_logs_cache.begin());
+                }
+            }
+        }
     };
 
     template <typename T>
@@ -264,9 +299,39 @@ namespace blue
     template <typename T>
     RespValue CommandHandler<T>::execute(std::vector<RespValue> args, MSocket::MSocketPtr sock)
     {
+        auto start = SteadyClock::now();
+
+        auto return_with_slowlog = [&](RespValue resp) -> RespValue
+        {
+            auto end = SteadyClock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+            if (duration.count() > m_slow_log_slower_than.load(std::memory_order_acquire))
+            {
+                std::string cmd_str;
+                for (size_t i = 0; i < args.size(); i++)
+                {
+                    if (i > 0)
+                    {
+                        cmd_str += " ";
+                    }
+                    cmd_str += args[i].str;
+                }
+                SlowLogEntry entry{
+                    ++m_slow_log_id,
+                    std::chrono::system_clock::now(),
+                    duration,
+                    cmd_str,
+                    sock->getRemoteAddress()->toString()};
+
+                m_slow_logs.push(entry);
+            }
+            return resp;
+        };
+
         if (args.empty())
         {
-            return RespValue::error("ERR empty command");
+            return return_with_slowlog(RespValue::error("ERR empty command"));
         }
 
         std::string cmd = args[0].str;
@@ -276,37 +341,37 @@ namespace blue
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 1 || args.size() > 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'PING'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'PING'"));
             }
             if (args.size() == 1)
-                return RespValue::simple_string("PONG");
+                return return_with_slowlog(RespValue::simple_string("PONG"));
             else
-                return RespValue::bulk_string(args[1].str);
+                return return_with_slowlog(RespValue::bulk_string(args[1].str));
         }
         else if (cmd == "AUTH") // AUTH password
         {
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'AUTH'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'AUTH'"));
             }
             if (args[1].str == sock->getClientPassword())
             {
                 sock->setClientlevel(1);
-                return RespValue::simple_string("OK");
+                return return_with_slowlog(RespValue::simple_string("OK"));
             }
             if (args[1].str == m_password)
             {
                 if (!m_admin_sock.expired())
                 {
-                    return RespValue::error("ERR admin already logged in elsewhere");
+                    return return_with_slowlog(RespValue::error("ERR admin already logged in elsewhere"));
                 }
                 m_admin_sock = sock;
                 sock->setClientlevel(2);
-                return RespValue::simple_string("OK");
+                return return_with_slowlog(RespValue::simple_string("OK"));
             }
             return RespValue::error("ERR invalid password");
         }
@@ -314,11 +379,11 @@ namespace blue
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'SELECT'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SELECT'"));
             }
             int db;
             try
@@ -326,25 +391,25 @@ namespace blue
                 db = std::stoi(args[1].str);
                 if (db < 0 || db >= DB_COUNT)
                 {
-                    return RespValue::error("ERR DB index is out of range");
+                    return return_with_slowlog(RespValue::error("ERR DB index is out of range"));
                 }
             }
             catch (...)
             {
-                return RespValue::error("ERR invalid DB index");
+                return return_with_slowlog(RespValue::error("ERR invalid DB index"));
             }
             sock->setClientId(db);
-            return RespValue::simple_string("OK");
+            return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "CLIENT") // CLIENT GETNAME/(SETNAME [name])
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'CLIENT'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'CLIENT'"));
             }
             std::string subcmd = args[1].str;
             std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
@@ -352,31 +417,31 @@ namespace blue
             {
                 if (args.size() != 3)
                 {
-                    return RespValue::error("ERR wrong number of arguments for 'CLIENT SETNAME'");
+                    return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'CLIENT SETNAME'"));
                 }
                 sock->setClientName(args[2].str);
-                return RespValue::simple_string("OK");
+                return return_with_slowlog(RespValue::simple_string("OK"));
             }
             else if (subcmd == "GETNAME")
             {
                 if (args.size() != 2)
                 {
-                    return RespValue::error("ERR wrong number of arguments for 'CLIENT GETNAME'");
+                    return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'CLIENT GETNAME'"));
                 }
                 if (sock->getClientName().empty())
                 {
-                    return RespValue::null_bulk();
+                    return return_with_slowlog(RespValue::null_bulk());
                 }
-                return RespValue::bulk_string(sock->getClientName());
+                return return_with_slowlog(RespValue::bulk_string(sock->getClientName()));
             }
-            return RespValue::error("ERR wrong arguments for 'CLIENT'");
+            return return_with_slowlog(RespValue::error("ERR wrong arguments for 'CLIENT'"));
         }
         else if (cmd == "CONFIG") // CONFIG (GET [...])/SET [...], 获取或设置客户端的配置信息
         {
             // 同一时刻只能存在一个管理员，并且由于CommandHandler只有一个实例化，所以修改和获取不需要锁
             if (args.size() < 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'CONFIG'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'CONFIG'"));
             }
             std::string subcmd = args[1].str;
             std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
@@ -384,7 +449,7 @@ namespace blue
             {
                 if (args.size() != 3)
                 {
-                    return RespValue::error("ERR wrong number of arguments for 'CONFIG GET'");
+                    return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'CONFIG GET'"));
                 }
                 std::string pattern = args[2].str;
                 std::vector<RespValue> result;
@@ -404,13 +469,23 @@ namespace blue
                     result.push_back(RespValue::bulk_string("timeout"));
                     result.push_back(RespValue::bulk_string(std::to_string(m_config.timeout_s)));
                 }
-                return RespValue::array(std::move(result));
+                if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*") 
+                {
+                    result.push_back(RespValue::bulk_string("slowlog-log-slower-than"));
+                    result.push_back(RespValue::bulk_string(std::to_string(m_slow_log_slower_than.load(std::memory_order_acquire))));
+                }
+                if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*") 
+                {
+                    result.push_back(RespValue::bulk_string("slowlog-max-len"));
+                    result.push_back(RespValue::bulk_string(std::to_string(m_slow_log_max_len.load(std::memory_order_acquire))));
+                }
+                return return_with_slowlog(RespValue::array(std::move(result)));
             }
             else if (subcmd == "SET")
             {
                 if (args.size() != 4)
                 {
-                    return RespValue::error("ERR wrong number of arguments for 'CONFIG SET'");
+                    return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'CONFIG SET'"));
                 }
 
                 std::string param = args[2].str;
@@ -419,11 +494,11 @@ namespace blue
                 if (param == "clientpass")
                 {
                     sock->setClientPassword(value);
-                    return RespValue::simple_string("OK");
+                    return return_with_slowlog(RespValue::simple_string("OK"));
                 }
                 if (!isAdmin(sock))
                 {
-                    return RespValue::error("ERR authentication required");
+                    return return_with_slowlog(RespValue::error("ERR authentication required"));
                 }
                 if (param == "maxclients")
                 {
@@ -432,18 +507,18 @@ namespace blue
                         int newmax = std::stoi(value);
                         if (newmax <= 0)
                         {
-                            return RespValue::error("ERR invalid maxclients value");
+                            return return_with_slowlog(RespValue::error("ERR invalid maxclients value"));
                         }
                         if (newmax < TcpServer<T>::getConnection())
                         {
-                            return RespValue::error("ERR maxclients can't be less than current connections");
+                            return return_with_slowlog(RespValue::error("ERR maxclients can't be less than current connections"));
                         }
                         m_config.maxClients = newmax;
-                        return RespValue::simple_string("OK");
+                        return return_with_slowlog(RespValue::simple_string("OK"));
                     }
                     catch (...)
                     {
-                        return RespValue::error("ERR invalid integer value");
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
                     }
                 }
                 if (param == "timeout")
@@ -456,27 +531,61 @@ namespace blue
                             return RespValue::error("ERR invalid timeout value");
                         }
                         m_config.timeout_s = timeout;
-                        return RespValue::simple_string("OK");
+                        return return_with_slowlog(RespValue::simple_string("OK"));
                     }
                     catch (...)
                     {
-                        return RespValue::error("ERR invalid integer value");
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
+                    }
+                }
+                if (param == "slowlog-log-slower-than")
+                {
+                    try
+                    {
+                        int64_t val = std::stoll(value);
+                        if (val < 0)
+                        {
+                            return return_with_slowlog(RespValue::error("ERR value must be >= 0"));
+                        }
+                        m_slow_log_slower_than.store(val,std::memory_order_release);
+                        return return_with_slowlog(RespValue::simple_string("OK"));
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
+                    }
+                }
+                if (param == "slowlog-max-len")
+                {
+                    try
+                    {
+                        size_t val = std::stoul(value);
+                        if (val <= 0)
+                        {
+                            return return_with_slowlog(RespValue::error("ERR value must be > 0"));
+                        }
+                        m_slow_log_max_len.store(val,std::memory_order_release);
+                        return return_with_slowlog(RespValue::simple_string("OK"));
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
                     }
                 }
 
-                return RespValue::error("ERR Unsupported CONFIG parameter: " + param);
+                return return_with_slowlog(RespValue::error("ERR Unsupported CONFIG parameter: " + param));
             }
-            return RespValue::error("ERR wrong arguments for 'CONFIG'");
+            return return_with_slowlog(RespValue::error("ERR wrong arguments for 'CONFIG'"));
         } // string
         else if (cmd == "SET") // SET key val [EX [s]]/[PX [ms]]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'SET'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SET'"));
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
@@ -495,12 +604,12 @@ namespace blue
                         seconds = std::stoll(args[4].str);
                         if (seconds < 0)
                         {
-                            return RespValue::error("ERR value can't be nagative");
+                            return return_with_slowlog(RespValue::error("ERR value can't be nagative"));
                         }
                     }
                     catch (...)
                     {
-                        return RespValue::error("ERR value is not a integer or out of range");
+                        return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
                     }
                     shards.expire[key] = SteadyClock::now() + std::chrono::seconds(seconds);
                 }
@@ -512,27 +621,27 @@ namespace blue
                         milliseconds = std::stoll(args[4].str);
                         if (milliseconds < 0)
                         {
-                            return RespValue::error("ERR value can't be nagative");
+                            return return_with_slowlog(RespValue::error("ERR value can't be nagative"));
                         }
                     }
                     catch (...)
                     {
-                        return RespValue::error("ERR value is not a integer or out of range");
+                        return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
                     }
                     shards.expire[key] = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
                 }
             }
-            return RespValue::simple_string("OK");
+            return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "GET") // GET key
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'GET'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'GET'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -540,27 +649,27 @@ namespace blue
             auto it = shards.store.find(key);
             if (it == shards.store.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             auto expire_it = shards.expire.find(key);
             if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
             {
                 shards.expire.erase(expire_it);
                 shards.store.erase(it);
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             const std::string val = it->second;
-            return RespValue::bulk_string(val);
+            return return_with_slowlog(RespValue::bulk_string(val));
         }
         else if (cmd == "MSET") // MSET key val [key val]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 3 || (args.size() & 1) != 1)
             {
-                return RespValue::error("ERR wrong of arguments for 'MSET'");
+                return return_with_slowlog(RespValue::error("ERR wrong of arguments for 'MSET'"));
             }
 
             for (size_t i = 1; i < args.size(); i += 2)
@@ -571,17 +680,17 @@ namespace blue
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 shards.store[key] = val;
             }
-            return RespValue::simple_string("OK");
+            return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "MGET") // MGET key [key...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2)
             {
-                return RespValue::error("ERR wrong of arguments for 'MGET'");
+                return return_with_slowlog(RespValue::error("ERR wrong of arguments for 'MGET'"));
             }
             std::vector<RespValue> results;
 
@@ -610,17 +719,17 @@ namespace blue
                     }
                 }
             }
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "GETSET") // GETSET key val 返回旧值设置新值
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong of arguments for 'GETSET'");
+                return return_with_slowlog(RespValue::error("ERR wrong of arguments for 'GETSET'"));
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
@@ -630,21 +739,21 @@ namespace blue
             if (it == shards.store.end())
             {
                 shards.store[key] = val;
-                return RespValue::bulk_string(val);
+                return return_with_slowlog(RespValue::bulk_string(val));
             }
             std::string ans = it->second;
             it->second = val;
-            return RespValue::bulk_string(ans);
+            return return_with_slowlog(RespValue::bulk_string(ans));
         }
         else if (cmd == "APPEND") // APPEND key val
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong of arguments for 'APPEND'");
+                return return_with_slowlog(RespValue::error("ERR wrong of arguments for 'APPEND'"));
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
@@ -659,17 +768,17 @@ namespace blue
             {
                 it->second.append(val);
             }
-            return RespValue::integer(shards.store[key].size());
+            return return_with_slowlog(RespValue::integer(shards.store[key].size()));
         }
         else if (cmd == "SETNX") // SETNX key val, 没有才设置
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong of arguments for 'SETNX'");
+                return return_with_slowlog(RespValue::error("ERR wrong of arguments for 'SETNX'"));
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
@@ -679,19 +788,19 @@ namespace blue
             if (it == shards.store.end())
             {
                 shards.store[key] = val;
-                return RespValue::integer(1);
+                return return_with_slowlog(RespValue::integer(1));
             }
-            return RespValue::integer(0);
+            return return_with_slowlog(RespValue::integer(0));
         }
         else if (cmd == "EXISTS") // EXISTS key [key...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2)
             {
-                return RespValue::error("ERR wrong of arguments for 'EXISTS'");
+                return return_with_slowlog(RespValue::error("ERR wrong of arguments for 'EXISTS'"));
             }
             int64_t count = 0;
             for (size_t i = 1; i < args.size(); i++)
@@ -708,17 +817,17 @@ namespace blue
                     count++;
                 }
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "DEL") // DEL key [key...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'DEL'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'DEL'"));
             }
             int count = 0;
             for (size_t i = 1; i < args.size(); i++)
@@ -734,17 +843,17 @@ namespace blue
                     count++;
                 }
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "HSET") // HSET key field value [field value ...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 4 || args.size() % 2 != 0)
             {
-                return RespValue::error("ERR wrong number of arguments for 'HSET'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HSET'"));
             }
             int count = 0;
             std::string key = args[1].str;
@@ -760,17 +869,17 @@ namespace blue
                 }
                 shards.hash[key][field] = value;
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         } // 哈希集合操作
         else if (cmd == "HGET") // HGET key field
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'HGET'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HGET'"));
             }
             const std::string key = args[1].str;
             const std::string field = args[2].str;
@@ -779,25 +888,25 @@ namespace blue
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             auto fit = it->second.find(field);
             if (fit == it->second.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             const std::string val = fit->second;
-            return RespValue::bulk_string(val);
+            return return_with_slowlog(RespValue::bulk_string(val));
         }
         else if (cmd == "HGETALL") // HGETALL key
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'HGETALL'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HGETALL'"));
             }
             std::vector<RespValue> result;
             const std::string key = args[1].str;
@@ -806,24 +915,24 @@ namespace blue
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
             {
-                return RespValue::array(std::move(result));
+                return return_with_slowlog(RespValue::array(std::move(result)));
             }
             for (auto &[field, value] : it->second)
             {
                 result.push_back(RespValue::bulk_string(field));
                 result.push_back(RespValue::bulk_string(value));
             }
-            return RespValue::array(std::move(result));
+            return return_with_slowlog(RespValue::array(std::move(result)));
         }
         else if (cmd == "HDEL") // HDEL key field [field ...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'HDEL'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HDEL'"));
             }
             int count = 0;
             const std::string key = args[1].str;
@@ -832,7 +941,7 @@ namespace blue
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
             {
-                return RespValue::integer(count);
+                return return_with_slowlog(RespValue::integer(count));
             }
             for (size_t i = 2; i < args.size(); i++)
             {
@@ -842,17 +951,17 @@ namespace blue
             {
                 shards.hash.erase(it);
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "HLEN") // HLEN key
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'HLEN'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HLEN'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -862,36 +971,36 @@ namespace blue
             {
                 if (shards.store.find(key) != shards.store.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.lists.find(key) != shards.lists.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.zset.find(key) != shards.zset.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.sets.find(key) != shards.sets.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
-            return RespValue::integer(it->second.size());
+            return return_with_slowlog(RespValue::integer(it->second.size()));
         }
         else if (cmd == "HEXISTS") // HEXISTS key field
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'HEXISTS'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HEXISTS'"));
             }
             const std::string key = args[1].str;
             const std::string field = args[2].str;
@@ -902,41 +1011,41 @@ namespace blue
             {
                 if (shards.store.find(key) != shards.store.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.lists.find(key) != shards.lists.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.zset.find(key) != shards.zset.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.sets.find(key) != shards.sets.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
             auto filed_it = it->second.find(field);
             if (filed_it == it->second.end())
             {
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
-            return RespValue::integer(1);
+            return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "HKEYS") // HKEYS key
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'HKEYS'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HKEYS'"));
             }
             const std::string key = args[1].str;
             std::vector<RespValue> results;
@@ -947,41 +1056,41 @@ namespace blue
             {
                 if (shards.store.find(key) != shards.store.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.lists.find(key) != shards.lists.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.zset.find(key) != shards.zset.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.sets.find(key) != shards.sets.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
-                return RespValue::array(std::move(results));
+                return return_with_slowlog(RespValue::array(std::move(results)));
             }
             for (auto &[field, _] : it->second)
             {
                 results.push_back(RespValue::bulk_string(field));
             }
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "HVALS") // HVALS key
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'HKEYS'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HKEYS'"));
             }
             const std::string key = args[1].str;
             std::vector<RespValue> results;
@@ -992,41 +1101,41 @@ namespace blue
             {
                 if (shards.store.find(key) != shards.store.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.lists.find(key) != shards.lists.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.zset.find(key) != shards.zset.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.sets.find(key) != shards.sets.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
-                return RespValue::array(std::move(results));
+                return return_with_slowlog(RespValue::array(std::move(results)));
             }
             for (auto &[_, val] : it->second)
             {
                 results.push_back(RespValue::bulk_string(val));
             }
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "KEYS") // KEYS *
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'KEYS'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'KEYS'"));
             }
 
             // 把 glob 风格转成 regex
@@ -1057,12 +1166,14 @@ namespace blue
             constexpr size_t MAX_KEYS = 10000;
             std::regex re(regex_str);
             std::vector<RespValue> result;
+            result.reserve(MAX_KEYS);
 
             // 遍历所有分片
             for (auto &shard : m_dbs[sock->getClientId()])
             {
                 if (result.size() >= MAX_KEYS)
                 {
+                    BLUE_LOG_WARN(xx::g_logger) << "KEYS command truncated at " << MAX_KEYS << " keys";
                     break;
                 }
                 std::shared_lock<std::shared_mutex> lock(shard.mutex);
@@ -1108,17 +1219,17 @@ namespace blue
                 }
             }
 
-            return RespValue::array(std::move(result));
+            return return_with_slowlog(RespValue::array(std::move(result)));
         } // 链表操作
         else if (cmd == "LPUSH") // LPUSH key val [val...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LPUSH'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LPUSH'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -1128,17 +1239,17 @@ namespace blue
             {
                 lhs.push_front(args[i].str);
             }
-            return RespValue::integer(lhs.size());
+            return return_with_slowlog(RespValue::integer(lhs.size()));
         }
         else if (cmd == "RPUSH") // RPUSH key val [val...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'RPUSH'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RPUSH'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -1148,17 +1259,17 @@ namespace blue
             {
                 lhs.push_back(args[i].str);
             }
-            return RespValue::integer(lhs.size());
+            return return_with_slowlog(RespValue::integer(lhs.size()));
         }
         else if (cmd == "LPOP") // LPOP key [count]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2 || args.size() > 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LPOP'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LPOP'"));
             }
             int count;
             try
@@ -1166,12 +1277,12 @@ namespace blue
                 count = args.size() == 3 ? std::stoi(args[2].str) : 1;
                 if (count < 0)
                 {
-                    return RespValue::error("ERR count can't be nagative");
+                    return return_with_slowlog(RespValue::error("ERR count can't be nagative"));
                 }
             }
             catch (...)
             {
-                return RespValue::error("ERR value is not a integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -1179,7 +1290,7 @@ namespace blue
             auto it = shards.lists.find(key);
             if (it == shards.lists.end() || it->second.empty())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             std::vector<RespValue> results;
             for (int i = 0; i < count && !it->second.empty(); i++)
@@ -1193,19 +1304,19 @@ namespace blue
             }
             if (results.size() == 1 && args.size() == 2)
             {
-                return results[0];
+                return return_with_slowlog(results[0]);
             }
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "RPOP") // RPOP key [count]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2 || args.size() > 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LPOP'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LPOP'"));
             }
             int count;
             try
@@ -1213,12 +1324,12 @@ namespace blue
                 count = args.size() == 3 ? std::stoi(args[2].str) : 1;
                 if (count < 0)
                 {
-                    return RespValue::error("ERR count can't be nagative");
+                    return return_with_slowlog(RespValue::error("ERR count can't be nagative"));
                 }
             }
             catch (...)
             {
-                return RespValue::error("ERR value is not a integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -1226,7 +1337,7 @@ namespace blue
             auto it = shards.lists.find(key);
             if (it == shards.lists.end() || it->second.empty())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             std::vector<RespValue> results;
             for (int i = 0; i < count && !it->second.empty(); i++)
@@ -1240,19 +1351,19 @@ namespace blue
             }
             if (results.size() == 1 && args.size() == 2)
             {
-                return results[0];
+                return return_with_slowlog(results[0]);
             }
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "LLEN") // LLEN key
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LLEN'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LLEN'"));
             }
             const std::string key = args[1].str;
             auto &shard = getShard(key, sock);
@@ -1260,34 +1371,35 @@ namespace blue
             auto it = shard.lists.find(key);
             if (it == shard.lists.end())
             {
-                return RespValue::integer(-1);
+                return return_with_slowlog(RespValue::integer(0));
             }
-            return RespValue::integer(it->second.size());
+            return return_with_slowlog(RespValue::integer(it->second.size()));
         }
-        else if (cmd == "LINSERT") // LINSERT key pivot val, pivot 不存在插入末尾
+        else if (cmd == "LINSERT") // LINSERT key [BEFORE/AFTER] pivot val, pivot 不存在返回-1
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
-            if (args.size() != 4)
+            if (args.size() != 5)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LINSERT'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LINSERT'"));
             }
             const std::string key = args[1].str;
-            const std::string pivot = args[2].str;
-            const std::string val = args[3].str;
-            
+            const std::string pos = args[2].str;
+            const std::string pivot = args[3].str;
+            const std::string val = args[4].str;
+
             auto &shard = getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.lists.find(key);
             if (it == shard.lists.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             std::list<std::string> &lists = it->second;
             auto list_it = lists.begin();
-            for ( ;list_it != lists.end(); list_it++)
+            for (; list_it != lists.end(); list_it++)
             {
                 if (*list_it == pivot)
                 {
@@ -1295,18 +1407,26 @@ namespace blue
                 }
             }
 
-            lists.insert(list_it,val);
-            return RespValue::simple_string("OK");
+            if (list_it == lists.end())
+            {
+                return return_with_slowlog(RespValue::integer(-1)); // pivot不存在
+            }
+            if (pos == "AFTER")
+            {
+                list_it++;
+            }
+            lists.insert(list_it, val);
+            return return_with_slowlog(RespValue::integer(lists.size()));
         }
         else if (cmd == "LINDEX") // LINDEX key index
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LINDEX'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LINDEX'"));
             }
             const std::string key = args[1].str;
             int64_t idx = 0;
@@ -1314,16 +1434,16 @@ namespace blue
             {
                 idx = std::stoll(args[2].str);
             }
-            catch(...)
+            catch (...)
             {
-                return RespValue::error("ERR value is not a integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
             auto &shard = getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.lists.find(key);
             if (it == shard.lists.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             size_t size = it->second.size();
             if (idx < 0)
@@ -1339,17 +1459,17 @@ namespace blue
             {
                 list_it++;
             }
-            return RespValue::bulk_string(*list_it);
+            return return_with_slowlog(RespValue::bulk_string(*list_it));
         }
         else if (cmd == "LSET") // LSET key index val
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 4)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LSET'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LSET'"));
             }
             const std::string key = args[1].str;
             const std::string val = args[3].str;
@@ -1358,16 +1478,16 @@ namespace blue
             {
                 idx = std::stoll(args[2].str);
             }
-            catch(...)
+            catch (...)
             {
-                return RespValue::error("ERR value is not a integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
             auto &shard = getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.lists.find(key);
             if (it == shard.lists.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             size_t size = it->second.size();
             if (idx < 0)
@@ -1384,17 +1504,73 @@ namespace blue
                 list_it++;
             }
             *list_it = val;
-            return RespValue::simple_string("OK");
+            return return_with_slowlog(RespValue::simple_string("OK"));
+        }
+        else if (cmd == "RPOPLPUSH" || cmd == "LPOPRPUSH") // RPOPLPUSH source destination
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+            if (args.size() != 3)
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RPOPLPUSH'"));
+            }
+            const std::string source_key = args[1].str;
+            const std::string dest_key = args[2].str;
+            if (source_key == dest_key)
+            {
+                return return_with_slowlog(RespValue::integer(1));
+            }
+            int src_idx = getShardIndex(source_key);
+            int dest_idx = getShardIndex(dest_key);
+            if (src_idx > dest_idx)
+            {
+                std::swap(src_idx, dest_idx);
+            }
+            auto &src_shard = getShard(source_key, sock);
+            auto &dest_shard = getShard(dest_key, sock);
+            std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
+            std::unique_lock<std::shared_mutex> lock2;
+            if (src_idx != dest_idx)
+            {
+                lock2 = std::unique_lock<std::shared_mutex>(dest_shard.mutex);
+            }
+            auto src_it = src_shard.lists.find(source_key);
+            if (src_it == src_shard.lists.end())
+            {
+                return return_with_slowlog(RespValue::integer(0));
+            }
+
+            auto dest_it = dest_shard.lists.find(dest_key);
+            if (dest_it == dest_shard.lists.end())
+            {
+                dest_shard.lists[dest_key] = std::list<std::string>();
+                dest_it = dest_shard.lists.find(dest_key);
+            }
+            if (cmd == "RPOPLPUSH")
+            {
+                const std::string tem = src_it->second.back();
+                src_it->second.pop_back();
+                dest_it->second.push_front(tem);
+            }
+            else
+            {
+                const std::string tem = src_it->second.front();
+                src_it->second.pop_front();
+                dest_it->second.push_back(tem);
+            }
+            return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "LRANGE") // LRANGE key start stop
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 4)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LRANGE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LRANGE'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -1406,13 +1582,13 @@ namespace blue
             }
             catch (...)
             {
-                return RespValue::error("ERR value is not a integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.lists.find(key);
             if (it == shards.lists.end())
             {
-                return RespValue::array({});
+                return return_with_slowlog(RespValue::array({}));
             }
             int size = it->second.size();
             if (start < 0)
@@ -1433,7 +1609,7 @@ namespace blue
             }
             if (start > stop)
             {
-                return RespValue::array({});
+                return return_with_slowlog(RespValue::array({}));
             }
             std::vector<RespValue> result;
             auto iter = it->second.begin();
@@ -1442,17 +1618,17 @@ namespace blue
             {
                 result.push_back(RespValue::bulk_string(*iter));
             }
-            return RespValue::array(std::move(result));
+            return return_with_slowlog(RespValue::array(std::move(result)));
         } // 有序集合操作
         else if (cmd == "ZADD") // ZADD key score member [score member]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 4 || args.size() % 2 != 0)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ZADD'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZADD'"));
             }
             int count = 0;
             const std::string key = args[1].str;
@@ -1473,7 +1649,7 @@ namespace blue
                 }
                 catch (const std::exception &e)
                 {
-                    return RespValue::error("ERR value is not a double or out of range");
+                    return return_with_slowlog(RespValue::error("ERR value is not a double or out of range"));
                 }
                 std::string member = args[i + 1].str;
 
@@ -1492,17 +1668,17 @@ namespace blue
                 ZSetKey newkey(score, member);
                 skiplist.insert(newkey, member);
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "ZRANGE") // ZRANGE key start stop [WITHSCORES]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 4 || args.size() > 5)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ZRANGE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZRANGE'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -1514,13 +1690,13 @@ namespace blue
             }
             catch (...)
             {
-                return RespValue::error("ERR value is not a integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.zset.find(key);
             if (it == shards.zset.end())
             {
-                return RespValue::array({});
+                return return_with_slowlog(RespValue::array({}));
             }
             bool withscores = (args.size() == 5 && (args[4].str == "WITHSCORES" || args[4].str == "withscores"));
             auto &skiplist_map = it->second;
@@ -1543,7 +1719,7 @@ namespace blue
             }
             if (start > stop)
             {
-                return RespValue::array({});
+                return return_with_slowlog(RespValue::array({}));
             }
             std::vector<RespValue> results;
             for (int i = start; i <= stop; i++)
@@ -1559,17 +1735,17 @@ namespace blue
                     results.push_back(RespValue::bulk_string(format_score(node->key.score)));
                 }
             }
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "ZREM") // ZREM key member [member...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ZREM'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZREM'"));
             }
             int count = 0;
             const std::string key = args[1].str;
@@ -1578,7 +1754,7 @@ namespace blue
             auto it = shards.zset.find(key);
             if (it == shards.zset.end())
             {
-                return RespValue::integer(count);
+                return return_with_slowlog(RespValue::integer(count));
             }
             auto sit = shards.zset_score.find(key);
             if (sit != shards.zset_score.end())
@@ -1604,17 +1780,17 @@ namespace blue
                     shards.zset_score.erase(key);
                 }
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "ZSCORE") // // ZSCORE key member
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ASCORE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ASCORE'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -1622,25 +1798,25 @@ namespace blue
             auto it = shards.zset_score.find(key);
             if (it == shards.zset_score.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             auto &skiplist_map = it->second;
             auto sit = skiplist_map.find(args[2].str);
             if (sit != skiplist_map.end())
             {
-                return RespValue::bulk_string(format_score(sit->second));
+                return return_with_slowlog(RespValue::bulk_string(format_score(sit->second)));
             }
-            return RespValue::null_bulk();
+            return return_with_slowlog(RespValue::null_bulk());
         }
         else if (cmd == "ZRANK") // ZRANK key member
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ZRANK'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZRANK'"));
             }
             const std::string key = args[1].str, member = args[2].str;
             auto &shards = getShard(key, sock);
@@ -1648,7 +1824,7 @@ namespace blue
             auto it = shards.zset_score.find(key);
             if (it == shards.zset_score.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             auto &score_map = it->second;
             auto sit = score_map.find(member);
@@ -1658,20 +1834,65 @@ namespace blue
                 int rank = shards.zset[key].getRank({sit->second, member});
                 if (rank >= 0)
                 {
-                    return RespValue::integer(rank);
+                    return return_with_slowlog(RespValue::integer(rank));
                 }
             }
-            return RespValue::null_bulk();
+            return return_with_slowlog(RespValue::null_bulk());
         }
         else if (cmd == "ZINCRBY") // ZINCRBY key incr member
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 4)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ZINCRBY'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZINCRBY'"));
+            }
+            const std::string key = args[1].str;
+            const std::string member = args[3].str;
+            int64_t incr;
+            try
+            {
+                incr = std::stoll(args[2].str);
+            }
+            catch (...)
+            {
+                return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
+            }
+            auto &shard = getShard(key, sock);
+            std::unique_lock<std::shared_mutex> lock(shard.mutex);
+            auto it = shard.zset.find(key);
+            if (it == shard.zset.end())
+            {
+                return return_with_slowlog(RespValue::null_bulk());
+            }
+            auto sit = shard.zset_score.find(key);
+            if (sit == shard.zset_score.end())
+            {
+                return return_with_slowlog(RespValue::null_bulk());
+            }
+            auto &skiplist = it->second;
+            auto &scores_map = sit->second;
+            if (scores_map.find(member) != scores_map.end())
+            {
+                ZSetKey old_val(scores_map[member], member);
+                scores_map[member] += incr;
+                skiplist.remove(old_val);
+                skiplist.insert({scores_map[member], member}, member);
+                return return_with_slowlog(RespValue::bulk_string(format_score(scores_map[member])));
+            }
+            return return_with_slowlog(RespValue::null_bulk());
+        }
+        else if (cmd == "ZINCRBYFLOAT") // ZINCRBYFLOAT
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+            if (args.size() != 4)
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZINCRBY'"));
             }
             const std::string key = args[1].str;
             const std::string member = args[3].str;
@@ -1680,43 +1901,43 @@ namespace blue
             {
                 incr = std::stod(args[2].str);
             }
-            catch(...)
+            catch (...)
             {
-                return RespValue::error("ERR value is not a double or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a float or out of range"));
             }
-            auto &shard = getShard(key,sock);
+            auto &shard = getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.zset.find(key);
             if (it == shard.zset.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             auto sit = shard.zset_score.find(key);
             if (sit == shard.zset_score.end())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             auto &skiplist = it->second;
             auto &scores_map = sit->second;
             if (scores_map.find(member) != scores_map.end())
             {
-                ZSetKey old_val(scores_map[member],member);
+                ZSetKey old_val(scores_map[member], member);
                 scores_map[member] += incr;
                 skiplist.remove(old_val);
-                skiplist.insert({scores_map[member],member},member);
-                return RespValue::bulk_string(format_score(scores_map[member]));
+                skiplist.insert({scores_map[member], member}, member);
+                return return_with_slowlog(RespValue::bulk_string(format_score(scores_map[member])));
             }
-            return RespValue::null_bulk(); 
+            return return_with_slowlog(RespValue::null_bulk());
         }
         else if (cmd == "ZCOUNT") // ZCOUNT key min max
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 4)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ZCOUNT'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZCOUNT'"));
             }
             const std::string key = args[1].str;
             double min = 0, max = 0;
@@ -1726,12 +1947,12 @@ namespace blue
                 max = std::stod(args[3].str);
                 if (min > max)
                 {
-                    return RespValue::error("ERR min can't greater than max");
+                    return return_with_slowlog(RespValue::error("ERR min can't greater than max"));
                 }
             }
-            catch(...)
+            catch (...)
             {
-                return RespValue::error("ERR value is not a double or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a double or out of range"));
             }
             int64_t count = 0;
             auto &shard = getShard(key, sock);
@@ -1739,26 +1960,26 @@ namespace blue
             auto it = shard.zset_score.find(key);
             if (it == shard.zset_score.end())
             {
-                return RespValue::integer(-1);
+                return return_with_slowlog(RespValue::integer(0));
             }
-            for (const auto& [_, score] : it->second)
+            for (const auto &[_, score] : it->second)
             {
                 if (score >= min && score <= max)
                 {
                     count++;
                 }
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "ZRANGEBYSCORE") // ZRANGEBYSCORE key min max [WITHSCORE]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 4 || args.size() > 5)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ZRANGEBYSCORE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZRANGEBYSCORE'"));
             }
             const std::string key = args[1].str;
             double min = 0, max = 0;
@@ -1768,12 +1989,12 @@ namespace blue
                 max = std::stod(args[3].str);
                 if (min > max)
                 {
-                    return RespValue::error("ERR min can't greater than max");
+                    return return_with_slowlog(RespValue::error("ERR min can't greater than max"));
                 }
             }
-            catch(...)
+            catch (...)
             {
-                return RespValue::error("ERR value is not a double or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a double or out of range"));
             }
             std::vector<RespValue> results;
             bool withscore = (args.size() == 5 && (args[4].str == "WITHSCORE" || args[4].str == "withscore"));
@@ -1782,9 +2003,9 @@ namespace blue
             auto it = shard.zset_score.find(key);
             if (it == shard.zset_score.end())
             {
-                return RespValue::array({});
+                return return_with_slowlog(RespValue::array({}));
             }
-            for (const auto& [member,score] : it->second)
+            for (const auto &[member, score] : it->second)
             {
                 if (score >= min && score <= max)
                 {
@@ -1795,17 +2016,17 @@ namespace blue
                     }
                 }
             }
-            return RespValue::array(std::move(results));
-       }
+            return return_with_slowlog(RespValue::array(std::move(results)));
+        }
         else if (cmd == "ZREMRANGEBYSCORE") // ZREMRANGEBYSCORE key min max
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 4)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ZREMRANGEBYSCORE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZREMRANGEBYSCORE'"));
             }
             const std::string key = args[1].str;
             double min = 0, max = 0;
@@ -1815,12 +2036,12 @@ namespace blue
                 max = std::stod(args[3].str);
                 if (min > max)
                 {
-                    return RespValue::error("ERR min can't greater than max");
+                    return return_with_slowlog(RespValue::error("ERR min can't greater than max"));
                 }
             }
-            catch(...)
+            catch (...)
             {
-                return RespValue::error("ERR value is not a double or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not a double or out of range"));
             }
             int64_t count = 0;
             auto &shard = getShard(key, sock);
@@ -1828,27 +2049,27 @@ namespace blue
             auto it = shard.zset.find(key);
             if (it == shard.zset.end())
             {
-                return RespValue::integer(-1);
+                return return_with_slowlog(RespValue::integer(-1));
             }
             auto sit = shard.zset_score.find(key);
             if (sit == shard.zset_score.end())
             {
-                return RespValue::integer(-1);
+                return return_with_slowlog(RespValue::integer(-1));
             }
             auto &skiplist = it->second;
             auto &scores = sit->second;
             std::vector<std::string> tem;
-            for (const auto& [member, score] : scores)
+            for (const auto &[member, score] : scores)
             {
                 if (score >= min && score <= max)
                 {
-                    ZSetKey old_val(score,member);
+                    ZSetKey old_val(score, member);
                     skiplist.remove(old_val);
                     tem.push_back(member);
                     count++;
                 }
             }
-            for (auto & mem : tem)
+            for (auto &mem : tem)
             {
                 scores.erase(mem);
             }
@@ -1857,17 +2078,17 @@ namespace blue
                 shard.zset.erase(it);
                 shard.zset_score.erase(sit);
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "INCR") // INCR key 自增
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'INCR'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'INCR'"));
             }
             const std::string key = args[1].str;
             int64_t val = 0;
@@ -1882,22 +2103,22 @@ namespace blue
                 }
                 catch (...)
                 {
-                    return RespValue::error("ERR value is not a integer or out of range");
+                    return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
                 }
             }
             val++;
             shards.store[key] = std::to_string(val);
-            return RespValue::integer(val);
+            return return_with_slowlog(RespValue::integer(val));
         }
         else if (cmd == "INCRBY") // INCR key integer 自增或自减 integer
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'INCRBY'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'INCRBY'"));
             }
             const std::string key = args[1].str;
             int64_t increment;
@@ -1907,7 +2128,7 @@ namespace blue
             }
             catch (const std::exception &e)
             {
-                return RespValue::error("ERR value is not an integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
             auto &shards = getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
@@ -1921,22 +2142,22 @@ namespace blue
                 }
                 catch (...)
                 {
-                    return RespValue::error("ERR value is not a integer or out of range");
+                    return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
                 }
             }
             val += increment;
             shards.store[key] = std::to_string(val);
-            return RespValue::integer(val);
+            return return_with_slowlog(RespValue::integer(val));
         }
         else if (cmd == "STRLEN") // STRLEN key, 返回key对于val的长度
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'STRLEN'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'STRLEN'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -1946,79 +2167,79 @@ namespace blue
             {
                 if (shards.hash.find(key) != shards.hash.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.lists.find(key) != shards.lists.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.zset.find(key) != shards.zset.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
                 if (shards.sets.find(key) != shards.sets.end())
                 {
-                    return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+                    return return_with_slowlog(RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value"));
                 }
 
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
             auto expire_it = shards.expire.find(key);
             if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
             {
                 shards.expire.erase(expire_it);
                 shards.store.erase(it);
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
-            return RespValue::integer(it->second.size());
+            return return_with_slowlog(RespValue::integer(it->second.size()));
         }
         else if (cmd == "TYPE") // TYPE key, key的类型
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'TYPE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'TYPE'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             if (shards.store.find(key) != shards.store.end())
             {
-                return RespValue::bulk_string("string");
+                return return_with_slowlog(RespValue::bulk_string("string"));
             }
             if (shards.hash.find(key) != shards.hash.end())
             {
-                return RespValue::bulk_string("hash");
+                return return_with_slowlog(RespValue::bulk_string("hash"));
             }
             if (shards.lists.find(key) != shards.lists.end())
             {
-                return RespValue::bulk_string("list");
+                return return_with_slowlog(RespValue::bulk_string("list"));
             }
             if (shards.zset.find(key) != shards.zset.end())
             {
-                return RespValue::bulk_string("zset");
+                return return_with_slowlog(RespValue::bulk_string("zset"));
             }
             if (shards.sets.find(key) != shards.sets.end())
             {
-                return RespValue::bulk_string("set");
+                return return_with_slowlog(RespValue::bulk_string("set"));
             }
-            return RespValue::null_bulk();
+            return return_with_slowlog(RespValue::null_bulk());
         } // 无序集合操作
         else if (cmd == "SADD") // SADD key member [member...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 3)
             {
-                return RespValue::error("ERR wrong number of argument for 'SADD'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of argument for 'SADD'"));
             }
             const std::string key = args[1].str;
             int32_t count = 0;
@@ -2036,17 +2257,17 @@ namespace blue
                     }
                 }
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "SMEMBERS") // SMEMBERS key, 返回key所有的成员
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'SMEMBERS'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SMEMBERS'"));
             }
             const std::string key = args[1].str;
             std::vector<RespValue> results;
@@ -2055,23 +2276,23 @@ namespace blue
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
             {
-                return RespValue::array(std::move(results));
+                return return_with_slowlog(RespValue::array(std::move(results)));
             }
             for (auto &member : it->second)
             {
                 results.push_back(RespValue::bulk_string(member));
             }
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "SREM") // SREM key member [member...]
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'SREM'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SREM'"));
             }
             const std::string key = args[1].str;
             int32_t count = 0;
@@ -2080,7 +2301,7 @@ namespace blue
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
             {
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
             for (size_t i = 2; i < args.size(); i++)
             {
@@ -2090,17 +2311,17 @@ namespace blue
             {
                 shards.sets.erase(it);
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "SISMEMBER") // SISMEMBER key member
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR number wrong of arguments for 'SISMEMBER'");
+                return return_with_slowlog(RespValue::error("ERR number wrong of arguments for 'SISMEMBER'"));
             }
             const std::string key = args[1].str;
             const std::string member = args[2].str;
@@ -2109,19 +2330,19 @@ namespace blue
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
             {
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
-            return RespValue::integer(it->second.count(member));
+            return return_with_slowlog(RespValue::integer(it->second.count(member)));
         }
         else if (cmd == "SCARD") // SCARD key, key的集合大小
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR number wrong of arguments for 'SCARD'");
+                return return_with_slowlog(RespValue::error("ERR number wrong of arguments for 'SCARD'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -2129,19 +2350,19 @@ namespace blue
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
             {
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
-            return RespValue::integer(it->second.size());
+            return return_with_slowlog(RespValue::integer(it->second.size()));
         }
         else if (cmd == "SRANDMEMBER") // SRANDMEMBER key [count], 随机返回count个member,count < 0可包含重复值, > 0不重复
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2 && args.size() > 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'SRANDMEMBER'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SRANDMEMBER'"));
             }
             int32_t count;
             try
@@ -2150,7 +2371,7 @@ namespace blue
             }
             catch (...)
             {
-                return RespValue::error("ERR value is not an integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -2160,11 +2381,11 @@ namespace blue
             {
                 if (args.size() == 2)
                 {
-                    return RespValue::null_bulk();
+                    return return_with_slowlog(RespValue::null_bulk());
                 }
                 else
                 {
-                    return RespValue::array({});
+                    return return_with_slowlog(RespValue::array({}));
                 }
             }
             const auto &set = it->second;
@@ -2173,7 +2394,7 @@ namespace blue
             if (args.size() == 2)
             {
                 int idx = rand() % members.size();
-                return RespValue::bulk_string(members[idx]);
+                return return_with_slowlog(RespValue::bulk_string(members[idx]));
             }
 
             if (count >= 0)
@@ -2196,17 +2417,17 @@ namespace blue
                     results.push_back(RespValue::bulk_string(members[idx]));
                 }
             }
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "SPOP") // SPOP key [count], 随机返回并删除count个member,count只能大于0
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2 && args.size() > 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'SRANDMEMBER'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SRANDMEMBER'"));
             }
             int32_t count;
             try
@@ -2214,12 +2435,12 @@ namespace blue
                 count = args.size() == 3 ? std::stoi(args[2].str) : 0;
                 if (count < 0)
                 {
-                    return RespValue::error("ERR value can't be nagative");
+                    return return_with_slowlog(RespValue::error("ERR value can't be nagative"));
                 }
             }
             catch (...)
             {
-                return RespValue::error("ERR value is not an integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -2229,11 +2450,11 @@ namespace blue
             {
                 if (args.size() == 2)
                 {
-                    return RespValue::null_bulk();
+                    return return_with_slowlog(RespValue::null_bulk());
                 }
                 else
                 {
-                    return RespValue::array({});
+                    return return_with_slowlog(RespValue::array({}));
                 }
             }
             auto &set = it->second;
@@ -2243,7 +2464,7 @@ namespace blue
             {
                 int idx = rand() % members.size();
                 set.erase(members[idx]);
-                return RespValue::bulk_string(members[idx]);
+                return return_with_slowlog(RespValue::bulk_string(members[idx]));
             }
 
             if (count >= 0)
@@ -2257,35 +2478,186 @@ namespace blue
                     results.push_back(RespValue::bulk_string(members[i]));
                 }
             }
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "SDIFF") // SDIFF key [key...] 差集
         {
-
+            if (sock->getClientlevel() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+            if (args.size() < 2)
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SDIFF'"));
+            }
+            const std::string key = args[1].str;
+            auto &shard = getShard(key, sock);
+            std::vector<RespValue> results;
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            for (const auto &member : shard.sets[key])
+            {
+                bool ok = true;
+                for (size_t i = 2; i < args.size(); i++)
+                {
+                    const std::string tem_key = args[i].str;
+                    auto &tem_shard = getShard(tem_key, sock);
+                    std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
+                    auto &tem_members = tem_shard.sets[tem_key];
+                    if (tem_members.contains(member))
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok)
+                {
+                    results.push_back(RespValue::bulk_string(member));
+                }
+            }
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "SINTER") // SINTER key [key...] 交集
         {
-
+            if (sock->getClientlevel() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+            if (args.size() < 2)
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SINTER'"));
+            }
+            const std::string key = args[1].str;
+            auto &shard = getShard(key, sock);
+            std::vector<RespValue> results;
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            for (const auto &member : shard.sets[key])
+            {
+                bool ok = true;
+                for (size_t i = 2; i < args.size(); i++)
+                {
+                    const std::string tem_key = args[i].str;
+                    auto &tem_shard = getShard(tem_key, sock);
+                    std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
+                    auto &tem_members = tem_shard.sets[tem_key];
+                    if (!tem_members.contains(member))
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok)
+                {
+                    results.push_back(RespValue::bulk_string(member));
+                }
+            }
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "SUNION") // SUNION key [key...] 并集
         {
-
+            if (sock->getClientlevel() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+            if (args.size() < 2)
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SUNION'"));
+            }
+            const std::string key = args[1].str;
+            auto &shard = getShard(key, sock);
+            std::unordered_set<std::string> results_set;
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            for (const auto &member : shard.sets[key])
+            {
+                results_set.insert(member);
+            }
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                const std::string tem_key = args[i].str;
+                auto &tem_shard = getShard(tem_key, sock);
+                std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
+                auto &tem_members = tem_shard.sets[tem_key];
+                for (const auto &tem_member : tem_members)
+                {
+                    results_set.insert(tem_member);
+                }
+            }
+            lock.unlock();
+            std::vector<RespValue> results;
+            for (const auto &member : results_set)
+            {
+                results.push_back(RespValue::bulk_string(member));
+            }
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "SMOVE") // SMOVE source destination member
         {
-            
+            if (sock->getClientlevel() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+            if (args.size() != 4)
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SMOVE'"));
+            }
+            const std::string source_key = args[1].str;
+            const std::string destination_key = args[2].str;
+            if (source_key == destination_key)
+            {
+                return return_with_slowlog(RespValue::integer(1));
+            }
+            const std::string member = args[3].str;
+            int src_shard_idx = getShardIndex(source_key);
+            int dest_shard_idx = getShardIndex(destination_key);
+            if (src_shard_idx > dest_shard_idx)
+            {
+                std::swap(src_shard_idx, dest_shard_idx);
+            }
+            auto &src_shard = getShard(source_key, sock);
+            auto &dest_shard = getShard(destination_key, sock);
+
+            std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
+            std::unique_lock<std::shared_mutex> lock2;
+            if (src_shard_idx != dest_shard_idx)
+            {
+                lock2 = std::unique_lock<std::shared_mutex>(dest_shard.mutex);
+            }
+
+            auto src_it = src_shard.sets.find(source_key);
+            if (src_it == src_shard.sets.end())
+            {
+                return return_with_slowlog(RespValue::integer(0));
+            }
+
+            auto dest_it = dest_shard.sets.find(destination_key);
+            if (dest_it == dest_shard.sets.end())
+            {
+                dest_shard.sets[destination_key] = std::unordered_set<std::string>();
+                dest_it = dest_shard.sets.find(destination_key);
+            }
+            // 检查member是否在源集合中
+            if (src_it->second.find(member) == src_it->second.end())
+            {
+                return return_with_slowlog(RespValue::integer(0));
+            }
+            src_it->second.erase(member);
+            dest_it->second.insert(member);
+            if (src_it->second.empty())
+            {
+                src_shard.sets.erase(src_it);
+            }
+            return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "FLUSHDB") // FLUSHDB [confirm], 清空数据库(还没有持久化)
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (isAdmin(sock))
             {
                 if (args.size() < 1 || args.size() > 2)
                 {
-                    return RespValue::error("ERR wrong number of arguments for 'FLUSHDB'");
+                    return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'FLUSHDB'"));
                 }
                 for (auto &shards : m_dbs[sock->getClientId()])
                 {
@@ -2298,13 +2670,13 @@ namespace blue
                     shards.zset.clear();
                     shards.zset_score.clear();
                 }
-                return RespValue::simple_string("OK");
+                return return_with_slowlog(RespValue::simple_string("OK"));
             }
             else if (sock->getClientlevel() == 1)
             {
                 if (args.size() != 2)
                 {
-                    return RespValue::error("ERR maybe need 'FLUSHAD CONFIRM");
+                    return return_with_slowlog(RespValue::error("ERR maybe need 'FLUSHAD CONFIRM"));
                 }
                 std::string confirm = args[1].str;
                 std::transform(confirm.begin(), confirm.end(), confirm.begin(), ::toupper);
@@ -2321,23 +2693,23 @@ namespace blue
                         shards.zset.clear();
                         shards.zset_score.clear();
                     }
-                    return RespValue::simple_string("OK");
+                    return return_with_slowlog(RespValue::simple_string("OK"));
                 }
-                return RespValue::error("ERR maybe need 'FLUSHDB CONFIRM'");
+                return return_with_slowlog(RespValue::error("ERR maybe need 'FLUSHDB CONFIRM'"));
             }
-            return RespValue::error("ERR authentication required");
+            return return_with_slowlog(RespValue::error("ERR authentication required"));
         }
         else if (cmd == "FLUSHDBALL") // FLUSHDBALL, 清空所有数据库
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (isAdmin(sock))
             {
                 if (args.size() < 1 || args.size() > 2)
                 {
-                    return RespValue::error("ERR wrong number of arguments for 'FLUSHDBALL'");
+                    return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'FLUSHDBALL'"));
                 }
                 for (int db = 0; db < DB_COUNT; db++)
                 {
@@ -2353,13 +2725,13 @@ namespace blue
                         shards.zset_score.clear();
                     }
                 }
-                return RespValue::simple_string("OK");
+                return return_with_slowlog(RespValue::simple_string("OK"));
             }
             else if (sock->getClientlevel() == 1)
             {
                 if (args.size() != 2)
                 {
-                    return RespValue::error("ERR maybe need 'FLUSHADALL CONFIRM");
+                    return return_with_slowlog(RespValue::error("ERR maybe need 'FLUSHADALL CONFIRM"));
                 }
                 std::string confirm = args[1].str;
                 std::transform(confirm.begin(), confirm.end(), confirm.begin(), ::toupper);
@@ -2379,21 +2751,21 @@ namespace blue
                             shards.zset_score.clear();
                         }
                     }
-                    return RespValue::simple_string("OK");
+                    return return_with_slowlog(RespValue::simple_string("OK"));
                 }
-                return RespValue::error("ERR authentication required, maybe need 'FLUSHADALL CONFIRM");
+                return return_with_slowlog(RespValue::error("ERR authentication required, maybe need 'FLUSHADALL CONFIRM"));
             }
-            return RespValue::error("ERR authentication required");
+            return return_with_slowlog(RespValue::error("ERR authentication required"));
         }
         else if (cmd == "DBSIZE") // DBSIZE, 当前数据库大小
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'DBSIZE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'DBSIZE'"));
             }
             int64_t count = 0;
             for (auto &shards : m_dbs[sock->getClientId()])
@@ -2401,17 +2773,17 @@ namespace blue
                 std::shared_lock<std::shared_mutex> lock(shards.mutex);
                 count += shards.store.size() + shards.lists.size() + shards.hash.size() + shards.zset.size();
             }
-            return RespValue::integer(count);
+            return return_with_slowlog(RespValue::integer(count));
         }
         else if (cmd == "EXPIRE") // EXPIRE key seconds, 设置key的过期时间
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'EXPIRE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'EXPIRE'"));
             }
             int64_t second;
             try
@@ -2419,12 +2791,12 @@ namespace blue
                 second = std::stoll(args[2].str);
                 if (second <= 0)
                 {
-                    return RespValue::error("ERR invalid expire time");
+                    return return_with_slowlog(RespValue::error("ERR invalid expire time"));
                 }
             }
             catch (...)
             {
-                return RespValue::error("ERR value is not an integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -2432,20 +2804,20 @@ namespace blue
             auto it = shards.store.find(key);
             if (it == shards.store.end())
             {
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
             shards.expire[key] = SteadyClock::now() + std::chrono::seconds(second);
-            return RespValue::integer(1);
+            return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "TTL") // TTL key, 查看key的过期时间
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'TTL'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'TTL'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -2454,34 +2826,34 @@ namespace blue
             auto expire_it = shards.expire.find(key);
             if (it == shards.store.end())
             {
-                return RespValue::integer(-2);
+                return return_with_slowlog(RespValue::integer(-2));
             }
             else if (expire_it == shards.expire.end())
             {
-                return RespValue::integer(-1);
+                return return_with_slowlog(RespValue::integer(-1));
             }
             // 计算剩余秒数
             auto now = SteadyClock::now();
             if (now >= expire_it->second)
             {
-                return RespValue::integer(-2);
+                return return_with_slowlog(RespValue::integer(-2));
             }
 
             auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
                                  expire_it->second - now)
                                  .count();
 
-            return RespValue::integer(remaining);
+            return return_with_slowlog(RespValue::integer(remaining));
         }
         else if (cmd == "PEXPIRE") // PEXPIRE key milliseconds
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'PEXPIRE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'PEXPIRE'"));
             }
             int64_t milliseconds;
             try
@@ -2489,12 +2861,12 @@ namespace blue
                 milliseconds = std::stoll(args[2].str);
                 if (milliseconds <= 0)
                 {
-                    return RespValue::error("ERR invalid expire time");
+                    return return_with_slowlog(RespValue::error("ERR invalid expire time"));
                 }
             }
             catch (...)
             {
-                return RespValue::error("ERR value is not an integer or out of range");
+                return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -2502,20 +2874,20 @@ namespace blue
             auto it = shards.store.find(key);
             if (it == shards.store.end())
             {
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
             shards.expire[key] = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
-            return RespValue::integer(1);
+            return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "PTTL") // PTTL key
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'PTTL'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'PTTL'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -2524,34 +2896,34 @@ namespace blue
             auto expire_it = shards.expire.find(key);
             if (it == shards.store.end())
             {
-                return RespValue::integer(-2);
+                return return_with_slowlog(RespValue::integer(-2));
             }
             else if (expire_it == shards.expire.end())
             {
-                return RespValue::integer(-1);
+                return return_with_slowlog(RespValue::integer(-1));
             }
             // 计算剩余秒数
             auto now = SteadyClock::now();
             if (now >= expire_it->second)
             {
-                return RespValue::integer(-2);
+                return return_with_slowlog(RespValue::integer(-2));
             }
 
             auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  expire_it->second - now)
                                  .count();
 
-            return RespValue::integer(remaining);
+            return return_with_slowlog(RespValue::integer(remaining));
         }
         else if (cmd == "PERSIST") // PERSIST key, 撤销key的过期时间
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of argument for 'PERSIST'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of argument for 'PERSIST'"));
             }
             const std::string key = args[1].str;
             auto &shards = getShard(key, sock);
@@ -2561,27 +2933,27 @@ namespace blue
             // 不存在或没有过期时间
             if (it == shards.store.end() || expire_it == shards.expire.end())
             {
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
             shards.expire.erase(expire_it);
-            return RespValue::integer(1);
+            return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "RENAME") // RENAME key newkey
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'RENAME'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RENAME'"));
             }
             const std::string key = args[1].str;
             const std::string newkey = args[2].str;
 
             if (key == newkey)
             {
-                return RespValue::simple_string("OK");
+                return return_with_slowlog(RespValue::simple_string("OK"));
             }
 
             int old_shard_idx = getShardIndex(key);
@@ -2637,7 +3009,7 @@ namespace blue
 
             if (!exists)
             {
-                return RespValue::error("ERR no such key");
+                return return_with_slowlog(RespValue::error("ERR no such key"));
             }
 
             // 删除 newkey（如果存在）
@@ -2743,24 +3115,24 @@ namespace blue
                     old_shard.expire.erase(expire_it);
                 }
             }
-            return RespValue::simple_string("OK");
+            return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "RENAMENX") // RENAMENX key newkey 当newkey不存在时创建
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 3)
             {
-                return RespValue::error("ERR wrong number of arguments for 'RENAME'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RENAME'"));
             }
             const std::string key = args[1].str;
             const std::string newkey = args[2].str;
 
             if (key == newkey)
             {
-                return RespValue::integer(1);
+                return return_with_slowlog(RespValue::integer(1));
             }
 
             int old_shard_idx = getShardIndex(key);
@@ -2816,7 +3188,7 @@ namespace blue
 
             if (!exists)
             {
-                return RespValue::error("ERR no such key");
+                return return_with_slowlog(RespValue::error("ERR no such key"));
             }
 
             // 查看newkey是否存在
@@ -2843,7 +3215,7 @@ namespace blue
             }
             if (newkey_exists)
             {
-                return RespValue::integer(0);
+                return return_with_slowlog(RespValue::integer(0));
             }
 
             // 移动数据
@@ -2924,17 +3296,17 @@ namespace blue
                     old_shard.expire.erase(expire_it);
                 }
             }
-            return RespValue::integer(1);
+            return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "RANDOMKEY") // RANDOMKEY, 随机返回一个key
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'RANDOMKEY'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RANDOMKEY'"));
             }
             std::vector<std::string> all_keys;
             for (auto &shards : m_dbs[sock->getClientId()])
@@ -2968,22 +3340,22 @@ namespace blue
             }
             if (all_keys.size() == 0)
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             static std::random_device rd;
             static std::mt19937 gen(rd());
             std::uniform_int_distribution<> dis(0, all_keys.size() - 1);
-            return RespValue::bulk_string(all_keys[dis(gen)]);
+            return return_with_slowlog(RespValue::bulk_string(all_keys[dis(gen)]));
         }
         else if (cmd == "INFO") // INFO 返回服务器信息
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'INFO'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'INFO'"));
             }
             std::string info;
             // Server
@@ -3014,34 +3386,34 @@ namespace blue
                 total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
             }
             info += "total_keys:" + std::to_string(total_keys) + "\r\n";
-            return RespValue::bulk_string(info);
+            return return_with_slowlog(RespValue::bulk_string(info));
         }
         else if (cmd == "SAVE") // SAVE 持久化
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'SAVE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SAVE'"));
             }
             saveToFile();
-            return RespValue::simple_string("OK");
+            return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "BGSAVE") // BGSAVE 后台异步保存
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'BGSAVE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'BGSAVE'"));
             }
             if (m_bgsave_running.load(std::memory_order_acquire))
             {
-                return RespValue::error("ERR Background save already in progress");
+                return return_with_slowlog(RespValue::error("ERR Background save already in progress"));
             }
             m_bgsave_running.store(true, std::memory_order_release);
             std::thread([this]
@@ -3050,29 +3422,29 @@ namespace blue
                 m_bgsave_running.store(false,std::memory_order_release);
                 BLUE_LOG_INFO(xx::g_logger) << "BGSAVE completed"; })
                 .detach();
-            return RespValue::simple_string("Background saving started");
+            return return_with_slowlog(RespValue::simple_string("Background saving started"));
         }
         else if (cmd == "LASTSAVE") // LASTSAVE 上一次保存成功时间
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LASTSAVE'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LASTSAVE'"));
             }
-            return RespValue::integer(m_last_time.load(std::memory_order_acquire));
+            return return_with_slowlog(RespValue::integer(m_last_time.load(std::memory_order_acquire)));
         }
         else if (cmd == "LASTSAVE1") // LASTVATE1 上一次保存成功时间(北京时间)
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LASTSAVE1'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LASTSAVE1'"));
             }
             std::time_t beijing_t = m_last_time.load(std::memory_order_acquire) + 8 * 3600;
             std::tm time_local;
@@ -3083,17 +3455,17 @@ namespace blue
 #endif
             std::ostringstream os;
             os << std::put_time(&time_local, "%Y-%m-%d %H:%M:%S");
-            return RespValue::bulk_string(os.str());
+            return return_with_slowlog(RespValue::bulk_string(os.str()));
         }
         else if (cmd == "COMMAND")
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'COMMAND'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'COMMAND'"));
             }
 
             std::vector<RespValue> commands;
@@ -3110,10 +3482,12 @@ namespace blue
                 "HSET", "HGET", "HGETALL", "HDEL", "HLEN", "HEXISTS", "HKEYS", "HVALS",
                 // list
                 "LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE", "LLEN", "LINSERT", "LINDEX", "LSET",
+                "LPOPRPUSH", "RPOPLPUSH",
                 // set
                 "SADD", "SMEMBERS", "SREM", "SISMEMBER", "SCARD", "SRANDMEMBER", "SPOP", "SDIFF", "SINTER", "SUNION", "SMOVE",
                 // zset
                 "ZADD", "ZRANGE", "ZREM", "ZSCORE", "ZRANK", "ZINCRBY", "ZCOUNT", "ZRANGEBYSCORE", "ZREMRANGEBYSCORE",
+                "ZINCRBYFLOAT",
                 // server
                 "KEYS", "FLUSHDB", "FLUSHDBALL", "DBSIZE", "INFO", "SAVE", "BGSAVE", "LASTSAVE",
                 "LASTSAVE1", "ECHO", "TIME", "LOCALTIME", "SHUTDOWN", "COMMAND",
@@ -3122,37 +3496,36 @@ namespace blue
                 // 事务模式
                 "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH",
                 // 订阅模式
-                "SUBSCRIBE", "PUBLISH", "UNSUBSCRIBE"
-                };
+                "SUBSCRIBE", "PUBLISH", "UNSUBSCRIBE"};
 
             for (const auto &name : cmd_list)
             {
                 commands.push_back(RespValue::bulk_string(name));
             }
 
-            return RespValue::array(std::move(commands));
+            return return_with_slowlog(RespValue::array(std::move(commands)));
         }
         else if (cmd == "ECHO") // ECHO meaasge
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'ECHO'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ECHO'"));
             }
-            return RespValue::bulk_string(args[1].str);
+            return return_with_slowlog(RespValue::bulk_string(args[1].str));
         }
         else if (cmd == "TIME") // TIME, 返回当前服务器的秒和微妙
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'TIME'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'TIME'"));
             }
             auto now = SteadyClock::now();
             auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
@@ -3160,17 +3533,17 @@ namespace blue
             std::vector<RespValue> results;
             results.push_back(RespValue::bulk_string(std::to_string(seconds)));
             results.push_back(RespValue::bulk_string(std::to_string(microseconds)));
-            return RespValue::array(std::move(results));
+            return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "LOCALTIME") // LOCALTIME, 返回当前北京时间
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'LOCALTIME'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LOCALTIME'"));
             }
             auto now = std::chrono::system_clock::now();
             auto now_t = std::chrono::system_clock::to_time_t(now);
@@ -3184,17 +3557,17 @@ namespace blue
 #endif
             std::ostringstream os;
             os << std::put_time(&time_local, "%Y-%m-%d %H:%M:%S");
-            return RespValue::bulk_string(os.str());
+            return return_with_slowlog(RespValue::bulk_string(os.str()));
         }
         else if (cmd == "WATCH") // WATCH key [key...], 监视key
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() < 2)
             {
-                return RespValue::error("ERR wrong number of arguments for 'WATCH'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'WATCH'"));
             }
             sock->clearWatchedKey();
 
@@ -3203,35 +3576,123 @@ namespace blue
                 const std::string key = args[i].str;
                 sock->addWatchKey(key, getKeyVersion(key, sock));
             }
-            return RespValue::simple_string("OK");
+            return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "UNWATCH") // UNWATCH, 取消所有监视
         {
             if (sock->getClientlevel() < 1)
             {
-                return RespValue::error("ERR authentication required");
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'UNWATCH'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'UNWATCH'"));
             }
             sock->clearWatchedKey();
-            return RespValue::simple_string("OK");
+            return return_with_slowlog(RespValue::simple_string("OK"));
+        }
+        else if (cmd == "SLOWLOG") // SLOWLOG [GET/LEN/RESET]
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+            if (args.size() < 2)
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SLOWLOG'"));
+            }
+            std::string sub_cmd = args[1].str;
+            std::transform(sub_cmd.begin(), sub_cmd.end(), sub_cmd.begin(), ::toupper);
+            if (sub_cmd == "GET")
+            {
+                // 同步数据
+                syncSlowLogs();
+
+                int64_t count = 10;
+                if (args.size() >= 3)
+                {
+                    try
+                    {
+                        count = std::stoll(args[2].str);
+                        if (count < 0)
+                        {
+                            return return_with_slowlog(RespValue::error("ERR count must be >= 0"));
+                        }
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
+                    }
+                }
+
+                std::vector<RespValue> results;
+                std::shared_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
+                size_t start = m_slow_logs_cache.size() - std::min((size_t)(count), m_slow_logs_cache.size());
+                for (size_t i = start; i < m_slow_logs_cache.size(); i++)
+                {
+                    const auto &entry = m_slow_logs_cache[i];
+                    std::vector<RespValue> log_entry;
+
+                    // ID
+                    log_entry.push_back(RespValue::integer(entry.id));
+
+                    // 时间戳微秒
+                    auto ts = std::chrono::duration_cast<std::chrono::microseconds>(
+                                  entry.timestamp.time_since_epoch())
+                                  .count();
+                    log_entry.push_back(RespValue::integer(ts));
+
+                    // 执行时间(微秒)
+                    log_entry.push_back(RespValue::integer(entry.duration.count()));
+
+                    // 命令
+                    log_entry.push_back(RespValue::bulk_string(entry.command));
+
+                    // 客户端ip
+                    log_entry.push_back(RespValue::bulk_string(entry.client_ip));
+
+                    results.push_back(RespValue::array(std::move(log_entry)));
+                }
+                return return_with_slowlog(RespValue::array(std::move(results)));
+            }
+
+            else if (sub_cmd == "LEN")
+            {
+                syncSlowLogs();
+                std::shared_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
+                return return_with_slowlog(RespValue::integer(m_slow_logs_cache.size()));
+            }
+            else if (sub_cmd == "RESET")
+            {
+                std::unique_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
+                m_slow_logs_cache.clear();
+                // 清空 SPSCQueue
+                SlowLogEntry entry;
+                while (m_slow_logs.pop(entry))
+                {
+                }
+                m_slow_log_id.store(0, std::memory_order_release);
+                return return_with_slowlog(RespValue::simple_string("OK"));
+            }
+            else
+            {
+                return return_with_slowlog(RespValue::error("ERR unknown SLOWLOG subcommand"));
+            }
         }
         else if (cmd == "SHUTDOWN") // SHUTDOWN 关闭服务器,如果连接数为0
         {
             if (!isAdmin(sock))
             {
-                return RespValue::error("ERR permission denied");
+                return return_with_slowlog(RespValue::error("ERR permission denied"));
             }
             if (args.size() != 1)
             {
-                return RespValue::error("ERR wrong number of arguments for 'SHUTDOWN'");
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SHUTDOWN'"));
             }
             m_shutdown.store(true, std::memory_order_release);
-            return RespValue::bulk_string("OK - waiting for clients to disconnect");
+            return return_with_slowlog(RespValue::bulk_string("OK - waiting for clients to disconnect"));
         }
-        return RespValue::error("ERR unknown command");
+        return return_with_slowlog(RespValue::error("ERR unknown command"));
     }
 
     template <typename T>
@@ -3299,6 +3760,8 @@ namespace blue
 
                 blue::RespValue response;
 
+                auto start = SteadyClock::now();
+                std::chrono::_V2::steady_clock::time_point end;
                 if (sock->inTransaction()) // 事务模式
                 {
                     if (cmd == "EXEC") // EXEC
@@ -3307,30 +3770,34 @@ namespace blue
                         {
                             response = RespValue::error("ERR authentication required");
                         }
-                        if (copy_arr.size() != 1)
+                        else if (copy_arr.size() != 1)
                         {
                             response = RespValue::error("ERR wrong number of arguments for 'EXEC'");
                         }
-                        sock->setVersionChecker([this, sock](const std::string &key) -> uint64_t
-                                                { return this->getKeyVersion(key, sock); });
-                        if (sock->hasKeyModified())
-                        {
-                            sock->clearTransaction();
-                            sock->clearWatchedKey();
-                            response = RespValue::null_bulk();
-                        }
                         else
                         {
-                            std::vector<RespValue> results;
-                            for (const auto &transaction : sock->getTransaction())
+                            sock->setVersionChecker([this, sock](const std::string &key) -> uint64_t
+                                                { return this->getKeyVersion(key, sock); });
+                            if (sock->hasKeyModified())
                             {
-                                auto response = execute(transaction, sock);
-                                results.push_back(response);
+                                sock->clearTransaction();
+                                sock->clearWatchedKey();
+                                response = RespValue::null_bulk();
                             }
-                            sock->clearTransaction();
-                            sock->clearWatchedKey();
-                            response = RespValue::array(std::move(results));
+                            else
+                            {
+                                std::vector<RespValue> results;
+                                for (const auto &transaction : sock->getTransaction())
+                                {
+                                    auto response = execute(transaction, sock);
+                                    results.push_back(response);
+                                }
+                                sock->clearTransaction();
+                                sock->clearWatchedKey();
+                                response = RespValue::array(std::move(results));
+                            }
                         }
+                        end = SteadyClock::now();
                     }
                     else if (cmd == "DISCARD") // DISCARD 清除所有事务,会退出事务模式
                     {
@@ -3338,12 +3805,16 @@ namespace blue
                         {
                             response = RespValue::error("ERR authentication required");
                         }
-                        if (copy_arr.size() != 1)
+                        else if (copy_arr.size() != 1)
                         {
                             response = RespValue::error("ERR wrong number of arguments for 'DISCARD'");
                         }
-                        sock->clearTransaction();
-                        response = RespValue::simple_string("OK");
+                        else
+                        {
+                            sock->clearTransaction();
+                            response = RespValue::simple_string("OK");
+                        }
+                        end = SteadyClock::now();
                     }
                     else
                     {
@@ -3355,12 +3826,12 @@ namespace blue
                 {
                     if (cmd == "UNSUBSCRIBE") // UNSUBSCRIBE [channel...], 并退出订阅模式
                     {
+                        std::vector<std::string> channels;
                         if (sock->getClientlevel() < 1)
                         {
                             response = RespValue::error("ERR authentication required");
                         }
-                        std::vector<std::string> channels;
-                        if (copy_arr.size() == 1) // 取消所有订阅
+                        else if (copy_arr.size() == 1) // 取消所有订阅
                         {
                             channels.assign(sock->getSubScriptionChannels().begin(), sock->getSubScriptionChannels().end());
                         }
@@ -3406,6 +3877,7 @@ namespace blue
                         }
                         sock->endSubScription();
                         response = RespValue::array(std::move(results));
+                        end = SteadyClock::now();
                     }
                     else if (cmd == "PING") // PING [message]
                     {
@@ -3413,18 +3885,23 @@ namespace blue
                         {
                             response = RespValue::error("ERR authentication required");
                         }
-                        if (copy_arr.size() < 1 || copy_arr.size() > 2)
+                        else if (copy_arr.size() < 1 || copy_arr.size() > 2)
                         {
                             response = RespValue::error("ERR wrong number of arguments for 'PING'");
                         }
-                        if (copy_arr.size() == 1)
-                            response = RespValue::simple_string("PONG");
                         else
-                            response = RespValue::bulk_string(copy_arr[1].str);
+                        {
+                            if (copy_arr.size() == 1)
+                                response = RespValue::simple_string("PONG");
+                            else
+                                response = RespValue::bulk_string(copy_arr[1].str);
+                        }
+                        end = SteadyClock::now();
                     }
                     else
                     {
                         response = RespValue::error("ERR in SubScription, only 'UNSUBSCRIBE' and 'PING'");
+                        end = SteadyClock::now();
                     }
                 }
                 else
@@ -3435,15 +3912,19 @@ namespace blue
                         {
                             response = RespValue::error("ERR authentication required");
                         }
-                        if (copy_arr.size() != 1)
+                        else if (copy_arr.size() != 1)
                         {
                             response = RespValue::error("ERR wrong number of arguments for 'MULTI'");
                         }
-                        if (!sock->beginTransaction())
+                        else if (!sock->beginTransaction())
                         {
                             response = RespValue::error("ERR already in SubScription");
                         }
-                        response = RespValue::simple_string("OK");
+                        else
+                        {
+                            response = RespValue::simple_string("OK");
+                        }
+                        end = SteadyClock::now();
                     }
                     else if (cmd == "SUBSCRIBE") // SUBSCRIBE channel [channel...] 订阅channel 进入订阅模式
                     {
@@ -3451,37 +3932,41 @@ namespace blue
                         {
                             response = RespValue::error("ERR authentication required");
                         }
-                        if (copy_arr.size() < 2)
+                        else if (copy_arr.size() < 2)
                         {
                             response = RespValue::error("ERR wrong number of arguments for 'SUBSCRIBE'");
                         }
-                        if (!sock->beginSubScription())
+                        else if (!sock->beginSubScription())
                         {
                             response = RespValue::error("ERR already in Transaction");
                         }
-                        std::vector<RespValue> results;
-
-                        for (size_t i = 1; i < copy_arr.size(); i++)
+                        else 
                         {
-                            const std::string channel = copy_arr[i].str;
-                            // 添加到连接的订阅列表
-                            sock->addSubScriptionChannel(channel);
+                            std::vector<RespValue> results;
 
-                            // 添加到全局订阅列表
+                            for (size_t i = 1; i < copy_arr.size(); i++)
                             {
-                                std::unique_lock<std::shared_mutex> lock(m_channels_mutex);
-                                m_channels[channel].push_back(sock);
+                                const std::string channel = copy_arr[i].str;
+                                // 添加到连接的订阅列表
+                                sock->addSubScriptionChannel(channel);
+
+                                // 添加到全局订阅列表
+                                {
+                                    std::unique_lock<std::shared_mutex> lock(m_channels_mutex);
+                                    m_channels[channel].push_back(sock);
+                                }
+
+                                // 返回订阅成功消息
+                                std::vector<RespValue> msg;
+                                msg.push_back(RespValue::bulk_string("subscribe"));
+                                msg.push_back(RespValue::bulk_string(channel));
+                                msg.push_back(RespValue::integer(1)); // 当前订阅数
+
+                                results.push_back(RespValue::array(std::move(msg)));
                             }
-
-                            // 返回订阅成功消息
-                            std::vector<RespValue> msg;
-                            msg.push_back(RespValue::bulk_string("subscribe"));
-                            msg.push_back(RespValue::bulk_string(channel));
-                            msg.push_back(RespValue::integer(1)); // 当前订阅数
-
-                            results.push_back(RespValue::array(std::move(msg)));
+                            response = RespValue::array(std::move(results));
                         }
-                        response = RespValue::array(std::move(results));
+                        end = SteadyClock::now();
                     }
                     else if (cmd == "PUBLISH") // PUBLISH channel message 发布channel 内容为message
                     {
@@ -3489,38 +3974,42 @@ namespace blue
                         {
                             response = RespValue::error("ERR authentication required");
                         }
-                        if (copy_arr.size() != 3)
+                        else if (copy_arr.size() != 3)
                         {
                             response = RespValue::error("ERR wrong number of arguments for 'PUBLISH'");
                         }
-                        const std::string channel = copy_arr[1].str;
-                        const std::string message = copy_arr[2].str;
-
-                        int receiver_count = 0;
-                        std::vector<MSocket::MSocketWPtr> subscribers;
-
-                        // 获取订阅者
+                        else
                         {
-                            std::shared_lock lock(m_channels_mutex);
-                            auto it = m_channels.find(channel);
-                            if (it != m_channels.end())
-                            {
-                                subscribers = it->second;
-                            }
-                        }
+                            const std::string channel = copy_arr[1].str;
+                            const std::string message = copy_arr[2].str;
 
-                        // 发送消息给所有订阅者
-                        for (auto &weak_sock : subscribers)
-                        {
-                            auto sub_sock = weak_sock.lock();
-                            if (sub_sock && sub_sock->isConnected())
+                            int receiver_count = 0;
+                            std::vector<MSocket::MSocketWPtr> subscribers;
+
+                            // 获取订阅者
                             {
-                                // 同步发送
-                                publishMessage(sub_sock, channel, message);
-                                receiver_count++;
+                                std::shared_lock lock(m_channels_mutex);
+                                auto it = m_channels.find(channel);
+                                if (it != m_channels.end())
+                                {
+                                    subscribers = it->second;
+                                }
                             }
+
+                            // 发送消息给所有订阅者
+                            for (auto &weak_sock : subscribers)
+                            {
+                                auto sub_sock = weak_sock.lock();
+                                if (sub_sock && sub_sock->isConnected())
+                                {
+                                    // 同步发送
+                                    publishMessage(sub_sock, channel, message);
+                                    receiver_count++;
+                                }
+                            }
+                            response = RespValue::integer(receiver_count);
                         }
-                        response = RespValue::integer(receiver_count);
+                        end = SteadyClock::now();
                     }
                     else
                     {
@@ -3529,6 +4018,33 @@ namespace blue
                     }
                 }
 
+                if (cmd == "PUBLISH" || cmd == "SUBSCRIBE" 
+                    || cmd == "MULTI" || cmd == "UNSUBSCRIBE"
+                    || cmd == "DISCARD" || cmd == "EXEC")
+                {
+                    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+                    if (duration.count() > m_slow_log_slower_than.load(std::memory_order_acquire))
+                    {
+                        std::string cmd_str;
+                        for (size_t i = 0; i < copy_arr.size(); i++)
+                        {
+                            if (i > 0)
+                            {
+                                cmd_str += " ";
+                            }
+                            cmd_str += copy_arr[i].str;
+                        }
+
+                        SlowLogEntry entry{
+                            ++m_slow_log_id,
+                            std::chrono::system_clock::now(),
+                            duration,
+                            cmd_str,
+                            sock->getRemoteAddress()->toString()};
+
+                        m_slow_logs.push(entry);
+                    }
+                }
                 batch_response += RespValue::encode(response);
                 cmd_count++;
                 m_commands.fetch_add(1, std::memory_order_acq_rel);
