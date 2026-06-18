@@ -233,6 +233,7 @@ namespace blue
         {
             // 没有有效的回调或协程句柄
             BLUE_LOG_ERROR(g_logger) << "addEvent: no callback or handle provided";
+            delEvent(fd,event);
             return -1;
         }
 
@@ -283,13 +284,13 @@ namespace blue
             return false;
         }
 
-        --m_pendingEventCounts;
+        // --m_pendingEventCounts;
         fd_ctx->m_events = new_event;
 
         // 重置事件上下文
         FdContext::EventContext &event_ctx = fd_ctx->getEventContext(event);
         fd_ctx->resetEventContext(event_ctx);
-
+        --m_pendingEventCounts;
         return true;
     }
 

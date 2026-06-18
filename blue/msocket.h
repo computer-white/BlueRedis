@@ -546,7 +546,7 @@ namespace blue
          * @brief 添加一组事务
          * @param transaction 事务数组
          */
-        void addTransaction(std::vector<blue::RespValue> &&transaction) { m_transaction_cmds.push_back(std::move(transaction)); }
+        void addTransaction(std::vector<blue::RespValue> transaction) { m_transaction_cmds.push_back(std::move(transaction)); }
 
         /**
          * @brief 清理事务
@@ -670,6 +670,16 @@ namespace blue
          * @brief 清空订阅
          */
         void clearSubScription() { m_subScription_channels.clear(); m_subScription_patterns.clear(); m_in_subScription = false; }
+
+        /**
+         * @brief 设置监控模式
+         */
+        void setMonitorMode(bool enabled) noexcept { m_in_monitor = enabled; }
+
+        /**
+         * @brief 是否在监控模式
+         */
+        bool inMonitorMode() const noexcept { return m_in_monitor; }
     private:
         /**
          * @brief 初始化socket属性,TCP禁用nagle算法,socket本地地址重用
@@ -704,12 +714,20 @@ namespace blue
         std::string m_client_name = "";                               // 客户端名称
         int m_auth_level = 0;                                         // 客户端级别, 供commandHandler使用, 0普通用户(没有密码不可以访问),1客户端(除了个别危险命令不可访问),2管理员(最高权,主要负责shutdown)
         int m_client_db_id = 0;                                       // 客户端数据库的索引
+
+        // 事务模式
         bool m_in_transaction = false;                                // 事务是否进行中
         std::vector<std::vector<blue::RespValue>> m_transaction_cmds; // 事务命令数组
         VersionChecker m_version_checker;                             // 版本检查回调函数
+
+        // 订阅模式
         bool m_in_subScription = false;                               // 是否处在订阅模式
         std::unordered_set<std::string> m_subScription_channels;      // 每个连接订阅的频道
         std::unordered_set<std::string> m_subScription_patterns;      // 每个连接订阅的模式订阅
+
+        // 监控模式
+        bool m_in_monitor = false;
+
     private:
         int m_sockfd;
         int m_family;

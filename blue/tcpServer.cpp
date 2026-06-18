@@ -171,7 +171,7 @@ namespace blue
         for (auto& sock : m_socks)
         {
             sock->cancelAll();
-            sock->shutdown(SHUT_RD);        // 关闭读端不在接收连接
+            sock->shutdown(SHUT_RDWR);        // 关闭读写端不在接收连接
             sock->close();
         }
         m_socks.clear();

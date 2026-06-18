@@ -75,8 +75,15 @@ namespace blue
         virtual const int getMaxClientCount() const noexcept override { return m_config.maxClients; }
 
     private:
+        /**
+         * @brief 定期删除过期的命令
+         */
         Task<void> expireTime();
         void removeExpireCycle();
+
+        /**
+         * @brief 格式化socre
+         */
         std::string format_score(double score)
         {
             std::string s = std::to_string(score);
@@ -90,13 +97,20 @@ namespace blue
             return s;
         }
 
-        // 获取 key 对应的分片
+        /**
+         * @brief 获取 key 对应的分片
+         * @param key 键值
+         */
         int getShardIndex(const std::string &key) const
         {
             return std::hash<std::string>{}(key) % SHARD_COUNT;
         }
 
-        // 获取分片引用
+        /**
+         * @brief 获取分片引用
+         * @param key 键值
+         * @param sock socket 智能指针对象
+         */
         DataShard &getShard(const std::string &key, MSocket::MSocketPtr sock)
         {
             return m_dbs[sock->getClientId()][getShardIndex(key)];
@@ -107,12 +121,20 @@ namespace blue
             return m_dbs[sock->getClientId()][getShardIndex(key)];
         }
 
-        // 持久化到文件
+        /**
+         * @brief 持久化到文件
+         */
         void saveToFile();
 
-        // 从文件加载
+        /**
+         * @brief 从文件加载
+         */
         void loadFromFile();
 
+        /**
+         * @brief 是否是管理员
+         * @param sock 判断sock是否是管理员
+         */
         bool isAdmin(MSocket::MSocketPtr sock) const
         {
             auto admin = m_admin_sock.lock();
@@ -121,6 +143,8 @@ namespace blue
 
         /**
          * @brief 获取key版本
+         * @param key 键值
+         * @param sock 封装的socket 类智能指针
          */
         uint64_t getKeyVersion(const std::string &key, MSocket::MSocketPtr sock)
         {
@@ -137,6 +161,9 @@ namespace blue
 
         /**
          * @brief 同步推送订阅消息给订阅者
+         * @param sock 封装的socket 类智能指针
+         * @param channel 频道
+         * @param message 消息
          */
         void publishMessage(MSocket::MSocketPtr sock,
                             const std::string &channel,
@@ -222,6 +249,9 @@ namespace blue
         std::atomic<int64_t> m_slow_log_slower_than{10000}; // 阈值（微秒），默认10ms
         std::atomic<size_t> m_slow_log_max_len{128};        // 最大保存条数
 
+        /**
+         * @brief 将慢查询日志队列内容同步进入slow_logs_cache
+         */
         void syncSlowLogs()
         {
             std::unique_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
@@ -235,6 +265,65 @@ namespace blue
                     m_slow_logs_cache.erase(m_slow_logs_cache.begin());
                 }
             }
+        }
+
+    private:
+        // MONITOR 模式
+        std::shared_mutex m_monitor_mutex;                   // MONITOR 锁
+        std::vector<MSocket::MSocketWPtr> m_monitor_clients; // MONITOR 客户端列表
+
+        /**
+         * @brief 推送消息给monitor_client
+         * @param cmd 命令
+         * @param sock 被推送的客户端
+         * @note 过期的sock会被清理
+         */
+        void pushToMonitor(const std::string &cmd, MSocket::MSocketPtr sock)
+        {
+            std::unique_lock<std::shared_mutex> lock(m_monitor_mutex);
+
+            if (m_monitor_clients.empty())
+            {
+                return;
+            }
+
+            // 构造 MONITOR 消息格式: +时间戳 [客户端IP:端口] "命令"
+            auto now = std::chrono::system_clock::now();
+            auto ts = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+
+            std::string message = "+" + std::to_string(ts) +
+                                  " [" + sock->getRemoteAddress()->toString() + "] \"" +
+                                  cmd + "\"\r\n";
+
+            for (auto it = m_monitor_clients.begin(); it != m_monitor_clients.end();)
+            {
+                auto client = it->lock();
+                if (!client || !client->isConnected())
+                {
+                    it = m_monitor_clients.erase(it);
+                    continue;
+                }
+
+                // 发送消息给monitor_client
+                ::send(client->getSocketfd(), message.data(), message.size(), MSG_NOSIGNAL);
+                ++it;
+            }
+        }
+
+        /**
+         * @brief 集中清理过期的monitor_clients
+         */
+        void removeMonitor()
+        {
+            std::unique_lock<std::shared_mutex> lock(m_monitor_mutex);
+            m_monitor_clients.erase(
+                std::remove_if(m_monitor_clients.begin(), m_monitor_clients.end(),
+                               [](const auto &weak)
+                               {
+                                   auto ptr = weak.lock();
+                                   return !ptr || !ptr->isConnected();
+                               }),
+                m_monitor_clients.end());
         }
     };
 
@@ -469,12 +558,12 @@ namespace blue
                     result.push_back(RespValue::bulk_string("timeout"));
                     result.push_back(RespValue::bulk_string(std::to_string(m_config.timeout_s)));
                 }
-                if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*") 
+                if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*")
                 {
                     result.push_back(RespValue::bulk_string("slowlog-log-slower-than"));
                     result.push_back(RespValue::bulk_string(std::to_string(m_slow_log_slower_than.load(std::memory_order_acquire))));
                 }
-                if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*") 
+                if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*")
                 {
                     result.push_back(RespValue::bulk_string("slowlog-max-len"));
                     result.push_back(RespValue::bulk_string(std::to_string(m_slow_log_max_len.load(std::memory_order_acquire))));
@@ -547,7 +636,7 @@ namespace blue
                         {
                             return return_with_slowlog(RespValue::error("ERR value must be >= 0"));
                         }
-                        m_slow_log_slower_than.store(val,std::memory_order_release);
+                        m_slow_log_slower_than.store(val, std::memory_order_release);
                         return return_with_slowlog(RespValue::simple_string("OK"));
                     }
                     catch (...)
@@ -564,7 +653,7 @@ namespace blue
                         {
                             return return_with_slowlog(RespValue::error("ERR value must be > 0"));
                         }
-                        m_slow_log_max_len.store(val,std::memory_order_release);
+                        m_slow_log_max_len.store(val, std::memory_order_release);
                         return return_with_slowlog(RespValue::simple_string("OK"));
                     }
                     catch (...)
@@ -3364,12 +3453,16 @@ namespace blue
             info += "tcp_port:6666\r\n";
             info += "\r\n";
 
-            // client
+            // Client
             info += "# Client\r\n";
             info += "connections:" + std::to_string(TcpServer<T>::getConnection()) + "\r\n";
             info += "maxclient:" + std::to_string(m_config.maxClients) + "\r\n";
             info += "reject_connections:" + std::to_string(TcpServer<T>::getRejectConnection()) + "\r\n";
             info += "\r\n";
+
+            // Monitor
+            info += "# Monitor\r\n";
+            info += "monitor_clients:" + std::to_string(m_monitor_clients.size()) + "\r\n";
 
             // Stats
             info += "# Stats\r\n";
@@ -3679,6 +3772,26 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR unknown SLOWLOG subcommand"));
             }
         }
+        else if (cmd == "MONITOR") // MONITOR   实时监控和调试服务器
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+            if (args.size() != 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'MONITOR'"));
+            }
+
+            {
+                std::unique_lock<std::shared_mutex> lock(m_monitor_mutex);
+                m_monitor_clients.push_back(sock);
+            }
+
+            sock->setMonitorMode(true);
+
+            return return_with_slowlog(RespValue::simple_string("OK"));
+        }
         else if (cmd == "SHUTDOWN") // SHUTDOWN 关闭服务器,如果连接数为0
         {
             if (!isAdmin(sock))
@@ -3733,19 +3846,19 @@ namespace blue
 
             // 批量处理命令
             std::string batch_response;
-            RespValue cmd;
+            RespValue cmd_Resp;
             int cmd_count = 0;
 
             // 喂入数据
-            while (parser.next(cmd))
+            while (parser.next(cmd_Resp))
             {
-                auto copy_arr = cmd.arr;
+                auto copy_arr = cmd_Resp.arr;
                 if (copy_arr.empty())
                 {
                     continue;
                 }
                 // 安全检查
-                if (cmd.type == RespValue::Type::ARRAY && copy_arr.size() > 1000)
+                if (cmd_Resp.type == RespValue::Type::ARRAY && copy_arr.size() > 1000)
                 {
                     BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
                                                 << "] 命令数组过大: " << copy_arr.size();
@@ -3777,7 +3890,7 @@ namespace blue
                         else
                         {
                             sock->setVersionChecker([this, sock](const std::string &key) -> uint64_t
-                                                { return this->getKeyVersion(key, sock); });
+                                                    { return this->getKeyVersion(key, sock); });
                             if (sock->hasKeyModified())
                             {
                                 sock->clearTransaction();
@@ -3818,7 +3931,7 @@ namespace blue
                     }
                     else
                     {
-                        sock->addTransaction(std::move(copy_arr));
+                        sock->addTransaction(std::move(copy_arr)); // move后copy_arr为空
                         response = RespValue::simple_string("QUEUED");
                     }
                 }
@@ -3940,7 +4053,7 @@ namespace blue
                         {
                             response = RespValue::error("ERR already in Transaction");
                         }
-                        else 
+                        else
                         {
                             std::vector<RespValue> results;
 
@@ -4014,27 +4127,29 @@ namespace blue
                     else
                     {
                         // 执行普通命令
-                        response = execute(std::move(copy_arr), sock);
+                        response = execute(std::move(copy_arr), sock); // move后copy_arr为空
                     }
                 }
 
-                if (cmd == "PUBLISH" || cmd == "SUBSCRIBE" 
-                    || cmd == "MULTI" || cmd == "UNSUBSCRIBE"
-                    || cmd == "DISCARD" || cmd == "EXEC")
+                std::string cmd_str;
+                for (size_t i = 0; i < cmd_Resp.arr.size(); i++)
                 {
+                    if (i > 0)
+                    {
+                        cmd_str += " ";
+                    }
+                    cmd_str += cmd_Resp.arr[i].str;
+                }
+
+                // 这些命令或事务模式或订阅模式的命令都需要额外设置慢查询
+                if (cmd == "PUBLISH" || cmd == "SUBSCRIBE" 
+                    || cmd == "MULTI" || sock->inSubScription() ||
+                    sock->inTransaction())
+                {
+                    // 记录慢查询
                     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
                     if (duration.count() > m_slow_log_slower_than.load(std::memory_order_acquire))
                     {
-                        std::string cmd_str;
-                        for (size_t i = 0; i < copy_arr.size(); i++)
-                        {
-                            if (i > 0)
-                            {
-                                cmd_str += " ";
-                            }
-                            cmd_str += copy_arr[i].str;
-                        }
-
                         SlowLogEntry entry{
                             ++m_slow_log_id,
                             std::chrono::system_clock::now(),
@@ -4045,6 +4160,13 @@ namespace blue
                         m_slow_logs.push(entry);
                     }
                 }
+
+                if (response.str != "QUEUED")
+                {
+                    // 推送消息给监控客户端
+                    pushToMonitor(cmd_str, sock);
+                }
+
                 batch_response += RespValue::encode(response);
                 cmd_count++;
                 m_commands.fetch_add(1, std::memory_order_acq_rel);
@@ -4134,6 +4256,9 @@ namespace blue
         sock->clearSubScription();
         // BLUE_LOG_INFO(xx::g_logger) << "one Client exit, fd:" << sock->getSocketfd();
         sock->close();
+
+        // 删除过期的monitor
+        removeMonitor();
 
         TcpServer<T>::subConnection();
         if (TcpServer<T>::getConnection() == 0 && m_shutdown.load(std::memory_order_acquire))
