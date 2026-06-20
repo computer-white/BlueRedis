@@ -7,7 +7,7 @@
 #include "blue/await.h"
 
 using namespace blue;
-Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();
+static Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();
 
 std::atomic<bool> g_running(true);
 IOManager* g_iom = nullptr;

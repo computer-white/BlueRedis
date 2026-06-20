@@ -10,10 +10,6 @@
 
 namespace blue
 {
-    namespace yy
-    {
-        blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
-    }
     struct SleepAwaiter
     {
         uint32_t s;
@@ -36,7 +32,7 @@ namespace blue
     /**
      * @brief 等待 s 秒
      */
-    SleepAwaiter sleepFor(uint32_t s)
+    inline SleepAwaiter sleepFor(uint32_t s)
     {
         return SleepAwaiter{s};
     }

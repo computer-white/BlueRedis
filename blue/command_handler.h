@@ -4,15 +4,17 @@
 #include <chrono>
 #include <list>
 #include <iomanip>
-#include <iterator>
 #include <unordered_set>
-#include "spscqueue.h"
 #include "config.h"
 #include "task.h"
 #include "tcpServer.h"
 #include "resp_parser.h"
 #include "asyncio.h"
 #include "await.h"
+#include "modules/subscription.h"
+#include "modules/slowlog.h"
+#include "modules/monitor.h"
+#include "modules/AOF.h"
 #include "skiplist.h"
 
 namespace blue
@@ -31,12 +33,16 @@ namespace blue
                                           { s_admin_password = new_val; });
         }
     };
-    using TimePoint = std::chrono::steady_clock::time_point;
+
+    // 32个分片
     constexpr int SHARD_COUNT = 32;
+    // 16个数据库
     constexpr int DB_COUNT = 16;
+
     // 单个分片的结构
     struct DataShard
     {
+        using TimePoint = std::chrono::steady_clock::time_point;
         std::shared_mutex mutex;
         std::unordered_map<std::string, std::string> store;
         std::unordered_map<std::string, TimePoint> expire;
@@ -48,13 +54,17 @@ namespace blue
         // key -> (member-> score)
         std::unordered_map<std::string, std::unordered_map<std::string, double>> zset_score;
     };
+
+    /**
+     * @brief redis 服务器
+     */
     template <typename T>
     class CommandHandler : public TcpServer<T>
     {
     public:
         using CommandHandlerPtr = std::shared_ptr<CommandHandler>;
         using SteadyClock = std::chrono::steady_clock;
-        // using TimePoint = SteadyClock::time_point;
+        using TimePoint = SteadyClock::time_point;
 
     public:
         CommandHandler(int level = -1, int option_name = -1, T option = T(), IOManager *manager = IOManager::GetThis(),
@@ -146,6 +156,7 @@ namespace blue
          * @brief 获取key版本
          * @param key 键值
          * @param sock 封装的socket 类智能指针
+         * @note Watch + Transaction 模式使用
          */
         uint64_t getKeyVersion(const std::string &key, MSocket::MSocketPtr sock)
         {
@@ -160,50 +171,8 @@ namespace blue
             return 0;
         }
 
-        /**
-         * @brief 同步推送订阅消息给订阅者
-         * @param sock 封装的socket 类智能指针
-         * @param channel 频道
-         * @param message 消息
-         */
-        void publishMessage(MSocket::MSocketPtr sock,
-                            const std::string &channel,
-                            const std::string &message)
-        {
-            if (!sock || !sock->isConnected())
-            {
-                return;
-            }
-            // 构造 RESP 消息
-            std::vector<RespValue> msg;
-            msg.push_back(RespValue::bulk_string("message"));
-            msg.push_back(RespValue::bulk_string(channel));
-            msg.push_back(RespValue::bulk_string(message));
-
-            std::string data = RespValue::encode(RespValue::array(std::move(msg)));
-
-            // 使用阻塞发送，确保立即发出
-            size_t sent = 0;
-            while (sent < data.size())
-            {
-                ssize_t n = ::send(sock->getSocketfd(),
-                                   data.data() + sent,
-                                   data.size() - sent,
-                                   MSG_NOSIGNAL); // MSG_NOSIGNAL 防止 SIGPIPE
-                if (n <= 0)
-                {
-                    BLUE_LOG_ERROR(xx::g_logger) << "Failed to send subscription message";
-                    return;
-                }
-                sent += n;
-            }
-
-            BLUE_LOG_DEBUGE(xx::g_logger) << "Sent subscription message to " << sock->getSocketfd();
-            return;
-        }
-
     private:
-        // commandserver 配置
+        /* REDIS SERVER CONFIG */
         struct CommConfig
         {
             int32_t maxClients = 1000; // 最大客户端数量
@@ -213,19 +182,8 @@ namespace blue
 
         CommConfig m_config;
 
-        struct AOFConfig
-        {
-            // AOF
-            bool aof_enabled = false;                    // 是否开启aof
-            std::string aof_filename = "appendonly.aof"; // 文件模板名
-            size_t max_file_size = 1024 * 1024;          // 每个文件最大大小
-            size_t max_file_number = 5;                  // 保留5个aof文件
-            std::string aof_sync = "everysec";           // 保存策略,always, everysec, no
-        };
-
-        AOFConfig m_aof_config;
-
     private:
+        /* REDIS SERVER */
         std::array<std::array<DataShard, SHARD_COUNT>, DB_COUNT> m_dbs; // 数据库
         std::atomic<uint32_t> m_commands{0};                            // 总共命令数量
         std::atomic<bool> m_shutdown{false};                            // 服务器关闭标识
@@ -234,172 +192,20 @@ namespace blue
         std::atomic<bool> m_bgsave_running{false};                      // 后台保存rdb
         MSocket::MSocketWPtr m_admin_sock;                              // 用于同一时间只能一个管理员上线
     private:
-        // 订阅模式
-        // 订阅功能
-        std::shared_mutex m_channels_mutex;
-        // 频道 -> 订阅者列表
-        std::unordered_map<std::string, std::vector<MSocket::MSocketWPtr>> m_channels;
-
-        std::shared_mutex m_patterns_mutex;
-        // 模式订阅,支持通配符
-        std::unordered_map<std::string, std::vector<MSocket::MSocketWPtr>> m_patterns;
+        /* SUBSCRIPTION */
+        SubscriptionModule m_subscription; // subscription
 
     private:
-        // 慢查询日志
-        struct SlowLogEntry
-        {
-            int64_t id;                                      // 自增id
-            std::chrono::system_clock::time_point timestamp; // 时间戳
-            std::chrono::microseconds duration;              // 执行时间(微秒)
-            std::string command;                             // 命令字符串
-            std::string client_ip;                           // 客户端ip
-        };
-
-        SPSCQueue<SlowLogEntry, 2048> m_slow_logs;   // 慢查询日志队列
-        std::shared_mutex m_slow_logs_cache_mutex;   // 日志锁
-        std::vector<SlowLogEntry> m_slow_logs_cache; // 用于查询的缓存
-
-        std::atomic<int64_t> m_slow_log_id{0};              // 自增ID
-        std::atomic<int64_t> m_slow_log_slower_than{10000}; // 阈值（微秒），默认10ms
-        std::atomic<size_t> m_slow_log_max_len{128};        // 最大保存条数
-
-        /**
-         * @brief 将慢查询日志队列内容同步进入slow_logs_cache
-         */
-        void syncSlowLogs()
-        {
-            std::unique_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
-            SlowLogEntry entry;
-            size_t max_len = m_slow_log_max_len.load(std::memory_order_acquire);
-            while (m_slow_logs.pop(entry))
-            {
-                m_slow_logs_cache.push_back(std::move(entry));
-                if (m_slow_logs_cache.size() > max_len)
-                {
-                    m_slow_logs_cache.erase(m_slow_logs_cache.begin());
-                }
-            }
-        }
+        /* SLOWLOG */
+        SlowLogModule m_slowLog;                // monitor
+        std::atomic<bool> m_push_monitor{true}; // 是否推送给monitor
+    private:
+        /* MONITOR */
+        MonitorModule m_monitor;
 
     private:
-        // MONITOR 模式
-        std::shared_mutex m_monitor_mutex;                      // MONITOR 锁
-        std::vector<MSocket::MSocketWPtr> m_monitor_clients;    // MONITOR 客户端列表
-        std::atomic<bool> m_push_monitor{true};                 // 是否推送给monitor
-
-        /**
-         * @brief 推送消息给monitor_client
-         * @param cmd 命令
-         * @param sock 被推送的客户端
-         * @note 过期的sock会被清理
-         */
-        void pushToMonitor(const std::string &cmd, MSocket::MSocketPtr sock)
-        {
-            std::unique_lock<std::shared_mutex> lock(m_monitor_mutex);
-
-            if (m_monitor_clients.empty())
-            {
-                return;
-            }
-
-            // 构造 MONITOR 消息格式: +时间戳 [客户端IP:端口] "命令"
-            auto now = std::chrono::system_clock::now();
-            auto ts = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
-
-            std::string message = "+" + std::to_string(ts) +
-                                  " [" + sock->getRemoteAddress()->toString() + "] \"" +
-                                  cmd + "\"\r\n";
-
-            for (auto it = m_monitor_clients.begin(); it != m_monitor_clients.end();)
-            {
-                auto client = it->lock();
-                if (!client || !client->isConnected())
-                {
-                    it = m_monitor_clients.erase(it);
-                    continue;
-                }
-
-                // 发送消息给monitor_client
-                ::send(client->getSocketfd(), message.data(), message.size(), MSG_NOSIGNAL);
-                ++it;
-            }
-        }
-
-        /**
-         * @brief 集中清理过期的monitor_clients
-         */
-        void removeMonitor()
-        {
-            std::unique_lock<std::shared_mutex> lock(m_monitor_mutex);
-            m_monitor_clients.erase(
-                std::remove_if(m_monitor_clients.begin(), m_monitor_clients.end(),
-                               [](const auto &weak)
-                               {
-                                   auto ptr = weak.lock();
-                                   return !ptr || !ptr->isConnected();
-                               }),
-                m_monitor_clients.end());
-        }
-
-    private:
-        // AOF
-        std::shared_mutex m_aof_mutex;           // 互斥锁
-        std::string m_aof_current_filename;      // 当前文件名
-        std::ofstream m_aof_file;                // 当前打开的文件流
-        size_t m_aof_file_idx = 0;               // 当前文件编号
-        TimePoint m_last_aof_sync;               // 最新一次写入时间
-        std::atomic<bool> m_aof_rotating{false}; // 轮转标志
-
-        // AOF 相关方法
-        /**
-         * @brief 初始化AOF
-         */
-        void initAOF();
-
-        /**
-         * @brief 追加命令到AOF
-         * @param cmd 命令
-         */
-        void appendToAOF(const std::string &cmd);
-
-        /**
-         * @brief 加载AOF
-         */
-        void loadAOF();
-
-        /**
-         * @brief 判断是否是写命令
-         * @param cmd 命令
-         */
-        bool isWriteCommand(const std::string &cmd);
-
-        /**
-         * @brief 格式化命令为RESP字符转
-         * @param args 命令数组
-         */
-        std::string formatCommand(const std::vector<RespValue> &args);
-
-        /**
-         * @brief 按策略循环后台同步AOF文件
-         */
-        Task<void> aofSyncLoop();
-
-        /**
-         * @brief 轮转
-         */
-        void rotateAOF();
-
-        /**
-         * @brief 获取文件名
-         */
-        std::string getAOFFilename(int index);
-
-        /**
-         * @brief 判断文件是否是旧文件并执行删除，若最后文件名可使用返回true
-         * @param filename 需要判断的文件名
-         * @return true 表示可以使用
-         */
-        bool cleanupOldAOFs(const std::string &filename);
+        /* AOF */
+        AOFModule m_aof;
     };
 
     template <typename T>
@@ -407,16 +213,22 @@ namespace blue
                                       IOManager *acceptmanager)
         : TcpServer<T>(level, option_name, option, manager, acceptmanager)
     {
+        // 设置 AOF 执行器
+        m_aof.setExecutor([this](std::vector<RespValue> args, 
+                                MSocket::MSocketPtr sock, 
+                                bool record) -> RespValue {
+            return this->execute(args, sock, record);
+        });
         loadFromFile();
-        loadAOF();
-        initAOF(); // 初始化AOF,追加打开AOF文件,并开启AOF同步协程
+        m_aof.loadAOF();
+        m_aof.initAOF(); // 初始化AOF,追加打开AOF文件,并开启AOF同步协程
         IOManager::GetThis()->schedule(expireTime());
         if (s_admin_password.empty())
         {
             s_admin_password = "admin123";
         }
         m_password = s_admin_password;
-        m_last_aof_sync = SteadyClock::now();
+        m_aof.setLastAOFSync(SteadyClock::now());
     }
 
     template <typename T>
@@ -424,15 +236,17 @@ namespace blue
     {
         m_shutdown.store(true, std::memory_order_release);
 
+        // 停止AOF的循环写入
+        m_aof.stop();
+
         // 等待其他协程退出
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
+        // 停止 AOF 刷新线程
+        m_aof.stopAOFFlushThread();
+
         saveToFile();
-        if (m_aof_file.is_open())
-        {
-            m_aof_file.flush();
-            m_aof_file.close();
-        }
+        m_aof.closeAOFWithFlush();
     }
 
     template <typename T>
@@ -480,41 +294,29 @@ namespace blue
 
         auto return_with_slowlog = [&](RespValue resp) -> RespValue
         {
-            auto end = SteadyClock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-
-            if (duration.count() > m_slow_log_slower_than.load(std::memory_order_acquire))
+            auto end = std::chrono::steady_clock::now();
+            std::string cmd_str;
+            for (size_t i = 0; i < args.size(); i++)
             {
-                std::string cmd_str;
-                for (size_t i = 0; i < args.size(); i++)
+                if (i > 0)
                 {
-                    if (i > 0)
-                    {
-                        cmd_str += " ";
-                    }
-                    cmd_str += args[i].str;
+                    cmd_str += " ";
                 }
-                SlowLogEntry entry{
-                    ++m_slow_log_id,
-                    std::chrono::system_clock::now(),
-                    duration,
-                    cmd_str,
-                    sock->getRemoteAddress()->toString()};
-
-                m_slow_logs.push(entry);
+                cmd_str += args[i].str;
             }
+            m_slowLog.pushEntry(cmd_str, sock, start, end);
 
-            // 写命令记录进入AOF
+            // 写命令记录进入AOF(异步)
             if (args.empty())
             {
                 return resp;
             }
             std::string cmd = args[0].str;
             std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
-            if (RecordAOF && isWriteCommand(cmd))
+            if (RecordAOF && m_aof.isWriteCommand(cmd))
             {
-                std::string aof_cmds = formatCommand(args);
-                appendToAOF(aof_cmds);
+                std::string aof_cmds = m_aof.formatCommand(args);
+                m_aof.appendToAOF(aof_cmds);
             }
 
             // 每300条命令异步保存进入rbg
@@ -530,7 +332,7 @@ namespace blue
         // 不记录AOF模式,设置推送给monitor为false,即不推送
         if (!RecordAOF)
         {
-            m_push_monitor.store(false,std::memory_order_release);
+            m_push_monitor.store(false, std::memory_order_release);
         }
         else
         {
@@ -694,37 +496,42 @@ namespace blue
                 if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*")
                 {
                     result.push_back(RespValue::bulk_string("slowlog-log-slower-than"));
-                    result.push_back(RespValue::bulk_string(std::to_string(m_slow_log_slower_than.load(std::memory_order_acquire))));
+                    result.push_back(RespValue::bulk_string(std::to_string(m_slowLog.getSlowLogThan())));
                 }
                 if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*")
                 {
                     result.push_back(RespValue::bulk_string("slowlog-max-len"));
-                    result.push_back(RespValue::bulk_string(std::to_string(m_slow_log_max_len.load(std::memory_order_acquire))));
+                    result.push_back(RespValue::bulk_string(std::to_string(m_slowLog.getSlowMaxLen())));
                 }
                 if (pattern == "*" || pattern == "aof-enabled" || pattern == "aof-*")
                 {
                     result.push_back(RespValue::bulk_string("aof-enabled"));
-                    result.push_back(RespValue::bulk_string(m_aof_config.aof_enabled ? "yes" : "no"));
+                    result.push_back(RespValue::bulk_string(m_aof.getConfig_AOFEnabled() ? "yes" : "no"));
                 }
                 if (pattern == "*" || pattern == "aof-filename" || pattern == "aof-*")
                 {
                     result.push_back(RespValue::bulk_string("aof-filename"));
-                    result.push_back(RespValue::bulk_string(m_aof_config.aof_filename));
+                    result.push_back(RespValue::bulk_string(m_aof.getConfig_AOFFilename()));
                 }
                 if (pattern == "*" || pattern == "aof-sync" || pattern == "aof-*")
                 {
                     result.push_back(RespValue::bulk_string("aof-sync"));
-                    result.push_back(RespValue::bulk_string(m_aof_config.aof_sync));
+                    result.push_back(RespValue::bulk_string(m_aof.getConfig_AOFSync()));
                 }
                 if (pattern == "*" || pattern == "aof-max_file_size" || pattern == "aof-*")
                 {
                     result.push_back(RespValue::bulk_string("aof-max_file_size"));
-                    result.push_back(RespValue::bulk_string(std::to_string(m_aof_config.max_file_size)));
+                    result.push_back(RespValue::bulk_string(std::to_string(m_aof.getConfig_AOFMaxFileSize())));
                 }
                 if (pattern == "*" || pattern == "aof-max_file_number" || pattern == "aof-*")
                 {
                     result.push_back(RespValue::bulk_string("aof-max_file_number"));
-                    result.push_back(RespValue::bulk_string(std::to_string(m_aof_config.max_file_number)));
+                    result.push_back(RespValue::bulk_string(std::to_string(m_aof.getConfig_AOFMaxFileNumber())));
+                }
+                if (pattern == "*" || pattern == "aof-max_buffer_size" || pattern == "aof-*")
+                {
+                    result.push_back(RespValue::bulk_string("aof-max_buffer_size"));
+                    result.push_back(RespValue::bulk_string(std::to_string(m_aof.getMaxAOFBufferSize())));
                 }
                 return return_with_slowlog(RespValue::array(std::move(result)));
             }
@@ -794,7 +601,7 @@ namespace blue
                         {
                             return return_with_slowlog(RespValue::error("ERR value must be >= 0"));
                         }
-                        m_slow_log_slower_than.store(val, std::memory_order_release);
+                        m_slowLog.setSlowLogThan(val);
                         return return_with_slowlog(RespValue::simple_string("OK"));
                     }
                     catch (...)
@@ -811,7 +618,7 @@ namespace blue
                         {
                             return return_with_slowlog(RespValue::error("ERR value must be > 0"));
                         }
-                        m_slow_log_max_len.store(val, std::memory_order_release);
+                        m_slowLog.setSlowMaxLen(val);
                         return return_with_slowlog(RespValue::simple_string("OK"));
                     }
                     catch (...)
@@ -823,16 +630,13 @@ namespace blue
                 {
                     if (value == "yes" || value == "1")
                     {
-                        m_aof_config.aof_enabled = true;
-                        initAOF();
+                        m_aof.setConfig_AOFEnabled(true);
+                        m_aof.initAOF();
                     }
                     else if (value == "no" || value == "0")
                     {
-                        m_aof_config.aof_enabled = false;
-                        if (m_aof_file.is_open())
-                        {
-                            m_aof_file.close();
-                        }
+                        m_aof.setConfig_AOFEnabled(false);
+                        m_aof.closeAOF();
                     }
                     else
                     {
@@ -844,7 +648,7 @@ namespace blue
                 {
                     if (value == "always" || value == "everysec" || value == "no")
                     {
-                        m_aof_config.aof_sync = value;
+                        m_aof.setConfig_AOFSync(value);
                         return return_with_slowlog(RespValue::simple_string("OK"));
                     }
                     return return_with_slowlog(RespValue::error("ERR invalid sync mode"));
@@ -855,7 +659,7 @@ namespace blue
                     {
                         return return_with_slowlog(RespValue::error("ERR invalid filename"));
                     }
-                    m_aof_config.aof_filename = value;
+                    m_aof.setConfig_AOFFilename(value);
                     return return_with_slowlog(RespValue::simple_string("OK"));
                 }
                 if (param == "aof-max_file_size")
@@ -869,12 +673,12 @@ namespace blue
                             return return_with_slowlog(RespValue::error("ERR max_file_size value too small"));
                         }
                     }
-                    catch(...)
+                    catch (...)
                     {
                         return return_with_slowlog(RespValue::error("ERR invalid integer value"));
                     }
 
-                    m_aof_config.max_file_size = val;
+                    m_aof.setConfig_AOFMaxFileSize(val);
                     return return_with_slowlog(RespValue::simple_string("OK"));
                 }
                 if (param == "aof-max_file_number")
@@ -888,11 +692,29 @@ namespace blue
                             return return_with_slowlog(RespValue::error("ERR max_file_number value too small"));
                         }
                     }
-                    catch(...)
+                    catch (...)
                     {
                         return return_with_slowlog(RespValue::error("ERR invalid integer value"));
                     }
-                    m_aof_config.max_file_number = val;
+                    m_aof.setConfig_AOFMaxFileNumber(val);
+                    return return_with_slowlog(RespValue::simple_string("OK"));
+                }
+                if (param == "aof-max_buffer_size")
+                {
+                    int64_t val;
+                    try
+                    {
+                        val = std::stoll(value);
+                        if (val < 1024 * 1024)
+                        {
+                            return return_with_slowlog(RespValue::error("ERR max_file_number value too small"));
+                        }
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
+                    }
+                    m_aof.setMaxAOFBufferSize(val);
                     return return_with_slowlog(RespValue::simple_string("OK"));
                 }
                 return return_with_slowlog(RespValue::error("ERR Unsupported CONFIG parameter: " + param));
@@ -3695,18 +3517,19 @@ namespace blue
 
             // AOF
             info += "# AOF\r\n";
-            info += "aof_enabled:" + std::string(m_aof_config.aof_enabled ? "1" : "0") + "\r\n";
-            info += "aof_sync:" + m_aof_config.aof_sync + "\r\n";
-            info += "aof_current_file:" + m_aof_current_filename + "\r\n";
-            info += "aof_file_index:" + std::to_string(m_aof_file_idx) + "\r\n";
-            info += "aof_current_size:" + std::to_string(m_aof_file.is_open() ? (size_t)m_aof_file.tellp() : 0) + "\r\n";
-            info += "aof_max_file_size:" + std::to_string(m_aof_config.max_file_size) + "\r\n";
-            info += "aof_max_files:" + std::to_string(m_aof_config.max_file_number) + "\r\n";
+            info += "aof_enabled:" + std::string(m_aof.getConfig_AOFEnabled() ? "1" : "0") + "\r\n";
+            info += "aof_sync:" + m_aof.getConfig_AOFSync() + "\r\n";
+            info += "aof_current_file:" + m_aof.getCurrentFileName() + "\r\n";
+            info += "aof_file_index:" + std::to_string(m_aof.getCurrentFileIdx()) + "\r\n";
+            info += "aof_current_size:" + std::to_string(m_aof.getCurrentFileSize()) + "\r\n";
+            info += "aof_max_file_size:" + std::to_string(m_aof.getConfig_AOFMaxFileSize()) + "\r\n";
+            info += "aof_max_files:" + std::to_string(m_aof.getConfig_AOFMaxFileNumber()) + "\r\n";
+            info += "aof_max_buffer_size" + std::to_string(m_aof.getMaxAOFBufferSize()) + "\r\n";
             info += "\r\n";
 
             // Monitor
             info += "# Monitor\r\n";
-            info += "monitor_clients:" + std::to_string(m_monitor_clients.size()) + "\r\n";
+            info += "monitor_clients:" + std::to_string(m_monitor.size()) + "\r\n";
             info += "\r\n";
 
             // Stats
@@ -3948,7 +3771,7 @@ namespace blue
             if (sub_cmd == "GET")
             {
                 // 同步数据
-                syncSlowLogs();
+                m_slowLog.syncSlowLogs();
 
                 int64_t count = 10;
                 if (args.size() >= 3)
@@ -3967,53 +3790,18 @@ namespace blue
                     }
                 }
 
-                std::vector<RespValue> results;
-                std::shared_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
-                size_t start = m_slow_logs_cache.size() - std::min((size_t)(count), m_slow_logs_cache.size());
-                for (size_t i = start; i < m_slow_logs_cache.size(); i++)
-                {
-                    const auto &entry = m_slow_logs_cache[i];
-                    std::vector<RespValue> log_entry;
-
-                    // ID
-                    log_entry.push_back(RespValue::integer(entry.id));
-
-                    // 时间戳微秒
-                    auto ts = std::chrono::duration_cast<std::chrono::microseconds>(
-                                  entry.timestamp.time_since_epoch())
-                                  .count();
-                    log_entry.push_back(RespValue::integer(ts));
-
-                    // 执行时间(微秒)
-                    log_entry.push_back(RespValue::integer(entry.duration.count()));
-
-                    // 命令
-                    log_entry.push_back(RespValue::bulk_string(entry.command));
-
-                    // 客户端ip
-                    log_entry.push_back(RespValue::bulk_string(entry.client_ip));
-
-                    results.push_back(RespValue::array(std::move(log_entry)));
-                }
+                std::vector<RespValue> results = m_slowLog.getSlowLogs(count);
                 return return_with_slowlog(RespValue::array(std::move(results)));
             }
 
             else if (sub_cmd == "LEN")
             {
-                syncSlowLogs();
-                std::shared_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
-                return return_with_slowlog(RespValue::integer(m_slow_logs_cache.size()));
+                m_slowLog.syncSlowLogs();
+                return return_with_slowlog(RespValue::integer(m_slowLog.len()));
             }
             else if (sub_cmd == "RESET")
             {
-                std::unique_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
-                m_slow_logs_cache.clear();
-                // 清空 SPSCQueue
-                SlowLogEntry entry;
-                while (m_slow_logs.pop(entry))
-                {
-                }
-                m_slow_log_id.store(0, std::memory_order_release);
+                m_slowLog.reset();
                 return return_with_slowlog(RespValue::simple_string("OK"));
             }
             else
@@ -4032,10 +3820,8 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'MONITOR'"));
             }
 
-            {
-                std::unique_lock<std::shared_mutex> lock(m_monitor_mutex);
-                m_monitor_clients.push_back(sock);
-            }
+            // 添加monitor client
+            m_monitor.addMonitorClient(sock);
 
             sock->setMonitorMode(true);
 
@@ -4051,18 +3837,20 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'AOFROTATE'"));
             }
-            if (!m_aof_config.aof_enabled) 
+            if (!m_aof.getConfig_AOFEnabled())
             {
                 return return_with_slowlog(RespValue::error("ERR AOF is disabled"));
             }
-            if (m_aof_rotating.load(std::memory_order_acquire)) 
+            if (m_aof.getAOFRotating())
             {
                 return return_with_slowlog(RespValue::error("ERR AOF rotation already in progress"));
             }
-            std::thread([this]{
-                rotateAOF();
-                BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished";
-            }).detach();
+            std::thread([this]
+                        {
+                // rotateAOF();
+                m_aof.rotateAOF();
+                BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished"; })
+                .detach();
             return return_with_slowlog(RespValue::simple_string("AOF rotation started"));
         }
         else if (cmd == "SHUTDOWN") // SHUTDOWN 关闭服务器,如果连接数为0
@@ -4234,23 +4022,8 @@ namespace blue
                         for (const auto &channel : channels)
                         {
                             // 从全局列表删除
-                            {
-                                std::unique_lock<std::shared_mutex> lock(m_channels_mutex);
-                                auto it = m_channels.find(channel);
-                                if (it != m_channels.end())
-                                {
-                                    auto &subs = it->second;
-                                    subs.erase(std::remove_if(subs.begin(), subs.end(), [sock](const auto &weak)
-                                                              {
-                                        auto ptr = weak.lock();
-                                        return !ptr || ptr.get() == sock.get(); }),
-                                               subs.end());
-                                    if (subs.empty())
-                                    {
-                                        m_channels.erase(it);
-                                    }
-                                }
-                            }
+                            m_subscription.removeSubscriber(channel, sock);
+
                             // 从连接订阅列表移除
                             sock->removeSubScriptionChannel(channel);
 
@@ -4337,10 +4110,7 @@ namespace blue
                                 sock->addSubScriptionChannel(channel);
 
                                 // 添加到全局订阅列表
-                                {
-                                    std::unique_lock<std::shared_mutex> lock(m_channels_mutex);
-                                    m_channels[channel].push_back(sock);
-                                }
+                                m_subscription.addSubscriber(channel, sock);
 
                                 // 返回订阅成功消息
                                 std::vector<RespValue> msg;
@@ -4369,30 +4139,9 @@ namespace blue
                             const std::string channel = copy_arr[1].str;
                             const std::string message = copy_arr[2].str;
 
-                            int receiver_count = 0;
-                            std::vector<MSocket::MSocketWPtr> subscribers;
+                            // 获取订阅者并发送消息给所有订阅者
+                            int receiver_count = m_subscription.publishMessage(channel, message);
 
-                            // 获取订阅者
-                            {
-                                std::shared_lock lock(m_channels_mutex);
-                                auto it = m_channels.find(channel);
-                                if (it != m_channels.end())
-                                {
-                                    subscribers = it->second;
-                                }
-                            }
-
-                            // 发送消息给所有订阅者
-                            for (auto &weak_sock : subscribers)
-                            {
-                                auto sub_sock = weak_sock.lock();
-                                if (sub_sock && sub_sock->isConnected())
-                                {
-                                    // 同步发送
-                                    publishMessage(sub_sock, channel, message);
-                                    receiver_count++;
-                                }
-                            }
                             response = RespValue::integer(receiver_count);
                         }
                         end = SteadyClock::now();
@@ -4419,24 +4168,13 @@ namespace blue
                     sock->inTransaction())
                 {
                     // 记录慢查询
-                    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-                    if (duration.count() > m_slow_log_slower_than.load(std::memory_order_acquire))
-                    {
-                        SlowLogEntry entry{
-                            ++m_slow_log_id,
-                            std::chrono::system_clock::now(),
-                            duration,
-                            cmd_str,
-                            sock->getRemoteAddress()->toString()};
-
-                        m_slow_logs.push(entry);
-                    }
+                    m_slowLog.pushEntry(cmd_str, sock, start, end);
                 }
 
                 if (response.str != "QUEUED" && m_push_monitor.load(std::memory_order_acquire))
                 {
                     // 推送消息给监控客户端
-                    pushToMonitor(cmd_str, sock);
+                    m_monitor.pushToMonitor(cmd_str, sock);
                 }
 
                 batch_response += RespValue::encode(response);
@@ -4507,30 +4245,14 @@ namespace blue
             m_admin_sock.reset();
         }
         // 关闭前清理订阅
-        for (const auto &channel : sock->getSubScriptionChannels())
-        {
-            std::unique_lock<std::shared_mutex> lock(m_channels_mutex);
-            auto it = m_channels.find(channel);
-            if (it != m_channels.end())
-            {
-                auto &subs = it->second;
-                subs.erase(std::remove_if(subs.begin(), subs.end(), [sock](const auto &weak)
-                                          {
-                    auto ptr = weak.lock();
-                    return !ptr || ptr.get() == sock.get(); }),
-                           subs.end());
-                if (subs.empty())
-                {
-                    m_channels.erase(it);
-                }
-            }
-        }
+        m_subscription.removeAllSubscribers(sock);
+
         sock->clearSubScription();
         // BLUE_LOG_INFO(xx::g_logger) << "one Client exit, fd:" << sock->getSocketfd();
         sock->close();
 
         // 删除过期的monitor
-        removeMonitor();
+        m_monitor.removeMonitor();
 
         TcpServer<T>::subConnection();
         if (TcpServer<T>::getConnection() == 0 && m_shutdown.load(std::memory_order_acquire))
@@ -4726,342 +4448,4 @@ namespace blue
         BLUE_LOG_INFO(xx::g_logger) << "RDB loaded from " << filename;
     }
 
-    template <typename T>
-    void CommandHandler<T>::initAOF()
-    {
-        if (!m_aof_config.aof_enabled)
-        {
-            return;
-        }
-
-        if (m_aof_file_idx == 0) 
-        {
-            m_aof_file_idx = 1;
-            m_aof_current_filename = getAOFFilename(1);
-        }
-
-        m_aof_file.open(m_aof_current_filename, std::ios::app | std::ios::binary);
-        if (!m_aof_file)
-        {
-            BLUE_LOG_ERROR(xx::g_logger) << "Failed to open AOF file: " << m_aof_current_filename;
-            m_aof_config.aof_enabled = false;
-            return;
-        }
-
-        BLUE_LOG_INFO(xx::g_logger) << "AOF enabled, file: " << m_aof_current_filename;
-
-        // 启动 AOF 同步协程(always 或 everysec)
-        IOManager::GetThis()->schedule(aofSyncLoop());
-    }
-
-    template <typename T>
-    void CommandHandler<T>::appendToAOF(const std::string &cmd)
-    {
-        if (!m_aof_config.aof_enabled || !m_aof_file.is_open())
-        {
-            return;
-        }
-
-        // 如果处在rotate中这里会阻塞住
-        std::unique_lock<std::shared_mutex> lock(m_aof_mutex);
-
-        m_aof_file << cmd;
-    
-        if (m_aof_config.aof_sync == "always")
-        {
-            m_aof_file.flush();
-        }
-        else if (m_aof_config.aof_sync == "everysec")
-        {
-            auto now = SteadyClock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::seconds>(
-                                now - m_last_aof_sync)
-                                .count();
-            if (duration >= 1)
-            {
-                m_aof_file.flush();
-                m_last_aof_sync = now;
-            }
-        }
-
-        size_t curr_size = m_aof_file.tellp();
-        if (curr_size > m_aof_config.max_file_size && !m_aof_rotating.load(std::memory_order_acquire))
-        {
-            lock.unlock();
-            rotateAOF();
-        }
-    }
-
-    template <typename T>
-    void CommandHandler<T>::loadAOF()
-    {
-        // 从所有现有的AOF文件加载
-        std::vector<std::string> files;
-
-        // 提前分配
-        files.reserve(m_aof_config.max_file_number);
-
-        int goodidx = 1;
-        int idx = 1;
-        // 遍历1-max_file_number之间的文件索引
-        for (; idx <= m_aof_config.max_file_number; idx++)
-        {
-            std::string file_name = getAOFFilename(idx);
-            std::ifstream test(file_name);
-            if (test && test.good())
-            {
-                files.push_back(file_name);
-                goodidx = idx;
-                test.close();
-            }
-        }
-
-        if (files.empty())
-        {
-            BLUE_LOG_INFO(xx::g_logger) << "No existing AOF file";
-            m_aof_file_idx = 1;
-            m_aof_current_filename = getAOFFilename(1);
-            return;
-        }
-
-        m_aof_file_idx = goodidx;       // 必然有效(1-max_file_number)
-        m_aof_current_filename = getAOFFilename(m_aof_file_idx);
-
-        // 创建临时的socket对象(没有真正调用系统API创建socket fd)来载入
-        auto temp_sock = MSocket::CreateTcpSocket();
-        temp_sock->setClientlevel(1); // 跳过认证检查
-        temp_sock->setClientId(0);    // 默认数据库 0
-
-        int total_cmds = 0;
-        int errors = 0;
-
-        for (const auto& file_name : files)
-        {
-            std::ifstream file(file_name);
-            if (!file)
-            {
-                BLUE_LOG_INFO(xx::g_logger) << "No existing AOF file";
-                continue;
-            }
-
-            BLUE_LOG_INFO(xx::g_logger) << "Loading AOF: " << file_name;
-
-            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-
-            file.close();
-
-            if (content.empty())
-            {
-                BLUE_LOG_INFO(xx::g_logger) << "AOF file is empty";
-                continue;
-            }
-
-            RespStreamParser parser;
-
-            if (!parser.feed(content))
-            {
-                BLUE_LOG_INFO(xx::g_logger) << "Failed to parser AOF file";
-                continue;
-            }
-
-            RespValue cmd_Resp;
-            int count = 0;
-            while (parser.next(cmd_Resp))
-            {
-                auto copy_arr = cmd_Resp.arr;
-                if (copy_arr.empty() || cmd_Resp.type != RespValue::Type::ARRAY)
-                {
-                    continue;
-                }
-                try
-                {
-                    // 只载入数据,不计入AOF文件
-                    execute(std::move(copy_arr), temp_sock, false);
-                    count++;
-                }
-                catch (const std::exception &e)
-                {
-                    BLUE_LOG_ERROR(xx::g_logger) << "Failed to execute AOF command: " << e.what();
-                    errors++;
-                }
-            }
-            total_cmds += count;
-            BLUE_LOG_INFO(xx::g_logger) << "Loaded " << count << " commands from AOF " << file_name;
-        }
-
-        BLUE_LOG_INFO(xx::g_logger) << "AOF loaded: " << total_cmds 
-                                << " commands, errors: " << errors;
-    }
-
-    template <typename T>
-    bool CommandHandler<T>::isWriteCommand(const std::string &cmd)
-    {
-        static const std::unordered_set<std::string> write_commands = {
-            "SET", "SETNX", "MSET", "APPEND", "GETSET", "INCR", "INCRBY",
-            "HSET", "HDEL",
-            "LPUSH", "RPUSH", "LPOP", "RPOP", "LSET", "LINSERT", "LPOPRPUSH", "RPOPLPUSH",
-            "SADD", "SREM", "SMOVE", "SPOP",
-            "ZADD", "ZREM", "ZINCRBY", "ZREMRANGEBYSCORE", "ZINCRBYFLOAT",
-            "DEL", "EXPIRE", "PEXPIRE", "PERSIST", "RENAME", "RENAMENX",
-            "FLUSHDB", "FLUSHDBALL",
-            // 处理select 来保证数据库会被正确初始化
-            "SELECT"};
-        // BLUE_LOG_INFO(xx::g_logger) << "cmd: " << cmd << "inwrite_commands: " << (int)(write_commands.find(cmd) != write_commands.end());
-        return (bool)(write_commands.find(cmd) != write_commands.end());
-    }
-
-    template <typename T>
-    std::string CommandHandler<T>::formatCommand(const std::vector<RespValue> &args)
-    {
-        std::string result;
-        result += "*" + std::to_string(args.size()) + "\r\n";
-        for (const auto &arg : args)
-        {
-            result += "$" + std::to_string(arg.str.size()) + "\r\n";
-            result += arg.str + "\r\n";
-        }
-        return result;
-    }
-
-    template <typename T>
-    Task<void> CommandHandler<T>::aofSyncLoop()
-    {
-        if (!m_aof_config.aof_enabled)
-        {
-            co_return;
-        }
-
-        while (!m_shutdown.load(std::memory_order_acquire))
-        {
-            co_await sleepFor(2);
-
-            if (m_aof_config.aof_sync == "everysec") // 每秒刷新
-            {
-                std::unique_lock<std::shared_mutex> lock(m_aof_mutex);
-                auto now = SteadyClock::now();
-                auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - m_last_aof_sync).count();
-
-                if (duration >= 1 && m_aof_file.is_open())
-                {
-                    m_aof_file.flush();
-                    m_last_aof_sync = now;
-                }
-            }
-            else if (m_aof_config.aof_sync == "always")
-            {
-                if (m_aof_file.is_open())
-                {
-                    m_aof_file.flush();
-                }
-            }
-        }
-        co_return;
-    }
-
-    template <typename T>
-    void CommandHandler<T>::rotateAOF()
-    {
-        if (m_aof_config.max_file_number == 0) 
-        {
-            BLUE_LOG_ERROR(xx::g_logger) << "max_file_number is 0, cannot rotate";
-            return;
-        }
-        // 处在轮转中
-        if (m_aof_rotating.load(std::memory_order_acquire))
-        {
-            BLUE_LOG_DEBUGE(xx::g_logger) << "AOF rotation already in progress";
-            return;
-        }
-
-        // 开始轮转
-        m_aof_rotating.store(true, std::memory_order_release);
-
-        BLUE_LOG_INFO(xx::g_logger) << "AOF rotation started, current file: "
-                                    << m_aof_current_filename
-                                    << ", idx: " << m_aof_file_idx
-                                    << ", max_file_number: " << m_aof_config.max_file_number;
-
-        std::unique_lock<std::shared_mutex> lock(m_aof_mutex);
-        if (m_aof_file.is_open())
-        {
-            m_aof_file.flush();
-            m_aof_file.close();
-        }
-
-        // 让索引落在1-max_file_number之间
-        int next_idx = (m_aof_file_idx % m_aof_config.max_file_number) + 1;
-
-        // 索引文件会在1-max_file_number之间循环,所以当返回一个已经存在的文件名，表示需要删除了
-        std::string new_file = getAOFFilename(next_idx);
-
-        // 调用后,new_file文件名一定可以使用了,因为要么是旧的被删除了(可能删除失败),要么是新的
-        bool can_used = cleanupOldAOFs(new_file);
-
-        // 如果删除文件失败,截断文件内容后以app方式打开
-        if (!can_used)
-        {
-            std::ofstream truncate_file(new_file, std::ios::trunc | std::ios::binary);
-            if (truncate_file) 
-            {
-                truncate_file.close();
-                BLUE_LOG_INFO(xx::g_logger) << "Truncated old AOF file: " << new_file;
-            } 
-            else 
-            {
-                BLUE_LOG_ERROR(xx::g_logger) << "Failed to truncate old AOF file: " << new_file;
-                m_aof_config.aof_enabled = false;
-                m_aof_rotating.store(false,std::memory_order_release);
-                return;
-            }
-        }
-
-        m_aof_file.open(new_file, std::ios::app | std::ios::binary);
-        if (!m_aof_file)
-        {
-            BLUE_LOG_ERROR(xx::g_logger) << "Failed to open new AOF file: " << new_file;
-            m_aof_config.aof_enabled = false;
-            m_aof_rotating.store(false,std::memory_order_release);
-            return;
-        }
-
-        m_aof_file_idx = next_idx;          // 更新当前的文件索引
-        m_aof_current_filename = new_file;  // 更新当前的文件名
-        m_aof_file.flush();
-        lock.unlock();
-
-        // 轮转结束
-        m_aof_rotating.store(false,std::memory_order_release);
-        BLUE_LOG_INFO(xx::g_logger) << "AOF rotation completed, new file: " << new_file;
-    }
-
-    template <typename T>
-    std::string CommandHandler<T>::getAOFFilename(int index)
-    {
-        if (index == 1)
-        {
-            return m_aof_config.aof_filename;
-        }
-        return m_aof_config.aof_filename + "." + std::to_string(index);
-    }
-
-    template <typename T>
-    bool CommandHandler<T>::cleanupOldAOFs(const std::string &filename)
-    {
-        // 检查文件是否存在
-        std::ifstream test(filename);
-        if (test.good()) 
-        {
-            test.close();
-            if (remove(filename.c_str()) == 0) 
-            {
-                BLUE_LOG_INFO(xx::g_logger) << "Removed old AOF file: " << filename;
-            } 
-            else 
-            {
-                BLUE_LOG_ERROR(xx::g_logger) << "Failed to remove old AOF file: " << filename;
-                return false;
-            }
-        }
-        return true;
-    }
 }

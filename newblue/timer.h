@@ -179,7 +179,7 @@ namespace newblue
         bool detectClockRollover(Timer::TimePoint now);
 
     private:
-        std::shared_mutex m_mutex;                             // 互斥锁
+        std::shared_mutex m_mutex;                             // 互斥变量
         std::set<Timer::TimerPtr, Timer::Comparator> m_timers; // 定时器集合
         bool m_tickle = false;                                 // fasle:防止频繁调用onTimerInsertedAtFront()
         Timer::TimePoint m_previousTime;                       // 系统上一次的时间

@@ -3,7 +3,7 @@
 #include <thread>
 #include <chrono>
 
-blue::AsyncLogger g_logger("logs/test_%Y%m%d_%H%M%S.log", 1024);
+static blue::AsyncLogger g_logger("logs/test_%Y%m%d_%H%M%S.log", 1024);
 
 int main() {
     std::cout << "=== 异步日志测试（无宏） ===" << std::endl;
