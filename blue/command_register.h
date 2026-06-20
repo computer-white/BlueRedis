@@ -3,23 +3,12 @@
 
 namespace blue
 {
-    template <typename T>
-    using CommandHandler = RespValue(*)(
-        std::vector<RespValue>&,
-        MSocket::MSocketPtr,
-        bool,
-        T*
-    );
-
-    // 注册命令的宏
-    #define REGISTER_COMMAND(Name, Handler, IsWrite, MinArgs, MaxArgs) \
+    // 注册自定义检测的宏
+    #define REGISTER_COMMAND(Name, Handler, IsWrite, ArgV)\
         static RespValue Handler(std::vector<RespValue>& args, \
                                 MSocket::MSocketPtr sock, \
                                 bool aof, \
-                                CommandHandler<int>* self); \
-        consteval auto reg_##Handler() {   \
-            return blue::CommandInfo(#Name,IsWrite, MinArgs, MaxArgs); \
-        }
+                                CommandHandler<int>* self);
 
     // 构建命令表的宏（在类的静态方法中使用）
     #define BUILD_COMMAND_TABLE(...) \
@@ -29,9 +18,10 @@ namespace blue
             return builder.build(); \
         }
 
-    // 插入命令的宏
-    #define CMD_ENTRY(Name, Handler, IsWrite, MinArgs, MaxArgs) \
-        builder.insert(blue::fnv1a_hash(#Name), #Name, \
+    // 插入自定义检测命令的宏
+    #define CMD_ENTRY(Name, Handler, IsWrite, Argv) \
+        builder.insert(#Name, \
                     reinterpret_cast<void*>(Handler), \
-                    IsWrite, MinArgs, MaxArgs);
+                    blue::fnv1a_hash(#Name), \
+                    IsWrite, Argv);
 }

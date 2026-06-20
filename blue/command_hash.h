@@ -28,7 +28,7 @@ namespace blue
     // 对字符串字面量的重载
     constexpr uint32_t fnv1a_hash(const char* str) 
     {
-        return fnv1a_hash(str, constexpr_strlen(str));
+        return fnva1_hash(str, constexpr_strlen(str));
     }
 
     // 编译期字符串包装

@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <memory>
 #include <regex>
 #include <chrono>
@@ -16,6 +17,8 @@
 #include "modules/monitor.h"
 #include "modules/AOF.h"
 #include "skiplist.h"
+#include "command_table.h"
+#include "command_register.h"
 
 namespace blue
 {
@@ -67,10 +70,136 @@ namespace blue
         using TimePoint = SteadyClock::time_point;
 
     public:
+        static constexpr auto EVEN_VALIDATOR = [](size_t argc) -> bool
+        {
+            return argc >= 4 && (argc & 1) == 0; // HSET, ZADD: 4, 6, 8, ...
+        };
+
+        static constexpr auto ODD_VALIDATOR = [](size_t argc) -> bool
+        {
+            return argc >= 3 && (argc & 1) == 1; // MSET: 3, 5, 7, ...
+        };
+
+        static constexpr auto ONLY_ONE = [](size_t argc) -> bool { return argc == 1; };
+        static constexpr auto ONLY_TWO = [](size_t argc) -> bool { return argc == 2; };
+        static constexpr auto ONLY_THREE = [](size_t argc) -> bool { return argc == 3; };
+        static constexpr auto ONLY_FOUR = [](size_t argc) -> bool { return argc == 4; };
+        static constexpr auto ONLY_FIVE = [](size_t argc) -> bool { return argc == 5; };
+
+        static constexpr auto ONLY_ONE_TWO = [](size_t argc) -> bool { return argc >= 1 && argc <= 2; };
+        static constexpr auto ONLY_TWO_THREE = [](size_t argc) -> bool { return argc >= 2 && argc <= 3; };
+        static constexpr auto ONLY_THREE_FOUR = [](size_t argc) -> bool { return argc >= 3 && argc <= 4; };
+        static constexpr auto ONLY_THREE_SIX = [](size_t argc) -> bool { return argc >= 3 && argc <= 6; };
+        static constexpr auto ONLY_FOUR_FIVE = [](size_t argc) -> bool { return argc >= 4 && argc <= 5; };
+
+        static constexpr auto ONLY_MORE_TWO = [](size_t argc) -> bool { return argc >= 2; };
+        static constexpr auto ONLY_MORE_THREE = [](size_t argc) -> bool { return argc >= 3; };
+
+    public:
         CommandHandler(int level = -1, int option_name = -1, T option = T(), IOManager *manager = IOManager::GetThis(),
                        IOManager *acceptmanager = IOManager::GetThis());
 
         ~CommandHandler();
+
+        // 声明所有命令
+        REGISTER_COMMAND(PING, handlePING, false, ONLY_ONE_TWO);
+        REGISTER_COMMAND(AUTH, handleAUTH, false, ONLY_TWO);
+        REGISTER_COMMAND(SELECT, handleSELECT, true, ONLY_TWO);
+        REGISTER_COMMAND(CLIENT, handleCLIENT, false, ONLY_TWO_THREE);
+        REGISTER_COMMAND(CONFIG, handleCONFIG, false, ONLY_THREE_FOUR);
+
+        REGISTER_COMMAND(SET, handleSET, true, ONLY_THREE_SIX);
+        REGISTER_COMMAND(GET, handleGET, false, ONLY_TWO);
+        REGISTER_COMMAND(MSET, handleMSET, true, ODD_VALIDATOR);
+        REGISTER_COMMAND(MGET, handleMGET, false, ONLY_MORE_TWO);
+        REGISTER_COMMAND(GETSET, handleGETSET, true, ONLY_THREE);
+        REGISTER_COMMAND(APPEND, handleAPPEND, true, ONLY_THREE);
+        REGISTER_COMMAND(SETNX, handleSETNX, true, ONLY_THREE);
+        REGISTER_COMMAND(EXISTS, handleEXISTS, false, ONLY_MORE_TWO);
+        REGISTER_COMMAND(DEL, handleDEL, true, ONLY_MORE_TWO);
+
+        REGISTER_COMMAND(HSET, handleHSET, true, EVEN_VALIDATOR);
+        REGISTER_COMMAND(HGET, handleHGET, false, ONLY_THREE);
+        REGISTER_COMMAND(HGETALL, handleHGETALL, false, ONLY_TWO);
+        REGISTER_COMMAND(HDEL, handleHDEL, true, ONLY_MORE_THREE);
+        REGISTER_COMMAND(HLEN, handleHLEN, false, ONLY_TWO);
+        REGISTER_COMMAND(HEXISTS, handleHEXISTS, false, ONLY_THREE);
+        REGISTER_COMMAND(HKEYS, handleHKEYS, false, ONLY_TWO);
+        REGISTER_COMMAND(HVALS, handleHVALS, false, ONLY_TWO);
+        REGISTER_COMMAND(KEYS, handleKEYS, false, ONLY_TWO);
+
+        REGISTER_COMMAND(LPUSH, handleLPUSH, true, ONLY_MORE_THREE);
+        REGISTER_COMMAND(RPUSH, handleRPUSH, true, ONLY_MORE_THREE);
+        REGISTER_COMMAND(LPOP, handleLPOP, true, ONLY_TWO_THREE);
+        REGISTER_COMMAND(RPOP, handleRPOP, true, ONLY_TWO_THREE);
+        REGISTER_COMMAND(LLEN, handleLLEN, false, ONLY_TWO);
+        REGISTER_COMMAND(LINSERT, handleLINSERT, true, ONLY_FIVE);
+        REGISTER_COMMAND(LINDEX, handleLINDEX, false, ONLY_THREE);
+        REGISTER_COMMAND(LSET, handleLSET, true, ONLY_FOUR);
+        REGISTER_COMMAND(RPOPLPUSH, handleRPOPLPUSH, true, ONLY_THREE);
+        REGISTER_COMMAND(LPOPRPUSH, handleLPOPRPUSH, true, ONLY_THREE);
+        REGISTER_COMMAND(LRANGE, handleLRANGE, false, ONLY_FOUR);
+
+        REGISTER_COMMAND(ZADD, handleZADD, true, EVEN_VALIDATOR);
+        REGISTER_COMMAND(ZRANGE, handleZRANGE, false, ONLY_FOUR_FIVE);
+        REGISTER_COMMAND(ZREM, handleZREM, true, ONLY_MORE_THREE);
+        REGISTER_COMMAND(ZSCORE, handleZSCORE, false, ONLY_THREE);
+        REGISTER_COMMAND(ZRANK, handleZRANK, false, ONLY_THREE);
+        REGISTER_COMMAND(ZINCRBY, handleZINCRBY, false, ONLY_FOUR);
+        REGISTER_COMMAND(ZINCRBYFLOAT, handleZINCRBYFLOAT, false, ONLY_FOUR);
+        REGISTER_COMMAND(ZCOUNT, handleZCOUNT, false, ONLY_FOUR);
+        REGISTER_COMMAND(ZRANGEBYSCORE, handleZRANGEBYSCORE, false, ONLY_FOUR_FIVE);
+        REGISTER_COMMAND(ZREMRANGEBYSCORE, handleZREMRANGEBYSCORE, true, ONLY_FOUR);
+        REGISTER_COMMAND(INCR, handleINCR, false, ONLY_TWO);
+        REGISTER_COMMAND(INCRBY, handleINCRBY, false, ONLY_THREE);
+        REGISTER_COMMAND(STRLEN, handleSTRLEN, false, ONLY_TWO);
+        REGISTER_COMMAND(TYPE, handleTYPE, false, ONLY_TWO);
+
+        REGISTER_COMMAND(SADD, handleSADD, true, ONLY_MORE_THREE);
+        REGISTER_COMMAND(SMEMBERS, handleSMEMBERS, false, ONLY_TWO);
+        REGISTER_COMMAND(SREM, handleSREM, false, ONLY_MORE_THREE);
+        REGISTER_COMMAND(SISMEMBER, handleSISMEMBER, false, ONLY_THREE);
+        REGISTER_COMMAND(SCARD, handleSCARD, false, ONLY_TWO);
+        REGISTER_COMMAND(SRANDMEMBER, handleSRANDMEMBER, false, ONLY_TWO_THREE);
+        REGISTER_COMMAND(SPOP, handleSPOP, true, ONLY_TWO_THREE);
+        REGISTER_COMMAND(SDIFF, handleSDIFF, false, ONLY_MORE_TWO);
+        REGISTER_COMMAND(SINTER, handleSINTER, false, ONLY_MORE_TWO);
+        REGISTER_COMMAND(SUNION, handleSUNION, false, ONLY_MORE_TWO);
+        REGISTER_COMMAND(SMOVE, handleSMOVE, false, ONLY_MORE_TWO);
+
+        REGISTER_COMMAND(FLUSHDB, handleFLUSHDB, true, ONLY_ONE_TWO);
+        REGISTER_COMMAND(FLUSHDBALL, handleFLUSHDBALL, true, ONLY_ONE_TWO);
+        REGISTER_COMMAND(DBSIZE, handleDBSIZE, false, ONLY_ONE);
+        REGISTER_COMMAND(EXPIRE, handleEXPIRE, false, ONLY_THREE);
+        REGISTER_COMMAND(TTL, handleTTL, false, ONLY_TWO);
+        REGISTER_COMMAND(PEXPIRE, handlePEXPIRE, false, ONLY_THREE);
+        REGISTER_COMMAND(PTTL, handlePTTL, false, ONLY_TWO);
+        REGISTER_COMMAND(PERSIST, handlePERSIST, false, ONLY_TWO);
+        REGISTER_COMMAND(RENAME, handleRENAME, false, ONLY_THREE);
+        REGISTER_COMMAND(RENAMENX, handleRENAMENX, false, ONLY_THREE);
+        REGISTER_COMMAND(RANDOMKEY, handleRANDOMKEY, false, ONLY_ONE);
+        REGISTER_COMMAND(INFO, handleINFO, false, ONLY_ONE);
+        REGISTER_COMMAND(SAVE, handleSAVE, false, ONLY_ONE);
+        REGISTER_COMMAND(BGSAVE, handleBGSAVE, false, ONLY_ONE);
+        REGISTER_COMMAND(LASTSAVE, handleLASTSAVE, false, ONLY_ONE);
+        REGISTER_COMMAND(LASTSAVE1, handleLASTSAVE1, false, ONLY_ONE);
+        REGISTER_COMMAND(COMMAND, handleCOMMAND, false, ONLY_ONE);
+        REGISTER_COMMAND(ECHO, handleECHO, false, ONLY_TWO);
+        REGISTER_COMMAND(TIME, handleTIME, false, ONLY_ONE);
+        REGISTER_COMMAND(LOCALTIME, handleLOCALTIME, false, ONLY_ONE);
+        REGISTER_COMMAND(WATCH, handleWATCH, false, ONLY_MORE_TWO);
+        REGISTER_COMMAND(UNWATCH, handleUNWATCH, false, ONLY_ONE);
+        REGISTER_COMMAND(SLOWLOG, handleSLOWLOG, false, ONLY_TWO_THREE);
+        REGISTER_COMMAND(MONITOR, handleMONITOR, false, ONLY_ONE);
+        REGISTER_COMMAND(AOFROTATE, handleAOFROTATE, false, ONLY_ONE);
+        REGISTER_COMMAND(SHUTDOWN, handleSHUTDOWN, false, ONLY_ONE);
+        REGISTER_COMMAND(EXEC, handleEXEC, false, ONLY_ONE);
+        REGISTER_COMMAND(DISCARD, handleDISCARD, false, ONLY_ONE);
+        REGISTER_COMMAND(UNSUBSCRIBE, handleUNSUBSCRIBE, false, ONLY_ONE);
+        REGISTER_COMMAND(MULTI, handleMULTI, false, ONLY_ONE);
+        REGISTER_COMMAND(SUBSCRIBE, handleSUBSCRIBE, false, ONLY_MORE_TWO);
+        REGISTER_COMMAND(PUBLISH, handlePUBLISH, false, ONLY_THREE);
+
         RespValue execute(std::vector<RespValue> args, MSocket::MSocketPtr sock, bool RecordAOF = true);
 
     protected:
@@ -214,11 +343,10 @@ namespace blue
         : TcpServer<T>(level, option_name, option, manager, acceptmanager)
     {
         // 设置 AOF 执行器
-        m_aof.setExecutor([this](std::vector<RespValue> args, 
-                                MSocket::MSocketPtr sock, 
-                                bool record) -> RespValue {
-            return this->execute(args, sock, record);
-        });
+        m_aof.setExecutor([this](std::vector<RespValue> args,
+                                 MSocket::MSocketPtr sock,
+                                 bool record) -> RespValue
+                          { return this->execute(args, sock, record); });
         loadFromFile();
         m_aof.loadAOF();
         m_aof.initAOF(); // 初始化AOF,追加打开AOF文件,并开启AOF同步协程
@@ -4446,6 +4574,2012 @@ namespace blue
             }
         }
         BLUE_LOG_INFO(xx::g_logger) << "RDB loaded from " << filename;
+    }
+
+    // ========== 连接命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handlePING(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        if (args.size() == 1)
+            return RespValue::simple_string("PONG");
+        else
+            return RespValue::bulk_string(args[1].str);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleAUTH(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (args[1].str == sock->getClientPassword())
+        {
+            sock->setClientlevel(1);
+            return RespValue::simple_string("OK");
+        }
+        if (args[1].str == self->m_password)
+        {
+            if (!self->m_admin_sock.expired())
+            {
+                return RespValue::error("ERR admin already logged in elsewhere");
+            }
+            self->m_admin_sock = sock;
+            sock->setClientlevel(2);
+            return RespValue::simple_string("OK");
+        }
+        return RespValue::error("ERR invalid password");
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSELECT(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int db;
+        try
+        {
+            db = std::stoi(args[1].str);
+            if (db < 0 || db >= DB_COUNT)
+            {
+                return RespValue::error("ERR DB index is out of range");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR invalid DB index");
+        }
+        sock->setClientId(db);
+        return RespValue::simple_string("OK");
+    }
+
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleCLIENT(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        std::string subcmd = args[1].str;
+        std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
+        if (subcmd == "SETNAME")
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'CLIENT SETNAME'");
+            }
+            sock->setClientName(args[2].str);
+            return RespValue::simple_string("OK");
+        }
+        else if (subcmd == "GETNAME")
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'CLIENT GETNAME'");
+            }
+            if (sock->getClientName().empty())
+            {
+                return RespValue::null_bulk();
+            }
+            return RespValue::bulk_string(sock->getClientName());
+        }
+        else if (subcmd == "LIST")
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'CLIENT LIST'");
+            }
+            std::string result;
+            result += "name=" + sock->getClientName() + " ";
+            result += "addr=" + sock->getRemoteAddress()->toString() + " ";
+            result += "subScription=" + std::to_string((int)(sock->inSubScription())) + " ";
+            result += "transaction=" + std::to_string((int)(sock->inTransaction())) + " ";
+            result += "monitor=" + std::to_string((int)(sock->inMonitorMode())) + "\r\n";
+            return RespValue::bulk_string(result);
+        }
+        return RespValue::error("ERR wrong arguments for 'CLIENT'");
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleCONFIG(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+        // 同一时刻只能存在一个管理员，并且由于CommandHandler只有一个实例化，所以修改和获取不需要锁
+        std::string subcmd = args[1].str;
+        std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
+        if (subcmd == "GET")
+        {
+            if (args.size() != 3)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'CONFIG GET'");
+            }
+            std::string pattern = args[2].str;
+            std::vector<RespValue> result;
+
+            if (pattern == "*" || pattern == "clientpass")
+            {
+                result.push_back(RespValue::bulk_string("clientpass"));
+                result.push_back(RespValue::bulk_string(sock->getClientPassword()));
+            }
+            if (pattern == "*" || pattern == "maxclients")
+            {
+                result.push_back(RespValue::bulk_string("maxclients"));
+                result.push_back(RespValue::bulk_string(std::to_string(self->m_config.maxClients)));
+            }
+            if (pattern == "*" || pattern == "timeout")
+            {
+                result.push_back(RespValue::bulk_string("timeout"));
+                result.push_back(RespValue::bulk_string(std::to_string(self->m_config.timeout_s)));
+            }
+            if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*")
+            {
+                result.push_back(RespValue::bulk_string("slowlog-log-slower-than"));
+                result.push_back(RespValue::bulk_string(std::to_string(self->m_slowLog.getSlowLogThan())));
+            }
+            if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*")
+            {
+                result.push_back(RespValue::bulk_string("slowlog-max-len"));
+                result.push_back(RespValue::bulk_string(std::to_string(self->m_slowLog.getSlowMaxLen())));
+            }
+            if (pattern == "*" || pattern == "aof-enabled" || pattern == "aof-*")
+            {
+                result.push_back(RespValue::bulk_string("aof-enabled"));
+                result.push_back(RespValue::bulk_string(self->m_aof.getConfig_AOFEnabled() ? "yes" : "no"));
+            }
+            if (pattern == "*" || pattern == "aof-filename" || pattern == "aof-*")
+            {
+                result.push_back(RespValue::bulk_string("aof-filename"));
+                result.push_back(RespValue::bulk_string(self->m_aof.getConfig_AOFFilename()));
+            }
+            if (pattern == "*" || pattern == "aof-sync" || pattern == "aof-*")
+            {
+                result.push_back(RespValue::bulk_string("aof-sync"));
+                result.push_back(RespValue::bulk_string(self->m_aof.getConfig_AOFSync()));
+            }
+            if (pattern == "*" || pattern == "aof-max_file_size" || pattern == "aof-*")
+            {
+                result.push_back(RespValue::bulk_string("aof-max_file_size"));
+                result.push_back(RespValue::bulk_string(std::to_string(self->m_aof.getConfig_AOFMaxFileSize())));
+            }
+            if (pattern == "*" || pattern == "aof-max_file_number" || pattern == "aof-*")
+            {
+                result.push_back(RespValue::bulk_string("aof-max_file_number"));
+                result.push_back(RespValue::bulk_string(std::to_string(self->m_aof.getConfig_AOFMaxFileNumber())));
+            }
+            if (pattern == "*" || pattern == "aof-max_buffer_size" || pattern == "aof-*")
+            {
+                result.push_back(RespValue::bulk_string("aof-max_buffer_size"));
+                result.push_back(RespValue::bulk_string(std::to_string(self->m_aof.getMaxAOFBufferSize())));
+            }
+            return RespValue::array(std::move(result));
+        }
+        else if (subcmd == "SET")
+        {
+            if (args.size() != 4)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'CONFIG SET'");
+            }
+
+            std::string param = args[2].str;
+            std::string value = args[3].str;
+
+            if (param == "clientpass")
+            {
+                sock->setClientPassword(value);
+                return RespValue::simple_string("OK");
+            }
+            if (!isAdmin(sock))
+            {
+                return RespValue::error("ERR authentication required");
+            }
+            if (param == "maxclients")
+            {
+                try
+                {
+                    int newmax = std::stoi(value);
+                    if (newmax <= 0)
+                    {
+                        return RespValue::error("ERR invalid maxclients value");
+                    }
+                    if (newmax < TcpServer<T>::getConnection())
+                    {
+                        return RespValue::error("ERR maxclients can't be less than current connections");
+                    }
+                    self->m_config.maxClients = newmax;
+                    return RespValue::simple_string("OK");
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+            }
+            if (param == "timeout")
+            {
+                try
+                {
+                    int timeout = std::stoi(value);
+                    if (timeout < 0)
+                    {
+                        return RespValue::error("ERR invalid timeout value");
+                    }
+                    self->m_config.timeout_s = timeout;
+                    return RespValue::simple_string("OK");
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+            }
+            if (param == "slowlog-log-slower-than")
+            {
+                try
+                {
+                    int64_t val = std::stoll(value);
+                    if (val < 0)
+                    {
+                        return RespValue::error("ERR value must be >= 0");
+                    }
+                    self->m_slowLog.setSlowLogThan(val);
+                    return RespValue::simple_string("OK");
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+            }
+            if (param == "slowlog-max-len")
+            {
+                try
+                {
+                    size_t val = std::stoul(value);
+                    if (val <= 0)
+                    {
+                        return RespValue::error("ERR value must be > 0");
+                    }
+                    self->m_slowLog.setSlowMaxLen(val);
+                    return RespValue::simple_string("OK");
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+            }
+            if (param == "aof-enabled")
+            {
+                if (value == "yes" || value == "1")
+                {
+                    self->m_aof.setConfig_AOFEnabled(true);
+                    self->m_aof.initAOF();
+                }
+                else if (value == "no" || value == "0")
+                {
+                    self->m_aof.setConfig_AOFEnabled(false);
+                    self->m_aof.closeAOF();
+                }
+                else
+                {
+                    return RespValue::error("ERR invalid value");
+                }
+                return RespValue::simple_string("OK");
+            }
+            if (param == "aof-sync")
+            {
+                if (value == "always" || value == "everysec" || value == "no")
+                {
+                    self->m_aof.setConfig_AOFSync(value);
+                    return RespValue::simple_string("OK");
+                }
+                return RespValue::error("ERR invalid sync mode");
+            }
+            if (param == "aof-filename")
+            {
+                if (value.empty())
+                {
+                    return RespValue::error("ERR invalid filename");
+                }
+                self->m_aof.setConfig_AOFFilename(value);
+                return RespValue::simple_string("OK");
+            }
+            if (param == "aof-max_file_size")
+            {
+                int64_t val;
+                try
+                {
+                    val = std::stoi(value);
+                    if (val < 1024 * 1024)
+                    {
+                        return RespValue::error("ERR max_file_size value too small");
+                    }
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+
+                self->m_aof.setConfig_AOFMaxFileSize(val);
+                return RespValue::simple_string("OK");
+            }
+            if (param == "aof-max_file_number")
+            {
+                int val;
+                try
+                {
+                    val = std::stoi(value);
+                    if (val < 5)
+                    {
+                        return RespValue::error("ERR max_file_number value too small");
+                    }
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+                self->m_aof.setConfig_AOFMaxFileNumber(val);
+                return RespValue::simple_string("OK");
+            }
+            if (param == "aof-max_buffer_size")
+            {
+                int64_t val;
+                try
+                {
+                    val = std::stoll(value);
+                    if (val < 1024 * 1024)
+                    {
+                        return RespValue::error("ERR max_file_number value too small");
+                    }
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+                self->m_aof.setMaxAOFBufferSize(val);
+                return RespValue::simple_string("OK");
+            }
+            return RespValue::error("ERR Unsupported CONFIG parameter: " + param);
+        }
+        return RespValue::error("ERR wrong arguments for 'CONFIG'");
+    }
+
+    // ========== String 命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleSET(std::vector<RespValue> &args,
+                                           MSocket::MSocketPtr sock,
+                                           bool aof,
+                                           CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string val = args[2].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        shards.store[key] = val;
+        if (args.size() >= 5)
+        {
+            std::string subcmd = args[3].str;
+            std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
+            if (subcmd == "EX")
+            {
+                int64_t seconds;
+                try
+                {
+                    seconds = std::stoll(args[4].str);
+                    if (seconds < 0)
+                    {
+                        return RespValue::error("ERR value can't be nagative");
+                    }
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR value is not a integer or out of range");
+                }
+                shards.expire[key] = SteadyClock::now() + std::chrono::seconds(seconds);
+            }
+            else if (subcmd == "PX")
+            {
+                int64_t milliseconds;
+                try
+                {
+                    milliseconds = std::stoll(args[4].str);
+                    if (milliseconds < 0)
+                    {
+                        return RespValue::error("ERR value can't be nagative");
+                    }
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR value is not a integer or out of range");
+                }
+                shards.expire[key] = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
+            }
+        }
+        return RespValue::simple_string("OK");
+    }   
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleGET(std::vector<RespValue> &args,
+                                           MSocket::MSocketPtr sock,
+                                           bool aof,
+                                           CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        if (it == shards.store.end())
+        {
+            return RespValue::null_bulk();
+        }
+        auto expire_it = shards.expire.find(key);
+        if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
+        {
+            shards.expire.erase(expire_it);
+            shards.store.erase(it);
+            return RespValue::null_bulk();
+        }
+        const std::string val = it->second;
+        return RespValue::bulk_string(val);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleMSET(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        for (size_t i = 1; i < args.size(); i += 2)
+        {
+            const std::string key = args[i].str;
+            const std::string val = args[i + 1].str;
+            auto &shards = self->getShard(key, sock);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            shards.store[key] = val;
+        }
+        return RespValue::simple_string("OK");
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleMGET(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        std::vector<RespValue> results;
+
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            auto &shards = self->getShard(args[i].str, sock);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(args[i].str);
+            if (it == shards.store.end())
+            {
+                results.push_back(RespValue::null_bulk());
+            }
+            else
+            {
+                auto expire_it = shards.expire.find(args[i].str);
+                if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
+                {
+                    shards.expire.erase(expire_it);
+                    shards.store.erase(it);
+                    results.push_back(RespValue::null_bulk());
+                }
+                else
+                {
+                    const std::string val = it->second;
+                    results.push_back(RespValue::bulk_string(val));
+                }
+            }
+        }
+        return RespValue::array(std::move(results));
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleGETSET(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string val = args[2].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        if (it == shards.store.end())
+        {
+            shards.store[key] = val;
+            return RespValue::bulk_string(val);
+        }
+        std::string ans = it->second;
+        it->second = val;
+        return RespValue::bulk_string(ans);
+    }   
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleAPPEND(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string val = args[2].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        if (it == shards.store.end())
+        {
+            shards.store[key] = val;
+        }
+        else
+        {
+            it->second.append(val);
+        }
+        return RespValue::integer(shards.store[key].size());
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSETNX(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string val = args[2].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        if (it == shards.store.end())
+        {
+            shards.store[key] = val;
+            return RespValue::integer(1);
+        }
+        return RespValue::integer(0);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleEXISTS(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int64_t count = 0;
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            const std::string key = args[i].str;
+            auto &shards = self->getShard(key, sock);
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            if (shards.store.find(key) != shards.store.end() ||
+                shards.hash.find(key) != shards.hash.end() ||
+                shards.lists.find(key) != shards.lists.end() ||
+                shards.sets.find(key) != shards.sets.end() ||
+                shards.zset.find(key) != shards.zset.end())
+            {
+                count++;
+            }
+        }
+        return RespValue::integer(count);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleDEL(std::vector<RespValue> &args,
+                                           MSocket::MSocketPtr sock,
+                                           bool aof,
+                                           CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int count = 0;
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            const std::string key = args[i].str;
+            auto &shards = self->getShard(key, sock);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto it = shards.store.find(key);
+            if (it != shards.store.end())
+            {
+                shards.store.erase(it);
+                shards.expire.erase(key);
+                count++;
+            }
+        }
+        return RespValue::integer(count);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleINCR(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleINCRBY(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSTRLEN(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleTYPE(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleKEYS(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+
+        // 把 glob 风格转成 regex
+        std::string pattern = args[1].str;
+        std::string regex_str;
+        for (char c : pattern)
+        {
+            if (c == '*')
+            {
+                regex_str += ".*";
+            }
+            else if (c == '?')
+            {
+                regex_str += ".";
+            }
+            else if (c == '.' || c == '+' || c == '[' || c == ']' ||
+                        c == '(' || c == ')' || c == '\\')
+            {
+                regex_str += '\\';
+                regex_str += c;
+            }
+            else
+            {
+                regex_str += c;
+            }
+        }
+
+        constexpr size_t MAX_KEYS = 10000;
+        std::regex re(regex_str);
+        std::vector<RespValue> result;
+        result.reserve(MAX_KEYS);
+
+        // 遍历所有分片
+        for (auto &shard : m_dbs[sock->getClientId()])
+        {
+            if (result.size() >= MAX_KEYS)
+            {
+                BLUE_LOG_WARN(xx::g_logger) << "KEYS command truncated at " << MAX_KEYS << " keys";
+                break;
+            }
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+
+            for (auto &[key, value] : shard.store)
+            {
+                if (std::regex_match(key, re))
+                {
+                    result.push_back(RespValue::bulk_string(key));
+                }
+            }
+            // Hash 类型的 key
+            for (auto &[key, fields] : shard.hash)
+            {
+                if (std::regex_match(key, re))
+                {
+                    result.push_back(RespValue::bulk_string(key));
+                }
+            }
+            // List 类型的 key
+            for (auto &[key, list] : shard.lists)
+            {
+                if (std::regex_match(key, re))
+                {
+                    result.push_back(RespValue::bulk_string(key));
+                }
+            }
+            // Set 类型的 key
+            for (auto &[key, set] : shard.sets)
+            {
+                if (std::regex_match(key, re))
+                {
+                    result.push_back(RespValue::bulk_string(key));
+                }
+            }
+            // ZSet 类型的 key
+            for (auto &[key, zset] : shard.zset)
+            {
+                if (std::regex_match(key, re))
+                {
+                    result.push_back(RespValue::bulk_string(key));
+                }
+            }
+        }
+
+        return RespValue::array(std::move(result));
+    }
+
+    // ========== Hash 命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleHSET(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int count = 0;
+        std::string key = args[1].str;
+        for (size_t i = 2; i < args.size(); i += 2)
+        {
+            auto &shards = self->getShard(key, sock);
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            auto &field = args[i].str;
+            auto &value = args[i + 1].str; // size 是偶数所以不会出界
+            if (shards.hash[key].find(field) == shards.hash[key].end())
+            {
+                ++count; // 新字段
+            }
+            shards.hash[key][field] = value;
+        }
+        return RespValue::integer(count);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleHGET(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string field = args[2].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.hash.find(key);
+        if (it == shards.hash.end())
+        {
+            return RespValue::null_bulk();
+        }
+        auto fit = it->second.find(field);
+        if (fit == it->second.end())
+        {
+            return RespValue::null_bulk();
+        }
+        const std::string val = fit->second;
+        return RespValue::bulk_string(val);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleHGETALL(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        std::vector<RespValue> result;
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.hash.find(key);
+        if (it == shards.hash.end())
+        {
+            return RespValue::array(std::move(result));
+        }
+        for (auto &[field, value] : it->second)
+        {
+            result.push_back(RespValue::bulk_string(field));
+            result.push_back(RespValue::bulk_string(value));
+        }
+        return RespValue::array(std::move(result));
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleHDEL(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int count = 0;
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.hash.find(key);
+        if (it == shards.hash.end())
+        {
+            return RespValue::integer(count);
+        }
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            count += it->second.erase(args[i].str);
+        }
+        if (it->second.empty())
+        {
+            shards.hash.erase(it);
+        }
+        return RespValue::integer(count);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleHLEN(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> rdlock(shards.mutex);
+        auto it = shards.hash.find(key);
+        if (it == shards.hash.end())
+        {
+            if (shards.store.find(key) != shards.store.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.lists.find(key) != shards.lists.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.zset.find(key) != shards.zset.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.sets.find(key) != shards.sets.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+            return RespValue::integer(0);
+        }
+        return RespValue::integer(it->second.size());
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleHEXISTS(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string field = args[2].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.hash.find(key);
+        if (it == shards.hash.end())
+        {
+            if (shards.store.find(key) != shards.store.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.lists.find(key) != shards.lists.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.zset.find(key) != shards.zset.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.sets.find(key) != shards.sets.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+            return RespValue::integer(0);
+        }
+        auto filed_it = it->second.find(field);
+        if (filed_it == it->second.end())
+        {
+            return RespValue::integer(0);
+        }
+        return RespValue::integer(1);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleHKEYS(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        std::vector<RespValue> results;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.hash.find(key);
+        if (it == shards.hash.end())
+        {
+            if (shards.store.find(key) != shards.store.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.lists.find(key) != shards.lists.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.zset.find(key) != shards.zset.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.sets.find(key) != shards.sets.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            return RespValue::array(std::move(results));
+        }
+        for (auto &[field, _] : it->second)
+        {
+            results.push_back(RespValue::bulk_string(field));
+        }
+        return RespValue::array(std::move(results));
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleHVALS(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        std::vector<RespValue> results;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.hash.find(key);
+        if (it == shards.hash.end())
+        {
+            if (shards.store.find(key) != shards.store.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.lists.find(key) != shards.lists.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.zset.find(key) != shards.zset.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.sets.find(key) != shards.sets.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            return RespValue::array(std::move(results));
+        }
+        for (auto &[_, val] : it->second)
+        {
+            results.push_back(RespValue::bulk_string(val));
+        }
+        return RespValue::array(std::move(results));
+    }
+
+    // ========== List 命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleLPUSH(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto &lhs = shards.lists[key];
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            lhs.push_front(args[i].str);
+        }
+        return RespValue::integer(lhs.size());
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleRPUSH(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto &lhs = shards.lists[key];
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            lhs.push_back(args[i].str);
+        }
+        return RespValue::integer(lhs.size());
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLPOP(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int count;
+        try
+        {
+            count = args.size() == 3 ? std::stoi(args[2].str) : 1;
+            if (count < 0)
+            {
+                return RespValue::error("ERR count can't be nagative");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a integer or out of range");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.lists.find(key);
+        if (it == shards.lists.end() || it->second.empty())
+        {
+            return RespValue::null_bulk();
+        }
+        std::vector<RespValue> results;
+        for (int i = 0; i < count && !it->second.empty(); i++)
+        {
+            results.push_back(RespValue::bulk_string(it->second.front()));
+            it->second.pop_front();
+        }
+        if (it->second.empty())
+        {
+            shards.lists.erase(it);
+        }
+        if (results.size() == 1 && args.size() == 2)
+        {
+            return results[0];
+        }
+        return RespValue::array(std::move(results));
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleRPOP(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int count;
+        try
+        {
+            count = args.size() == 3 ? std::stoi(args[2].str) : 1;
+            if (count < 0)
+            {
+                return RespValue::error("ERR count can't be nagative");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a integer or out of range");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.lists.find(key);
+        if (it == shards.lists.end() || it->second.empty())
+        {
+            return RespValue::null_bulk();
+        }
+        std::vector<RespValue> results;
+        for (int i = 0; i < count && !it->second.empty(); i++)
+        {
+            results.push_back(RespValue::bulk_string(it->second.back()));
+            it->second.pop_back();
+        }
+        if (it->second.empty())
+        {
+            shards.lists.erase(it);
+        }
+        if (results.size() == 1 && args.size() == 2)
+        {
+            return results[0];
+        }
+        return RespValue::array(std::move(results));
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLLEN(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shard = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shard.mutex);
+        auto it = shard.lists.find(key);
+        if (it == shard.lists.end())
+        {
+            return RespValue::integer(0);
+        }
+        return RespValue::integer(it->second.size());
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLINSERT(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string pos = args[2].str;
+        const std::string pivot = args[3].str;
+        const std::string val = args[4].str;
+
+        auto &shard = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shard.mutex);
+        auto it = shard.lists.find(key);
+        if (it == shard.lists.end())
+        {
+            return RespValue::null_bulk();
+        }
+        std::list<std::string> &lists = it->second;
+        auto list_it = lists.begin();
+        for (; list_it != lists.end(); list_it++)
+        {
+            if (*list_it == pivot)
+            {
+                break;
+            }
+        }
+
+        if (list_it == lists.end())
+        {
+            return RespValue::integer(-1); // pivot不存在
+        }
+        if (pos == "AFTER")
+        {
+            list_it++;
+        }
+        lists.insert(list_it, val);
+        return RespValue::integer(lists.size());
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLINDEX(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        int64_t idx = 0;
+        try
+        {
+            idx = std::stoll(args[2].str);
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a integer or out of range");
+        }
+        auto &shard = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shard.mutex);
+        auto it = shard.lists.find(key);
+        if (it == shard.lists.end())
+        {
+            return RespValue::null_bulk();
+        }
+        size_t size = it->second.size();
+        if (idx < 0)
+        {
+            idx += size;
+        }
+        if (idx < 0)
+        {
+            idx = 0;
+        }
+        auto list_it = it->second.begin();
+        while (idx--)
+        {
+            list_it++;
+        }
+        return RespValue::bulk_string(*list_it);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLSET(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string val = args[3].str;
+        int64_t idx = 0;
+        try
+        {
+            idx = std::stoll(args[2].str);
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a integer or out of range");
+        }
+        auto &shard = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shard.mutex);
+        auto it = shard.lists.find(key);
+        if (it == shard.lists.end())
+        {
+            return RespValue::null_bulk();
+        }
+        size_t size = it->second.size();
+        if (idx < 0)
+        {
+            idx += size;
+        }
+        if (idx < 0)
+        {
+            idx = 0;
+        }
+        auto list_it = it->second.begin();
+        while (idx--)
+        {
+            list_it++;
+        }
+        *list_it = val;
+        return RespValue::simple_string("OK");
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleRPOPLPUSH(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string source_key = args[1].str;
+        const std::string dest_key = args[2].str;
+        if (source_key == dest_key)
+        {
+            return RespValue::integer(1);
+        }
+        int src_idx = self->getShardIndex(source_key);
+        int dest_idx = self->getShardIndex(dest_key);
+        if (src_idx > dest_idx)
+        {
+            std::swap(src_idx, dest_idx);
+        }
+        auto &src_shard = self->getShard(source_key, sock);
+        auto &dest_shard = self->getShard(dest_key, sock);
+        std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
+        std::unique_lock<std::shared_mutex> lock2;
+        if (src_idx != dest_idx)
+        {
+            lock2 = std::unique_lock<std::shared_mutex>(dest_shard.mutex);
+        }
+        auto src_it = src_shard.lists.find(source_key);
+        if (src_it == src_shard.lists.end())
+        {
+            return RespValue::integer(0);
+        }
+
+        auto dest_it = dest_shard.lists.find(dest_key);
+        if (dest_it == dest_shard.lists.end())
+        {
+            dest_shard.lists[dest_key] = std::list<std::string>();
+            dest_it = dest_shard.lists.find(dest_key);
+        }
+        const std::string tem = src_it->second.back();
+        src_it->second.pop_back();
+        dest_it->second.push_front(tem);
+        return RespValue::integer(1);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLPOPRPUSH(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string source_key = args[1].str;
+        const std::string dest_key = args[2].str;
+        if (source_key == dest_key)
+        {
+            return RespValue::integer(1);
+        }
+        int src_idx = self->getShardIndex(source_key);
+        int dest_idx = self->getShardIndex(dest_key);
+        if (src_idx > dest_idx)
+        {
+            std::swap(src_idx, dest_idx);
+        }
+        auto &src_shard = self->getShard(source_key, sock);
+        auto &dest_shard = self->getShard(dest_key, sock);
+        std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
+        std::unique_lock<std::shared_mutex> lock2;
+        if (src_idx != dest_idx)
+        {
+            lock2 = std::unique_lock<std::shared_mutex>(dest_shard.mutex);
+        }
+        auto src_it = src_shard.lists.find(source_key);
+        if (src_it == src_shard.lists.end())
+        {
+            return RespValue::integer(0);
+        }
+
+        auto dest_it = dest_shard.lists.find(dest_key);
+        if (dest_it == dest_shard.lists.end())
+        {
+            dest_shard.lists[dest_key] = std::list<std::string>();
+            dest_it = dest_shard.lists.find(dest_key);
+        }
+        const std::string tem = src_it->second.front();
+        src_it->second.pop_front();
+        dest_it->second.push_back(tem);
+        return RespValue::integer(1);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLRANGE(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        int start, stop;
+        try
+        {
+            start = std::stoi(args[2].str);
+            stop = std::stoi(args[3].str);
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a integer or out of range");
+        }
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.lists.find(key);
+        if (it == shards.lists.end())
+        {
+            return RespValue::array({});
+        }
+        int size = it->second.size();
+        if (start < 0)
+        {
+            start += size; // 尽量偏移到正数
+        }
+        if (stop < 0)
+        {
+            stop += size;
+        }
+        if (start < 0) // 还是小于0就从0开始
+        {
+            start = 0;
+        }
+        if (stop >= size)
+        {
+            stop = size - 1;
+        }
+        if (start > stop)
+        {
+            return RespValue::array({});
+        }
+        std::vector<RespValue> result;
+        auto iter = it->second.begin();
+        std::advance(iter, start);
+        for (int i = start; i <= stop && iter != it->second.end(); i++, iter++)
+        {
+            result.push_back(RespValue::bulk_string(*iter));
+        }
+        return RespValue::array(std::move(result));
+    }
+
+    // ========== Set 命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleSADD(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSMEMBERS(std::vector<RespValue> &args,
+                                                MSocket::MSocketPtr sock,
+                                                bool aof,
+                                                CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSREM(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSISMEMBER(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSCARD(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSRANDMEMBER(std::vector<RespValue> &args,
+                                                   MSocket::MSocketPtr sock,
+                                                   bool aof,
+                                                   CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSPOP(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSDIFF(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSINTER(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSUNION(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSMOVE(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+    }
+
+    // ========== ZSet 命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleZADD(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int count = 0;
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+
+        shards.zset_score.try_emplace(key);
+        shards.zset.try_emplace(key);
+        auto &score_map = shards.zset_score[key];
+        auto &skiplist = shards.zset[key];
+
+        for (size_t i = 2; i < args.size(); i += 2)
+        {
+            double score;
+            try
+            {
+                score = std::stod(args[i].str);
+            }
+            catch (const std::exception &e)
+            {
+                return RespValue::error("ERR value is not a double or out of range");
+            }
+            std::string member = args[i + 1].str;
+
+            auto it = score_map.find(member);
+            if (it != score_map.end())
+            {
+                // 已存在，删掉旧的
+                ZSetKey old_key(it->second, it->first);
+                skiplist.remove(old_key);
+            }
+            else
+            {
+                count++;
+            }
+            score_map[member] = score;
+            ZSetKey newkey(score, member);
+            skiplist.insert(newkey, member);
+        }
+        return RespValue::integer(count);
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleZRANGE(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleZREM(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleZSCORE(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleZRANK(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleZINCRBY(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleZINCRBYFLOAT(std::vector<RespValue> &args,
+                                                    MSocket::MSocketPtr sock,
+                                                    bool aof,
+                                                    CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleZCOUNT(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleZRANGEBYSCORE(std::vector<RespValue> &args,
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleZREMRANGEBYSCORE(std::vector<RespValue> &args,
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        CommandHandler<int> *self)
+    {
+    }
+
+    // ========== DB 命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleFLUSHDB(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleFLUSHDBALL(std::vector<RespValue> &args,
+                                                  MSocket::MSocketPtr sock,
+                                                  bool aof,
+                                                  CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleDBSIZE(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+    }
+
+    // ========== Key 命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleEXPIRE(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleTTL(std::vector<RespValue> &args,
+                                           MSocket::MSocketPtr sock,
+                                           bool aof,
+                                           CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handlePEXPIRE(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handlePTTL(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handlePERSIST(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleRENAME(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleRENAMENX(std::vector<RespValue> &args,
+                                                MSocket::MSocketPtr sock,
+                                                bool aof,
+                                                CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleRANDOMKEY(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 CommandHandler<int> *self)
+    {
+    }
+
+    // ========== Server 命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleINFO(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSAVE(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleBGSAVE(std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              bool aof,
+                                              CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLASTSAVE(std::vector<RespValue> &args,
+                                                MSocket::MSocketPtr sock,
+                                                bool aof,
+                                                CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLASTSAVE1(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleCOMMAND(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleECHO(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleTIME(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleLOCALTIME(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSHUTDOWN(std::vector<RespValue> &args,
+                                                MSocket::MSocketPtr sock,
+                                                bool aof,
+                                                CommandHandler<int> *self)
+    {
+    }
+
+    // ========== 事务命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleMULTI(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleEXEC(std::vector<RespValue> &args,
+                                            MSocket::MSocketPtr sock,
+                                            bool aof,
+                                            CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleDISCARD(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleWATCH(std::vector<RespValue> &args,
+                                             MSocket::MSocketPtr sock,
+                                             bool aof,
+                                             CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleUNWATCH(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    // ========== 订阅命令 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleSUBSCRIBE(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleUNSUBSCRIBE(std::vector<RespValue> &args,
+                                                   MSocket::MSocketPtr sock,
+                                                   bool aof,
+                                                   CommandHandler<int> *self)
+    {
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handlePUBLISH(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    // ========== 慢查询 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleSLOWLOG(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    // ========== 监控 ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleMONITOR(std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               bool aof,
+                                               CommandHandler<int> *self)
+    {
+    }
+
+    // ========== AOF ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleAOFROTATE(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 CommandHandler<int> *self)
+    {
     }
 
 }

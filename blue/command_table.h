@@ -2,11 +2,12 @@
 #include <array>
 #include <algorithm>
 #include <random>
-#include "command_info.h"
 #include "command_hash.h"
 
 namespace blue
 {
+    using ArgValidator = bool(*)(size_t argc);
+
     // 编译器命令表构建器
     template <size_t MaxCommands = 256>
     struct CommandTableBuilder
@@ -17,17 +18,17 @@ namespace blue
             void *handler; // 用 void* 存储函数指针
             uint32_t hash;
             bool is_write;
-            uint8_t min_args;
-            uint8_t max_args;
+            ArgValidator argV;
         };
 
         Entry entries[MaxCommands];
         size_t count = 0;
 
         // 编译期插入
-        consteval void insert(const char *name, void *handler, uint32_t hash, uint8_t min, uint8_t max)
+        consteval void insert(const char *name, void *handler, uint32_t hash, bool write, ArgValidator argv)
         {
-            entries[count++] = {name, handler, hash, min, max};
+            entries[count] = {name, handler, hash, write, argv};
+            count++;
         }
 
         // 编译期排序(插入排序)
