@@ -93,8 +93,8 @@ namespace blue
             return released;
         }
 
-        bool empty() const { return m_size.load() == 0; }
-        bool full() const { return m_size.load() == Capacity; }
+        bool empty() const { return m_size.load(std::memory_order_acquire) == 0; }
+        bool full() const { return m_size.load(std::memory_order_acquire) == Capacity; }
         size_t capacity() const { return Capacity; }
         size_t size() const { return m_size.load(std::memory_order_acquire); }
 

@@ -14,7 +14,9 @@ namespace blue
         : m_name(name), m_threadCount(threads)
     {
         BLUE_ASSERT(threads > 0);
-
+        // 设置随机范围
+        m_steal_dist = std::uniform_int_distribution<>(0, threads - 1);
+        // 提前预分配
         m_threadQueues.reserve(threads);
         for (size_t i = 0; i < threads; i++)
         {
@@ -75,7 +77,8 @@ namespace blue
 
         for (auto &worker : m_workers)
         {
-            if (worker.joinable()) worker.join();
+            if (worker.joinable())
+                worker.join();
         }
     }
 
@@ -86,9 +89,9 @@ namespace blue
             return;
         }
 
-        schedule([h]() mutable {
-            if (h && !h.done()) h.resume();
-        }, thr);
+        schedule([h]() mutable
+                 {
+            if (h && !h.done()) h.resume(); }, thr);
     }
 
     void Scheduler::schedule(std::function<void()> cb, int thr)
@@ -98,11 +101,7 @@ namespace blue
             return;
         }
 
-        // if (m_stopping.load(std::memory_order_acquire))
-        // {
-        //     return;
-        // }
-
+        // 指定了线程放到指定线程中
         if (thr >= 0 && thr < static_cast<int>(m_threadCount))
         {
             auto &queue = m_threadQueues[thr];
@@ -114,7 +113,8 @@ namespace blue
                     return;
                 }
                 need_notify = queue->tasks.empty();
-                queue->tasks.emplace(std::move(cb), thr);
+                // queue->tasks.emplace(std::move(cb), thr);
+                queue->tasks.emplace_back(std::move(cb), thr);
                 queue->pending.fetch_add(1, std::memory_order_acq_rel);
             }
             if (need_notify)
@@ -122,25 +122,50 @@ namespace blue
                 queue->cv.notify_one();
                 tickle();
             }
+            return;
         }
-        else
+
+        // 如果没有指定线程，优先放入当前线程的本地队列
+        int current_thread = GetThreadIndex();
+        if (current_thread >= 0 && current_thread < static_cast<int>(m_threadCount))
         {
+            auto &queue = m_threadQueues[current_thread];
             bool need_notify = false;
             {
-                std::lock_guard<std::mutex> lock(m_Schemutex);
+                std::lock_guard<std::mutex> lock(queue->mutex);
                 if (m_stopping.load(std::memory_order_acquire))
                 {
                     return;
                 }
-                need_notify = m_queue.empty();
-                m_queue.emplace(std::move(cb), thr);
-                m_pending.fetch_add(1, std::memory_order_acq_rel);
+                need_notify = queue->tasks.empty();
+                // queue->tasks.emplace(std::move(cb), current_thread);
+                queue->tasks.emplace_back(std::move(cb), current_thread);
+                queue->pending.fetch_add(1, std::memory_order_acq_rel);
             }
             if (need_notify)
             {
-                m_Schecv.notify_one();
+                queue->cv.notify_one();
                 tickle();
             }
+            return;
+        }
+        // 如果当前线程不在调度器，放入全局队列
+        bool need_notify = false;
+        {
+            std::lock_guard<std::mutex> lock(m_Schemutex);
+            if (m_stopping.load(std::memory_order_acquire))
+            {
+                return;
+            }
+            need_notify = m_queue.empty();
+            // m_queue.emplace(std::move(cb), -1);
+            m_queue.emplace_back(std::move(cb),-1);
+            m_pending.fetch_add(1, std::memory_order_acq_rel);
+        }
+        if (need_notify)
+        {
+            m_Schecv.notify_one();
+            tickle();
         }
     }
 
@@ -149,8 +174,8 @@ namespace blue
         int myIndex = t_threadIndex;
         auto &myQueue = m_threadQueues[myIndex];
         int idle_count = 0;
-        const int MAX_IDLE = 10;
-        
+        const int MAX_IDLE = 50;
+
         while (true)
         {
             FuncAndId task;
@@ -161,72 +186,91 @@ namespace blue
                 if (lock.owns_lock() && !myQueue->tasks.empty())
                 {
                     task = std::move(myQueue->tasks.front());
-                    myQueue->tasks.pop();
+                    myQueue->tasks.pop_front();
                     myQueue->pending.fetch_sub(1, std::memory_order_acq_rel);
-                    has_task = true;
-                }
-            }
-
-            if (!has_task)
-            {
-                std::unique_lock<std::mutex> lock(m_Schemutex);
-                
-                if (m_queue.empty())
-                {
-                    idle_count++;
-                    
-                    if (idle_count > MAX_IDLE && m_stopping.load(std::memory_order_acquire))
-                    {
-                        break;
-                    }
-                    
-                    m_Schecv.wait_for(lock, std::chrono::milliseconds(1),
-                        [this] { 
-                            return m_stopping.load(std::memory_order_acquire) || !m_queue.empty(); 
-                        });
-                }
-                
-                if (m_stopping.load(std::memory_order_acquire) && m_queue.empty())
-                {
-                    break;
-                }
-                
-                if (!m_queue.empty())
-                {
-                    task = std::move(m_queue.front());
-                    m_queue.pop();
                     has_task = true;
                     idle_count = 0;
                 }
             }
 
-            // 3. 执行任务
+            if (!has_task)
+            {
+                std::unique_lock<std::mutex> lock(m_Schemutex, std::try_to_lock);
+                if (lock.owns_lock() && !m_queue.empty())
+                {
+                    task = std::move(m_queue.front());
+                    m_queue.pop_front();
+                    m_pending.fetch_sub(1, std::memory_order_acq_rel);
+                    has_task = true;
+                    idle_count = 0;
+                }
+            }
+
+            if (!has_task)
+            {
+                has_task = stealTask(task);
+                if (has_task)
+                {
+                    idle_count = 0;
+                }
+            }
+
             if (has_task && task.cb)
             {
+                m_running.fetch_add(1,std::memory_order_acq_rel);
                 try
                 {
                     task.cb();
-                    BLUE_LOG_INFO(g_logger) << "cb back";
+                    // BLUE_LOG_INFO(g_logger) << "cb back";
                 }
                 catch (const std::exception &e)
                 {
                     BLUE_LOG_ERROR(g_logger) << "Task error in thread " << myIndex
-                                            << ": " << e.what();
+                                             << ": " << e.what();
                 }
                 catch (...)
                 {
                     BLUE_LOG_ERROR(g_logger) << "Unknown task error in thread " << myIndex;
                 }
-
-                if (task.threadId < 0)
-                {
-                    BLUE_LOG_INFO(g_logger) << "sub before m_pending: " << m_pending;
-                    m_pending.fetch_sub(1, std::memory_order_acq_rel);
-                    BLUE_LOG_INFO(g_logger) << "sub after m_pending: " << m_pending;
-                }
-                m_Schecv.notify_all();      // 通知一下
+                // m_Schecv.notify_all(); // 在drainLocalQueue中通知
+                m_running.fetch_sub(1,std::memory_order_acq_rel);
+                m_Schecv.notify_all();
+                continue;
             }
-            else if (!has_task)
+
+            if (m_stopping.load(std::memory_order_acquire))
+            {
+                break;
+            }
+
+            if (++idle_count > MAX_IDLE)
+            {
+                std::unique_lock<std::mutex> lock(m_Schemutex);
+                if (m_queue.empty() && !has_task)
+                {
+                    bool all_empty = true;
+                    for (auto &q : m_threadQueues)
+                    {
+                        std::lock_guard<std::mutex> qlock(q->mutex);
+                        if (!q->tasks.empty())
+                        {
+                            all_empty = false;
+                            break;
+                        }
+                    }
+                    if (all_empty)
+                    {
+                        m_Schecv.wait_for(lock, std::chrono::milliseconds(10),
+                                          [this]
+                                          {
+                                              return m_stopping.load(std::memory_order_acquire) ||
+                                                     !m_queue.empty();
+                                          });
+                    }
+                }
+                idle_count = 0;
+            }
+            else
             {
                 // 没有任务，短暂让出CPU
                 std::this_thread::yield();
@@ -240,31 +284,31 @@ namespace blue
     void Scheduler::drainLocalQueue(size_t index)
     {
         auto &queue = m_threadQueues[index];
+        std::vector<FuncAndId> remaining;
 
-        while (true)
         {
-            FuncAndId task;
+            std::lock_guard<std::mutex> lock(queue->mutex);
+            while (!queue->tasks.empty())
             {
-                std::lock_guard<std::mutex> lock(queue->mutex);
-                if (queue->tasks.empty())
-                    break;
-                task = std::move(queue->tasks.front());
-                queue->tasks.pop();
+                remaining.push_back(std::move(queue->tasks.front()));
+                queue->tasks.pop_front();
                 queue->pending.fetch_sub(1, std::memory_order_acq_rel);
             }
-
-            if (task.cb)
-            {
-                try
-                {
-                    task.cb();
-                }
-                catch (...)
-                {
-                }
-            }
         }
-        m_Schecv.notify_all();      // 通知一下
+
+        // 放回全局队列，让其他线程处理
+        if (!remaining.empty())
+        {
+            BLUE_LOG_WARN(g_logger) << "Thread " << index
+                                    << " draining " << remaining.size() << " tasks";
+            std::lock_guard<std::mutex> lock(m_Schemutex);
+            for (auto &task : remaining)
+            {
+                m_queue.emplace_back(std::move(task.cb), -1);
+                m_pending.fetch_add(1, std::memory_order_acq_rel);
+            }
+            m_Schecv.notify_all();      // 通知一下，因为子任务队列可能没有任务了
+        }
     }
 
     void Scheduler::tickle()
@@ -286,7 +330,7 @@ namespace blue
             {
                 total += queue->pending.load(std::memory_order_acquire);
             }
-            return total == 0; });
+            return total == 0 && m_running.load(std::memory_order_acquire) == 0; });
     }
 
     int Scheduler::GetThreadIndex()
@@ -313,5 +357,37 @@ namespace blue
     void schedule_coroutine(std::coroutine_handle<> h)
     {
         Scheduler::GetThis()->schedule(h);
+    }
+
+    bool Scheduler::stealTask(FuncAndId &task, int max_attempts)
+    {
+        if (m_threadCount <= 1)
+        {
+            return false;
+        }
+        int my_idx = t_threadIndex;
+        int attempt = 0;
+        while (attempt < max_attempts)
+        {
+            int victim = m_steal_dist(m_rng);
+            if (victim == my_idx)
+            {
+                attempt++;
+                continue;
+            }
+
+            auto &victim_queue = m_threadQueues[victim];
+            std::unique_lock<std::mutex> lock(victim_queue->mutex, std::try_to_lock);
+
+            if (lock.owns_lock() && !victim_queue->tasks.empty())
+            {
+                task = std::move(victim_queue->tasks.back());
+                victim_queue->tasks.pop_back();
+                victim_queue->pending.fetch_sub(1, std::memory_order_acq_rel);
+                return true;
+            }
+            attempt++;
+        }
+        return false;
     }
 }

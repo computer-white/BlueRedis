@@ -293,6 +293,7 @@ add_newblue_test(test_resp_parser)
 add_newblue_test(test_redis_stress)
 add_newblue_test(test_sharded_redis)
 add_newblue_test(test_proxy_urlrewrite)
+add_newblue_test(test_redis_stress_all)
 
 # 打印构建信息
 message(STATUS "========================")

@@ -1,3 +1,5 @@
+#include <iomanip>
+#include <chrono>
 #include <stdlib.h>
 #include <execinfo.h>
 #include <sys/time.h>
@@ -89,6 +91,22 @@ namespace blue
         struct timespec tsp;
         clock_gettime(CLOCK_MONOTONIC, &tsp);
         return tsp.tv_sec * 1000ul * 1000ul * 1000ul + tsp.tv_nsec;
+    }
+    std::string GetCurrentBeiJingTime()
+    {
+        auto now = std::chrono::system_clock::now();
+        auto now_t = std::chrono::system_clock::to_time_t(now);
+
+        std::time_t beijing_t = now_t + 8 * 3600;
+        std::tm time_local;
+#ifdef _WIN32
+        gmtime_s(&time_local, &beijing_t);
+#else
+        gmtime_r(&beijing_t, &time_local);
+#endif
+        std::ostringstream os;
+        os << std::put_time(&time_local, "%Y-%m-%d %H:%M:%S");
+        return os.str();
     }
 
 }

@@ -43,10 +43,10 @@ namespace blue
         // 获取并调度事件上下文
         EventContext &ctx = getEventContext(event);
 
-        BLUE_LOG_INFO(g_logger) << "[trigger] fd: " << fd
-                                << " event: " << event
-                                << " has_handle: " << (ctx.handle != nullptr)
-                                << " has_cb: " << (ctx.cb != nullptr);
+        // BLUE_LOG_INFO(g_logger) << "[trigger] fd: " << fd
+        //                         << " event: " << event
+        //                         << " has_handle: " << (ctx.handle != nullptr)
+        //                         << " has_cb: " << (ctx.cb != nullptr);
 
         Scheduler *scheduler = ctx.scheduler;
         std::function<void()> cb = std::move(ctx.cb);
@@ -101,6 +101,7 @@ namespace blue
 
         start();
 
+        // 分配一个线程在idle上运行
         m_workers.emplace_back([this]()
                                {
             Scheduler::setThis(this);
@@ -115,7 +116,7 @@ namespace blue
             stop();
         }
 
-        // 清理所有 fd 上下文
+        // 清理所有 fd 上下文,保证内部存储的fd在外部已经全部关闭
         {
             std::unique_lock<std::shared_mutex> lock(m_Iommutex);
             m_fdContexts.clear();
@@ -233,7 +234,7 @@ namespace blue
         {
             // 没有有效的回调或协程句柄
             BLUE_LOG_ERROR(g_logger) << "addEvent: no callback or handle provided";
-            delEvent(fd,event);
+            delEvent(fd, event);
             return -1;
         }
 
@@ -461,7 +462,8 @@ namespace blue
                 {
                     uint64_t value;
                     while (read(m_eventfd, &value, sizeof(value)) > 0)
-                        ;
+                    {
+                    }
                     continue;
                 }
 
@@ -546,14 +548,6 @@ namespace blue
         {
             BLUE_LOG_DEBUGE(g_logger) << "tickle: write to eventfd returned " << ret;
         }
-        // 唤醒全局队列的等待者
-        m_Schecv.notify_all();
-
-        // 唤醒所有线程专属队列
-        for (auto &queue : m_threadQueues)
-        {
-            queue->cv.notify_all();
-        }
     }
 
     void IOManager::onTimerInsertedAtFront()
@@ -571,11 +565,12 @@ namespace blue
             {
                 total += queue->pending.load(std::memory_order_acquire);
             }
-            BLUE_LOG_INFO(g_logger) << "total: " << total << " m_pendingEventCounts: " << m_pendingEventCounts.load(std::memory_order_acquire)
-                                    << " hasTimer: " << TimerManager::hasTimer();
+            // BLUE_LOG_INFO(g_logger) << "total: " << total << " m_pendingEventCounts: " << m_pendingEventCounts.load(std::memory_order_acquire)
+            //                         << " hasTimer: " << TimerManager::hasTimer();
             return total == 0 
                    && m_pendingEventCounts.load(std::memory_order_acquire) == 0
-                   && !TimerManager::hasTimer();; });
+                   && !TimerManager::hasTimer()
+                   && m_running.load(std::memory_order_acquire) == 0; });
     }
 
     IOManager *IOManager::GetThis()

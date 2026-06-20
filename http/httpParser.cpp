@@ -520,7 +520,7 @@ namespace blue
             http::HttpMethod method = http::StringToHttpMethod(self->m_curr_method);
             if (method == http::HttpMethod::INVAILD_METHOD)
             {
-                BLUE_LOG_WARN(g_logger) << "invaild http request method: " << self->m_curr_method;
+                BLUE_LOG_WARN(g_logger) << "invalid http request method: " << self->m_curr_method;
                 return -1;
             }
             self->m_data->setMethod(method);
@@ -540,7 +540,7 @@ namespace blue
             std::string tem = "HTTP/" + self->m_curr_version;
             if (strcmp(tem.c_str(), "HTTP/1.1") != 0 && strcmp(tem.c_str(), "HTTP/1.0") != 0)
             {
-                BLUE_LOG_WARN(g_logger) << "invaild http request version: " << tem;
+                BLUE_LOG_WARN(g_logger) << "invalid http request version: " << tem;
                 return -1;
             }
             uint8_t version = ((p->http_major << 4) | p->http_minor);
@@ -826,7 +826,7 @@ namespace blue
             http::HttpStatus status = blue::http::StringToHttpStatus(self->m_curr_reason);
             if (status == http::HttpStatus::INVAILD_STATUS)
             {
-                BLUE_LOG_WARN(g_logger) << "invaild http response status: " << self->m_curr_reason;
+                BLUE_LOG_WARN(g_logger) << "invalid http response status: " << self->m_curr_reason;
                 return -1;
             }
             self->m_data->setReason(self->m_curr_reason);
@@ -848,7 +848,7 @@ namespace blue
             std::string tem = "HTTP/" + self->m_curr_version;
             if (strcmp(tem.c_str(), "HTTP/1.1") != 0 && strcmp(tem.c_str(), "HTTP/1.0") != 0)
             {
-                BLUE_LOG_WARN(g_logger) << "invaild http request version: " << tem;
+                BLUE_LOG_WARN(g_logger) << "invalid http request version: " << tem;
                 return -1;
             }
             uint8_t version = ((p->http_major << 4) | p->http_minor);

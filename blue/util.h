@@ -34,6 +34,8 @@ namespace blue
     uint64_t GetCurrentUsbyc();
     // 获取当前时间(ns)
     uint64_t GetCurrentNsbyc();
+    // 获取当前北京时间
+    std::string GetCurrentBeiJingTime();
 }
 
 #endif // __BLUE_UTIL_H__
