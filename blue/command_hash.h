@@ -1,4 +1,5 @@
 #pragma once
+#ifdef COMMAND_TABLE
 #include <cstdint>
 #include <cstddef>
 
@@ -52,7 +53,6 @@ namespace blue
         
         constexpr size_t size() const { return N - 1; }
     };
-
-
-
 }
+#else
+#endif

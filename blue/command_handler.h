@@ -17,8 +17,11 @@
 #include "modules/monitor.h"
 #include "modules/AOF.h"
 #include "skiplist.h"
+#ifdef COMMAND_TABLE
 #include "command_table.h"
 #include "command_register.h"
+#else
+#endif
 
 namespace blue
 {
@@ -70,6 +73,12 @@ namespace blue
         using TimePoint = SteadyClock::time_point;
 
     public:
+        CommandHandler(int level = -1, int option_name = -1, T option = T(), IOManager *manager = IOManager::GetThis(),
+                       IOManager *acceptmanager = IOManager::GetThis());
+
+        ~CommandHandler();
+#ifdef COMMAND_TABLE
+    private:
         static constexpr auto EVEN_VALIDATOR = [](size_t argc) -> bool
         {
             return argc >= 4 && (argc & 1) == 0; // HSET, ZADD: 4, 6, 8, ...
@@ -80,127 +89,255 @@ namespace blue
             return argc >= 3 && (argc & 1) == 1; // MSET: 3, 5, 7, ...
         };
 
-        static constexpr auto ONLY_ONE = [](size_t argc) -> bool { return argc == 1; };
-        static constexpr auto ONLY_TWO = [](size_t argc) -> bool { return argc == 2; };
-        static constexpr auto ONLY_THREE = [](size_t argc) -> bool { return argc == 3; };
-        static constexpr auto ONLY_FOUR = [](size_t argc) -> bool { return argc == 4; };
-        static constexpr auto ONLY_FIVE = [](size_t argc) -> bool { return argc == 5; };
+        static constexpr auto ONLY_ONE = [](size_t argc) -> bool
+        { return argc == 1; };
+        static constexpr auto ONLY_TWO = [](size_t argc) -> bool
+        { return argc == 2; };
+        static constexpr auto ONLY_THREE = [](size_t argc) -> bool
+        { return argc == 3; };
+        static constexpr auto ONLY_FOUR = [](size_t argc) -> bool
+        { return argc == 4; };
+        static constexpr auto ONLY_FIVE = [](size_t argc) -> bool
+        { return argc == 5; };
 
-        static constexpr auto ONLY_ONE_TWO = [](size_t argc) -> bool { return argc >= 1 && argc <= 2; };
-        static constexpr auto ONLY_TWO_THREE = [](size_t argc) -> bool { return argc >= 2 && argc <= 3; };
-        static constexpr auto ONLY_THREE_FOUR = [](size_t argc) -> bool { return argc >= 3 && argc <= 4; };
-        static constexpr auto ONLY_THREE_SIX = [](size_t argc) -> bool { return argc >= 3 && argc <= 6; };
-        static constexpr auto ONLY_FOUR_FIVE = [](size_t argc) -> bool { return argc >= 4 && argc <= 5; };
+        static constexpr auto ONLY_ONE_TWO = [](size_t argc) -> bool
+        { return argc >= 1 && argc <= 2; };
+        static constexpr auto ONLY_TWO_THREE = [](size_t argc) -> bool
+        { return argc >= 2 && argc <= 3; };
+        static constexpr auto ONLY_THREE_FOUR = [](size_t argc) -> bool
+        { return argc >= 3 && argc <= 4; };
+        static constexpr auto ONLY_THREE_SIX = [](size_t argc) -> bool
+        { return argc >= 3 && argc <= 6; };
+        static constexpr auto ONLY_FOUR_FIVE = [](size_t argc) -> bool
+        { return argc >= 4 && argc <= 5; };
 
-        static constexpr auto ONLY_MORE_TWO = [](size_t argc) -> bool { return argc >= 2; };
-        static constexpr auto ONLY_MORE_THREE = [](size_t argc) -> bool { return argc >= 3; };
+        static constexpr auto ONLY_MORE_TWO = [](size_t argc) -> bool
+        { return argc >= 2; };
+        static constexpr auto ONLY_MORE_THREE = [](size_t argc) -> bool
+        { return argc >= 3; };
 
     public:
-        CommandHandler(int level = -1, int option_name = -1, T option = T(), IOManager *manager = IOManager::GetThis(),
-                       IOManager *acceptmanager = IOManager::GetThis());
-
-        ~CommandHandler();
-
+        using CommandHandlerFunc = blue::RespValue (*)(std::vector<RespValue> &,
+                                                       MSocket::MSocketPtr,
+                                                       bool,
+                                                       CommandHandler<int> *);
         // 声明所有命令
-        REGISTER_COMMAND(PING, handlePING, false, ONLY_ONE_TWO);
-        REGISTER_COMMAND(AUTH, handleAUTH, false, ONLY_TWO);
-        REGISTER_COMMAND(SELECT, handleSELECT, true, ONLY_TWO);
-        REGISTER_COMMAND(CLIENT, handleCLIENT, false, ONLY_TWO_THREE);
-        REGISTER_COMMAND(CONFIG, handleCONFIG, false, ONLY_THREE_FOUR);
+        // connect
+        REGISTER_COMMAND(PING, handlePING);
+        REGISTER_COMMAND(AUTH, handleAUTH);
+        REGISTER_COMMAND(SELECT, handleSELECT);
+        REGISTER_COMMAND(CLIENT, handleCLIENT);
+        REGISTER_COMMAND(CONFIG, handleCONFIG);
 
-        REGISTER_COMMAND(SET, handleSET, true, ONLY_THREE_SIX);
-        REGISTER_COMMAND(GET, handleGET, false, ONLY_TWO);
-        REGISTER_COMMAND(MSET, handleMSET, true, ODD_VALIDATOR);
-        REGISTER_COMMAND(MGET, handleMGET, false, ONLY_MORE_TWO);
-        REGISTER_COMMAND(GETSET, handleGETSET, true, ONLY_THREE);
-        REGISTER_COMMAND(APPEND, handleAPPEND, true, ONLY_THREE);
-        REGISTER_COMMAND(SETNX, handleSETNX, true, ONLY_THREE);
-        REGISTER_COMMAND(EXISTS, handleEXISTS, false, ONLY_MORE_TWO);
-        REGISTER_COMMAND(DEL, handleDEL, true, ONLY_MORE_TWO);
+        // string
+        REGISTER_COMMAND(SET, handleSET);
+        REGISTER_COMMAND(GET, handleGET);
+        REGISTER_COMMAND(MSET, handleMSET);
+        REGISTER_COMMAND(MGET, handleMGET);
+        REGISTER_COMMAND(GETSET, handleGETSET);
+        REGISTER_COMMAND(APPEND, handleAPPEND);
+        REGISTER_COMMAND(SETNX, handleSETNX);
+        REGISTER_COMMAND(EXISTS, handleEXISTS);
+        REGISTER_COMMAND(DEL, handleDEL);
+        REGISTER_COMMAND(INCR, handleINCR);
+        REGISTER_COMMAND(INCRBY, handleINCRBY);
+        REGISTER_COMMAND(STRLEN, handleSTRLEN);
+        REGISTER_COMMAND(TYPE, handleTYPE);
 
-        REGISTER_COMMAND(HSET, handleHSET, true, EVEN_VALIDATOR);
-        REGISTER_COMMAND(HGET, handleHGET, false, ONLY_THREE);
-        REGISTER_COMMAND(HGETALL, handleHGETALL, false, ONLY_TWO);
-        REGISTER_COMMAND(HDEL, handleHDEL, true, ONLY_MORE_THREE);
-        REGISTER_COMMAND(HLEN, handleHLEN, false, ONLY_TWO);
-        REGISTER_COMMAND(HEXISTS, handleHEXISTS, false, ONLY_THREE);
-        REGISTER_COMMAND(HKEYS, handleHKEYS, false, ONLY_TWO);
-        REGISTER_COMMAND(HVALS, handleHVALS, false, ONLY_TWO);
-        REGISTER_COMMAND(KEYS, handleKEYS, false, ONLY_TWO);
+        // hash
+        REGISTER_COMMAND(HSET, handleHSET);
+        REGISTER_COMMAND(HGET, handleHGET);
+        REGISTER_COMMAND(HGETALL, handleHGETALL);
+        REGISTER_COMMAND(HDEL, handleHDEL);
+        REGISTER_COMMAND(HLEN, handleHLEN);
+        REGISTER_COMMAND(HEXISTS, handleHEXISTS);
+        REGISTER_COMMAND(HKEYS, handleHKEYS);
+        REGISTER_COMMAND(HVALS, handleHVALS);
+        REGISTER_COMMAND(KEYS, handleKEYS);
 
-        REGISTER_COMMAND(LPUSH, handleLPUSH, true, ONLY_MORE_THREE);
-        REGISTER_COMMAND(RPUSH, handleRPUSH, true, ONLY_MORE_THREE);
-        REGISTER_COMMAND(LPOP, handleLPOP, true, ONLY_TWO_THREE);
-        REGISTER_COMMAND(RPOP, handleRPOP, true, ONLY_TWO_THREE);
-        REGISTER_COMMAND(LLEN, handleLLEN, false, ONLY_TWO);
-        REGISTER_COMMAND(LINSERT, handleLINSERT, true, ONLY_FIVE);
-        REGISTER_COMMAND(LINDEX, handleLINDEX, false, ONLY_THREE);
-        REGISTER_COMMAND(LSET, handleLSET, true, ONLY_FOUR);
-        REGISTER_COMMAND(RPOPLPUSH, handleRPOPLPUSH, true, ONLY_THREE);
-        REGISTER_COMMAND(LPOPRPUSH, handleLPOPRPUSH, true, ONLY_THREE);
-        REGISTER_COMMAND(LRANGE, handleLRANGE, false, ONLY_FOUR);
+        // list
+        REGISTER_COMMAND(LPUSH, handleLPUSH);
+        REGISTER_COMMAND(RPUSH, handleRPUSH);
+        REGISTER_COMMAND(LPOP, handleLPOP);
+        REGISTER_COMMAND(RPOP, handleRPOP);
+        REGISTER_COMMAND(LLEN, handleLLEN);
+        REGISTER_COMMAND(LINSERT, handleLINSERT);
+        REGISTER_COMMAND(LINDEX, handleLINDEX);
+        REGISTER_COMMAND(LSET, handleLSET);
+        REGISTER_COMMAND(RPOPLPUSH, handleRPOPLPUSH);
+        REGISTER_COMMAND(LPOPRPUSH, handleLPOPRPUSH);
+        REGISTER_COMMAND(LRANGE, handleLRANGE);
 
-        REGISTER_COMMAND(ZADD, handleZADD, true, EVEN_VALIDATOR);
-        REGISTER_COMMAND(ZRANGE, handleZRANGE, false, ONLY_FOUR_FIVE);
-        REGISTER_COMMAND(ZREM, handleZREM, true, ONLY_MORE_THREE);
-        REGISTER_COMMAND(ZSCORE, handleZSCORE, false, ONLY_THREE);
-        REGISTER_COMMAND(ZRANK, handleZRANK, false, ONLY_THREE);
-        REGISTER_COMMAND(ZINCRBY, handleZINCRBY, false, ONLY_FOUR);
-        REGISTER_COMMAND(ZINCRBYFLOAT, handleZINCRBYFLOAT, false, ONLY_FOUR);
-        REGISTER_COMMAND(ZCOUNT, handleZCOUNT, false, ONLY_FOUR);
-        REGISTER_COMMAND(ZRANGEBYSCORE, handleZRANGEBYSCORE, false, ONLY_FOUR_FIVE);
-        REGISTER_COMMAND(ZREMRANGEBYSCORE, handleZREMRANGEBYSCORE, true, ONLY_FOUR);
-        REGISTER_COMMAND(INCR, handleINCR, false, ONLY_TWO);
-        REGISTER_COMMAND(INCRBY, handleINCRBY, false, ONLY_THREE);
-        REGISTER_COMMAND(STRLEN, handleSTRLEN, false, ONLY_TWO);
-        REGISTER_COMMAND(TYPE, handleTYPE, false, ONLY_TWO);
+        // zset
+        REGISTER_COMMAND(ZADD, handleZADD);
+        REGISTER_COMMAND(ZRANGE, handleZRANGE);
+        REGISTER_COMMAND(ZREM, handleZREM);
+        REGISTER_COMMAND(ZSCORE, handleZSCORE);
+        REGISTER_COMMAND(ZRANK, handleZRANK);
+        REGISTER_COMMAND(ZINCRBY, handleZINCRBY);
+        REGISTER_COMMAND(ZINCRBYFLOAT, handleZINCRBYFLOAT);
+        REGISTER_COMMAND(ZCOUNT, handleZCOUNT);
+        REGISTER_COMMAND(ZRANGEBYSCORE, handleZRANGEBYSCORE);
+        REGISTER_COMMAND(ZREMRANGEBYSCORE, handleZREMRANGEBYSCORE);
 
-        REGISTER_COMMAND(SADD, handleSADD, true, ONLY_MORE_THREE);
-        REGISTER_COMMAND(SMEMBERS, handleSMEMBERS, false, ONLY_TWO);
-        REGISTER_COMMAND(SREM, handleSREM, false, ONLY_MORE_THREE);
-        REGISTER_COMMAND(SISMEMBER, handleSISMEMBER, false, ONLY_THREE);
-        REGISTER_COMMAND(SCARD, handleSCARD, false, ONLY_TWO);
-        REGISTER_COMMAND(SRANDMEMBER, handleSRANDMEMBER, false, ONLY_TWO_THREE);
-        REGISTER_COMMAND(SPOP, handleSPOP, true, ONLY_TWO_THREE);
-        REGISTER_COMMAND(SDIFF, handleSDIFF, false, ONLY_MORE_TWO);
-        REGISTER_COMMAND(SINTER, handleSINTER, false, ONLY_MORE_TWO);
-        REGISTER_COMMAND(SUNION, handleSUNION, false, ONLY_MORE_TWO);
-        REGISTER_COMMAND(SMOVE, handleSMOVE, false, ONLY_MORE_TWO);
+        // set
+        REGISTER_COMMAND(SADD, handleSADD);
+        REGISTER_COMMAND(SMEMBERS, handleSMEMBERS);
+        REGISTER_COMMAND(SREM, handleSREM);
+        REGISTER_COMMAND(SISMEMBER, handleSISMEMBER);
+        REGISTER_COMMAND(SCARD, handleSCARD);
+        REGISTER_COMMAND(SRANDMEMBER, handleSRANDMEMBER);
+        REGISTER_COMMAND(SPOP, handleSPOP);
+        REGISTER_COMMAND(SDIFF, handleSDIFF);
+        REGISTER_COMMAND(SINTER, handleSINTER);
+        REGISTER_COMMAND(SUNION, handleSUNION);
+        REGISTER_COMMAND(SMOVE, handleSMOVE);
 
-        REGISTER_COMMAND(FLUSHDB, handleFLUSHDB, true, ONLY_ONE_TWO);
-        REGISTER_COMMAND(FLUSHDBALL, handleFLUSHDBALL, true, ONLY_ONE_TWO);
-        REGISTER_COMMAND(DBSIZE, handleDBSIZE, false, ONLY_ONE);
-        REGISTER_COMMAND(EXPIRE, handleEXPIRE, false, ONLY_THREE);
-        REGISTER_COMMAND(TTL, handleTTL, false, ONLY_TWO);
-        REGISTER_COMMAND(PEXPIRE, handlePEXPIRE, false, ONLY_THREE);
-        REGISTER_COMMAND(PTTL, handlePTTL, false, ONLY_TWO);
-        REGISTER_COMMAND(PERSIST, handlePERSIST, false, ONLY_TWO);
-        REGISTER_COMMAND(RENAME, handleRENAME, false, ONLY_THREE);
-        REGISTER_COMMAND(RENAMENX, handleRENAMENX, false, ONLY_THREE);
-        REGISTER_COMMAND(RANDOMKEY, handleRANDOMKEY, false, ONLY_ONE);
-        REGISTER_COMMAND(INFO, handleINFO, false, ONLY_ONE);
-        REGISTER_COMMAND(SAVE, handleSAVE, false, ONLY_ONE);
-        REGISTER_COMMAND(BGSAVE, handleBGSAVE, false, ONLY_ONE);
-        REGISTER_COMMAND(LASTSAVE, handleLASTSAVE, false, ONLY_ONE);
-        REGISTER_COMMAND(LASTSAVE1, handleLASTSAVE1, false, ONLY_ONE);
-        REGISTER_COMMAND(COMMAND, handleCOMMAND, false, ONLY_ONE);
-        REGISTER_COMMAND(ECHO, handleECHO, false, ONLY_TWO);
-        REGISTER_COMMAND(TIME, handleTIME, false, ONLY_ONE);
-        REGISTER_COMMAND(LOCALTIME, handleLOCALTIME, false, ONLY_ONE);
-        REGISTER_COMMAND(WATCH, handleWATCH, false, ONLY_MORE_TWO);
-        REGISTER_COMMAND(UNWATCH, handleUNWATCH, false, ONLY_ONE);
-        REGISTER_COMMAND(SLOWLOG, handleSLOWLOG, false, ONLY_TWO_THREE);
-        REGISTER_COMMAND(MONITOR, handleMONITOR, false, ONLY_ONE);
-        REGISTER_COMMAND(AOFROTATE, handleAOFROTATE, false, ONLY_ONE);
-        REGISTER_COMMAND(SHUTDOWN, handleSHUTDOWN, false, ONLY_ONE);
-        REGISTER_COMMAND(EXEC, handleEXEC, false, ONLY_ONE);
-        REGISTER_COMMAND(DISCARD, handleDISCARD, false, ONLY_ONE);
-        REGISTER_COMMAND(UNSUBSCRIBE, handleUNSUBSCRIBE, false, ONLY_ONE);
-        REGISTER_COMMAND(MULTI, handleMULTI, false, ONLY_ONE);
-        REGISTER_COMMAND(SUBSCRIBE, handleSUBSCRIBE, false, ONLY_MORE_TWO);
-        REGISTER_COMMAND(PUBLISH, handlePUBLISH, false, ONLY_THREE);
+        // server
+        REGISTER_COMMAND(FLUSHDB, handleFLUSHDB);
+        REGISTER_COMMAND(FLUSHDBALL, handleFLUSHDBALL);
+        REGISTER_COMMAND(DBSIZE, handleDBSIZE);
+        REGISTER_COMMAND(EXPIRE, handleEXPIRE);
+        REGISTER_COMMAND(TTL, handleTTL);
+        REGISTER_COMMAND(PEXPIRE, handlePEXPIRE);
+        REGISTER_COMMAND(PTTL, handlePTTL);
+        REGISTER_COMMAND(PERSIST, handlePERSIST);
+        REGISTER_COMMAND(RENAME, handleRENAME);
+        REGISTER_COMMAND(RENAMENX, handleRENAMENX);
+        REGISTER_COMMAND(RANDOMKEY, handleRANDOMKEY);
+        REGISTER_COMMAND(INFO, handleINFO);
+        REGISTER_COMMAND(SAVE, handleSAVE);
+        REGISTER_COMMAND(BGSAVE, handleBGSAVE);
+        REGISTER_COMMAND(LASTSAVE, handleLASTSAVE);
+        REGISTER_COMMAND(LASTSAVE1, handleLASTSAVE1);
+        REGISTER_COMMAND(COMMAND, handleCOMMAND);
+        REGISTER_COMMAND(ECHO, handleECHO);
+        REGISTER_COMMAND(TIME, handleTIME);
+        REGISTER_COMMAND(LOCALTIME, handleLOCALTIME);
+        REGISTER_COMMAND(WATCH, handleWATCH);
+        REGISTER_COMMAND(UNWATCH, handleUNWATCH);
+        REGISTER_COMMAND(SLOWLOG, handleSLOWLOG);
+        REGISTER_COMMAND(MONITOR, handleMONITOR);
+        REGISTER_COMMAND(AOFROTATE, handleAOFROTATE);
+        REGISTER_COMMAND(SHUTDOWN, handleSHUTDOWN);
 
+        // 插入所有命令
+        static consteval auto buildCommandTable()
+        {
+            // 注释的走if-else直接判断
+            blue::CommandTableBuilder<256> builder;
+            // connect
+            CMD_ENTRY(PING, handlePING, false, ONLY_ONE_TWO);
+            CMD_ENTRY(AUTH, handleAUTH, false, ONLY_TWO);
+            CMD_ENTRY(SELECT, handleSELECT, true, ONLY_TWO);
+            CMD_ENTRY(CLIENT, handleCLIENT, false, ONLY_TWO_THREE);
+            CMD_ENTRY(CONFIG, handleCONFIG, false, ONLY_THREE_FOUR);
+
+            // string
+            // CMD_ENTRY(SET, handleSET, true, ONLY_THREE_SIX);
+            // CMD_ENTRY(GET, handleGET, false, ONLY_TWO);
+            CMD_ENTRY(MSET, handleMSET, true, ODD_VALIDATOR);
+            CMD_ENTRY(MGET, handleMGET, false, ONLY_MORE_TWO);
+            CMD_ENTRY(GETSET, handleGETSET, true, ONLY_THREE);
+            CMD_ENTRY(APPEND, handleAPPEND, true, ONLY_THREE);
+            CMD_ENTRY(SETNX, handleSETNX, true, ONLY_THREE);
+            CMD_ENTRY(EXISTS, handleEXISTS, false, ONLY_MORE_TWO);
+            // CMD_ENTRY(DEL, handleDEL, true, ONLY_MORE_TWO);
+            CMD_ENTRY(INCR, handleINCR, false, ONLY_TWO);
+            CMD_ENTRY(INCRBY, handleINCRBY, false, ONLY_THREE);
+            CMD_ENTRY(STRLEN, handleSTRLEN, false, ONLY_TWO);
+            CMD_ENTRY(TYPE, handleTYPE, false, ONLY_TWO);
+
+            // hash
+            // CMD_ENTRY(HSET, handleHSET, true, EVEN_VALIDATOR);
+            // CMD_ENTRY(HGET, handleHGET, false, ONLY_THREE);
+            CMD_ENTRY(HGETALL, handleHGETALL, false, ONLY_TWO);
+            CMD_ENTRY(HDEL, handleHDEL, true, ONLY_MORE_THREE);
+            CMD_ENTRY(HLEN, handleHLEN, false, ONLY_TWO);
+            CMD_ENTRY(HEXISTS, handleHEXISTS, false, ONLY_THREE);
+            CMD_ENTRY(HKEYS, handleHKEYS, false, ONLY_TWO);
+            CMD_ENTRY(HVALS, handleHVALS, false, ONLY_TWO);
+            CMD_ENTRY(KEYS, handleKEYS, false, ONLY_TWO);
+
+            // list
+            // CMD_ENTRY(LPUSH, handleLPUSH, true, ONLY_MORE_THREE);
+            CMD_ENTRY(RPUSH, handleRPUSH, true, ONLY_MORE_THREE);
+            // CMD_ENTRY(LPOP, handleLPOP, true, ONLY_TWO_THREE);
+            CMD_ENTRY(RPOP, handleRPOP, true, ONLY_TWO_THREE);
+            CMD_ENTRY(LLEN, handleLLEN, false, ONLY_TWO);
+            CMD_ENTRY(LINSERT, handleLINSERT, true, ONLY_FIVE);
+            CMD_ENTRY(LINDEX, handleLINDEX, false, ONLY_THREE);
+            CMD_ENTRY(LSET, handleLSET, true, ONLY_FOUR);
+            CMD_ENTRY(RPOPLPUSH, handleRPOPLPUSH, true, ONLY_THREE);
+            CMD_ENTRY(LPOPRPUSH, handleLPOPRPUSH, true, ONLY_THREE);
+            CMD_ENTRY(LRANGE, handleLRANGE, false, ONLY_FOUR);
+
+            // zset
+            // CMD_ENTRY(ZADD, handleZADD, true, EVEN_VALIDATOR);
+            CMD_ENTRY(ZRANGE, handleZRANGE, false, ONLY_FOUR_FIVE);
+            CMD_ENTRY(ZREM, handleZREM, true, ONLY_MORE_THREE);
+            CMD_ENTRY(ZSCORE, handleZSCORE, false, ONLY_THREE);
+            CMD_ENTRY(ZRANK, handleZRANK, false, ONLY_THREE);
+            CMD_ENTRY(ZINCRBY, handleZINCRBY, false, ONLY_FOUR);
+            CMD_ENTRY(ZINCRBYFLOAT, handleZINCRBYFLOAT, false, ONLY_FOUR);
+            CMD_ENTRY(ZCOUNT, handleZCOUNT, false, ONLY_FOUR);
+            CMD_ENTRY(ZRANGEBYSCORE, handleZRANGEBYSCORE, false, ONLY_FOUR_FIVE);
+            CMD_ENTRY(ZREMRANGEBYSCORE, handleZREMRANGEBYSCORE, true, ONLY_FOUR);
+
+            // set
+            // CMD_ENTRY(SADD, handleSADD, true, ONLY_MORE_THREE);
+            CMD_ENTRY(SMEMBERS, handleSMEMBERS, false, ONLY_TWO);
+            CMD_ENTRY(SREM, handleSREM, true, ONLY_MORE_THREE);
+            CMD_ENTRY(SISMEMBER, handleSISMEMBER, false, ONLY_THREE);
+            CMD_ENTRY(SCARD, handleSCARD, false, ONLY_TWO);
+            CMD_ENTRY(SRANDMEMBER, handleSRANDMEMBER, false, ONLY_TWO_THREE);
+            CMD_ENTRY(SPOP, handleSPOP, true, ONLY_TWO_THREE);
+            CMD_ENTRY(SDIFF, handleSDIFF, false, ONLY_MORE_TWO);
+            CMD_ENTRY(SINTER, handleSINTER, false, ONLY_MORE_TWO);
+            CMD_ENTRY(SUNION, handleSUNION, false, ONLY_MORE_TWO);
+            CMD_ENTRY(SMOVE, handleSMOVE, true, ONLY_FOUR);
+
+            // server
+            CMD_ENTRY(FLUSHDB, handleFLUSHDB, true, ONLY_ONE_TWO);
+            CMD_ENTRY(FLUSHDBALL, handleFLUSHDBALL, true, ONLY_ONE_TWO);
+            CMD_ENTRY(DBSIZE, handleDBSIZE, false, ONLY_ONE);
+            CMD_ENTRY(EXPIRE, handleEXPIRE, false, ONLY_THREE);
+            CMD_ENTRY(TTL, handleTTL, false, ONLY_TWO);
+            CMD_ENTRY(PEXPIRE, handlePEXPIRE, false, ONLY_THREE);
+            CMD_ENTRY(PTTL, handlePTTL, false, ONLY_TWO);
+            CMD_ENTRY(PERSIST, handlePERSIST, false, ONLY_TWO);
+            CMD_ENTRY(RENAME, handleRENAME, false, ONLY_THREE);
+            CMD_ENTRY(RENAMENX, handleRENAMENX, false, ONLY_THREE);
+            CMD_ENTRY(RANDOMKEY, handleRANDOMKEY, false, ONLY_ONE);
+            CMD_ENTRY(INFO, handleINFO, false, ONLY_ONE);
+            CMD_ENTRY(SAVE, handleSAVE, false, ONLY_ONE);
+            CMD_ENTRY(BGSAVE, handleBGSAVE, false, ONLY_ONE);
+            CMD_ENTRY(LASTSAVE, handleLASTSAVE, false, ONLY_ONE);
+            CMD_ENTRY(LASTSAVE1, handleLASTSAVE1, false, ONLY_ONE);
+            CMD_ENTRY(COMMAND, handleCOMMAND, false, ONLY_ONE);
+            CMD_ENTRY(ECHO, handleECHO, false, ONLY_TWO);
+            CMD_ENTRY(TIME, handleTIME, false, ONLY_ONE);
+            CMD_ENTRY(LOCALTIME, handleLOCALTIME, false, ONLY_ONE);
+            CMD_ENTRY(WATCH, handleWATCH, false, ONLY_MORE_TWO);
+            CMD_ENTRY(UNWATCH, handleUNWATCH, false, ONLY_ONE);
+            CMD_ENTRY(SLOWLOG, handleSLOWLOG, false, ONLY_TWO_THREE);
+            CMD_ENTRY(MONITOR, handleMONITOR, false, ONLY_ONE);
+            CMD_ENTRY(AOFROTATE, handleAOFROTATE, false, ONLY_ONE);
+            CMD_ENTRY(SHUTDOWN, handleSHUTDOWN, false, ONLY_ONE);
+
+            return builder.build();
+        }
+        RespValue execute1(std::vector<RespValue> args, MSocket::MSocketPtr sock, bool RecordAOF = true);
+
+    private:
+        static const auto &getCommandTable()
+        {
+            static const auto table = buildCommandTable();
+            return table;
+        }
+#else
         RespValue execute(std::vector<RespValue> args, MSocket::MSocketPtr sock, bool RecordAOF = true);
+#endif
 
     protected:
         /**
@@ -330,11 +467,11 @@ namespace blue
         std::atomic<bool> m_push_monitor{true}; // 是否推送给monitor
     private:
         /* MONITOR */
-        MonitorModule m_monitor;
+        MonitorModule m_monitor;  // monitor模式
 
     private:
         /* AOF */
-        AOFModule m_aof;
+        AOFModule m_aof;        // AOF
     };
 
     template <typename T>
@@ -342,11 +479,19 @@ namespace blue
                                       IOManager *acceptmanager)
         : TcpServer<T>(level, option_name, option, manager, acceptmanager)
     {
+#ifdef COMMAND_TABLE
+        // 设置 AOF 执行器
+        m_aof.setExecutor([this](std::vector<RespValue> args,
+                                 MSocket::MSocketPtr sock,
+                                 bool record) -> RespValue
+                          { return this->execute1(args, sock, record); });
+#else
         // 设置 AOF 执行器
         m_aof.setExecutor([this](std::vector<RespValue> args,
                                  MSocket::MSocketPtr sock,
                                  bool record) -> RespValue
                           { return this->execute(args, sock, record); });
+#endif
         loadFromFile();
         m_aof.loadAOF();
         m_aof.initAOF(); // 初始化AOF,追加打开AOF文件,并开启AOF同步协程
@@ -415,6 +560,79 @@ namespace blue
         }
     }
 
+#ifdef COMMAND_TABLE
+    template <typename T>
+    RespValue CommandHandler<T>::execute1(std::vector<RespValue> args, MSocket::MSocketPtr sock, bool RecordAOF)
+    {
+        auto start = SteadyClock::now();
+        if (args.empty())
+        {
+            return RespValue::error("ERR empty command");
+        }
+        std::string cmd = args[0].str;
+        std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
+#define HOT_COMMANDS(XX) \
+    XX(GET) \
+    XX(SET) \
+    XX(DEL) \
+    XX(HSET) \
+    XX(HGET) \
+    XX(LPUSH) \
+    XX(LPOP) \
+    XX(SADD) \
+    XX(ZADD) \
+
+#define IF_CMD(name) \
+        if (cmd == #name) { \
+            return handle##name(args, sock, RecordAOF, this); \
+        }
+
+
+        // 高频命令不走命令表
+        HOT_COMMANDS(IF_CMD);
+
+#undef IF_CMD
+#undef HOT_COMMANDS
+
+        const auto &table = getCommandTable();
+        auto *entry = table.find_lowerbound(fnv1a_hash(cmd.c_str()));
+        if (!entry)
+        {
+            return RespValue::error("ERR unknown command");
+        }
+
+        // 参数验证
+        if (entry->argV && !entry->argV(args.size()))
+        {
+            return RespValue::error("ERR wrong number of arguments for '" + cmd + "'");
+        }
+
+        if (RecordAOF && entry->is_write)
+        {
+            std::string aof_cmds = m_aof.formatCommand(args);
+            m_aof.appendToAOF(aof_cmds);
+        }
+
+        // 执行命令
+        auto handler = entry->handler;
+        RespValue result = handler(args, sock, RecordAOF, this);
+
+        // 慢查询记录
+        auto end = SteadyClock::now();
+        std::string cmd_str;
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            if (i > 0)
+            {
+                cmd_str += " ";
+            }
+            cmd_str += args[i].str;
+        }
+        m_slowLog.pushEntry(cmd_str, sock, start, end);
+
+        return result;
+    }
+#else
     template <typename T>
     RespValue CommandHandler<T>::execute(std::vector<RespValue> args, MSocket::MSocketPtr sock, bool RecordAOF)
     {
@@ -477,6 +695,7 @@ namespace blue
 
         if (cmd == "PING") // PING [message]
         {
+            BLUE_LOG_INFO(xx::g_logger) << "if-else模式";
             if (sock->getClientlevel() < 1)
             {
                 return return_with_slowlog(RespValue::error("ERR authentication required"));
@@ -2704,7 +2923,7 @@ namespace blue
             int32_t count;
             try
             {
-                count = args.size() == 3 ? std::stoi(args[2].str) : 0;
+                count = args.size() == 3 ? std::stoi(args[2].str) : 1;
                 if (count < 0)
                 {
                     return return_with_slowlog(RespValue::error("ERR value can't be nagative"));
@@ -2732,14 +2951,26 @@ namespace blue
             auto &set = it->second;
             std::vector<std::string> members(set.begin(), set.end());
             std::vector<RespValue> results;
+            if (count == 0)
+            {
+                return RespValue::array({});
+            }
+            if (members.empty())
+            {
+                return RespValue::null_bulk();
+            }
             if (args.size() == 2)
             {
                 int idx = rand() % members.size();
                 set.erase(members[idx]);
+                if (set.empty())
+                {
+                    shards.sets.erase(it);
+                }
                 return return_with_slowlog(RespValue::bulk_string(members[idx]));
             }
 
-            if (count >= 0)
+            if (count > 0)
             {
                 // 正数：不重复
                 int num = std::min(count, (int32_t)(members.size()));
@@ -2748,6 +2979,10 @@ namespace blue
                 {
                     set.erase(members[i]);
                     results.push_back(RespValue::bulk_string(members[i]));
+                }
+                if (set.empty())
+                {
+                    shards.sets.erase(it);
                 }
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
@@ -3996,7 +4231,7 @@ namespace blue
         }
         return return_with_slowlog(RespValue::error("ERR unknown command"));
     }
-
+#endif 
     template <typename T>
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
@@ -4091,7 +4326,11 @@ namespace blue
                                 std::vector<RespValue> results;
                                 for (const auto &transaction : sock->getTransaction())
                                 {
+                        #ifdef COMMAND_TABLE
+                                    auto response = execute1(transaction, sock, true);
+                        #else
                                     auto response = execute(transaction, sock, true);
+                        #endif
                                     results.push_back(response);
                                 }
                                 sock->clearTransaction();
@@ -4276,8 +4515,12 @@ namespace blue
                     }
                     else
                     {
+                #ifdef COMMAND_TABLE
                         // 执行普通命令
+                        response = execute1(std::move(copy_arr), sock, true); // move后copy_arr为空
+                #else
                         response = execute(std::move(copy_arr), sock, true); // move后copy_arr为空
+                #endif
                     }
                 }
 
@@ -4576,6 +4819,7 @@ namespace blue
         BLUE_LOG_INFO(xx::g_logger) << "RDB loaded from " << filename;
     }
 
+#ifdef COMMAND_TABLE
     // ========== 连接命令 ==========
     template <typename T>
     RespValue CommandHandler<T>::handlePING(std::vector<RespValue> &args,
@@ -4583,6 +4827,7 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        BLUE_LOG_INFO(xx::g_logger) << "commandTable 模式";
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
@@ -4643,7 +4888,6 @@ namespace blue
         sock->setClientId(db);
         return RespValue::simple_string("OK");
     }
-
 
     template <typename T>
     RespValue CommandHandler<T>::handleCLIENT(std::vector<RespValue> &args,
@@ -4785,7 +5029,7 @@ namespace blue
                 sock->setClientPassword(value);
                 return RespValue::simple_string("OK");
             }
-            if (!isAdmin(sock))
+            if (!self->isAdmin(sock))
             {
                 return RespValue::error("ERR authentication required");
             }
@@ -4798,7 +5042,7 @@ namespace blue
                     {
                         return RespValue::error("ERR invalid maxclients value");
                     }
-                    if (newmax < TcpServer<T>::getConnection())
+                    if (newmax < self->getConnection())
                     {
                         return RespValue::error("ERR maxclients can't be less than current connections");
                     }
@@ -4968,6 +5212,10 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
+        if (args.size() < 3)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'SET'");
+        }
         const std::string key = args[1].str;
         const std::string val = args[2].str;
         auto &shards = self->getShard(key, sock);
@@ -5013,7 +5261,7 @@ namespace blue
             }
         }
         return RespValue::simple_string("OK");
-    }   
+    }
 
     template <typename T>
     RespValue CommandHandler<T>::handleGET(std::vector<RespValue> &args,
@@ -5032,6 +5280,10 @@ namespace blue
         if (it == shards.store.end())
         {
             return RespValue::null_bulk();
+        }
+        if (args.size() < 2)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'GET'");
         }
         auto expire_it = shards.expire.find(key);
         if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
@@ -5128,7 +5380,7 @@ namespace blue
         std::string ans = it->second;
         it->second = val;
         return RespValue::bulk_string(ans);
-    }   
+    }
 
     template <typename T>
     RespValue CommandHandler<T>::handleAPPEND(std::vector<RespValue> &args,
@@ -5217,6 +5469,10 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
+        if (args.size() < 2)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'DEL'");
+        }
         int count = 0;
         for (size_t i = 1; i < args.size(); i++)
         {
@@ -5240,7 +5496,29 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
-
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        int64_t val = 0;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> rdlock(shards.mutex);
+        auto it = shards.store.find(key);
+        if (it != shards.store.end())
+        {
+            try
+            {
+                val = std::stoll(it->second);
+            }
+            catch (...)
+            {
+                return RespValue::error("ERR value is not a integer or out of range");
+            }
+        }
+        val++;
+        shards.store[key] = std::to_string(val);
+        return RespValue::integer(val);
     }
 
     template <typename T>
@@ -5249,7 +5527,38 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
-
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        int64_t increment;
+        try
+        {
+            increment = std::stoll(args[2].str);
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not an integer or out of range");
+        }
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        int64_t val = 0;
+        if (it != shards.store.end())
+        {
+            try
+            {
+                val = std::stoll(it->second);
+            }
+            catch (...)
+            {
+                return RespValue::error("ERR value is not a integer or out of range");
+            }
+        }
+        val += increment;
+        shards.store[key] = std::to_string(val);
+        return RespValue::integer(val);
     }
 
     template <typename T>
@@ -5258,7 +5567,46 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.store.find(key);
+        if (it == shards.store.end())
+        {
+            if (shards.hash.find(key) != shards.hash.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
 
+            if (shards.lists.find(key) != shards.lists.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.zset.find(key) != shards.zset.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            if (shards.sets.find(key) != shards.sets.end())
+            {
+                return RespValue::error("WRONGTYPE Operation against a key holding the wrong kind of value");
+            }
+
+            return RespValue::integer(0);
+        }
+        auto expire_it = shards.expire.find(key);
+        if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
+        {
+            shards.expire.erase(expire_it);
+            shards.store.erase(it);
+            return RespValue::integer(0);
+        }
+        return RespValue::integer(it->second.size());
     }
 
     template <typename T>
@@ -5267,7 +5615,34 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
-
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        if (shards.store.find(key) != shards.store.end())
+        {
+            return RespValue::bulk_string("string");
+        }
+        if (shards.hash.find(key) != shards.hash.end())
+        {
+            return RespValue::bulk_string("hash");
+        }
+        if (shards.lists.find(key) != shards.lists.end())
+        {
+            return RespValue::bulk_string("list");
+        }
+        if (shards.zset.find(key) != shards.zset.end())
+        {
+            return RespValue::bulk_string("zset");
+        }
+        if (shards.sets.find(key) != shards.sets.end())
+        {
+            return RespValue::bulk_string("set");
+        }
+        return RespValue::null_bulk();
     }
 
     template <typename T>
@@ -5295,7 +5670,7 @@ namespace blue
                 regex_str += ".";
             }
             else if (c == '.' || c == '+' || c == '[' || c == ']' ||
-                        c == '(' || c == ')' || c == '\\')
+                     c == '(' || c == ')' || c == '\\')
             {
                 regex_str += '\\';
                 regex_str += c;
@@ -5312,7 +5687,7 @@ namespace blue
         result.reserve(MAX_KEYS);
 
         // 遍历所有分片
-        for (auto &shard : m_dbs[sock->getClientId()])
+        for (auto &shard : self->m_dbs[sock->getClientId()])
         {
             if (result.size() >= MAX_KEYS)
             {
@@ -5376,6 +5751,10 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
+        if (args.size() < 4 || args.size() % 2 != 0)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'HSET'");
+        }
         int count = 0;
         std::string key = args[1].str;
         for (size_t i = 2; i < args.size(); i += 2)
@@ -5402,6 +5781,10 @@ namespace blue
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
+        }
+        if (args.size() < 3)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'HGET'");
         }
         const std::string key = args[1].str;
         const std::string field = args[2].str;
@@ -5667,6 +6050,10 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
+        if (args.size() < 3)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'LPUSH'");
+        }
         const std::string key = args[1].str;
         auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
@@ -5708,6 +6095,10 @@ namespace blue
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
+        }
+        if (args.size() < 2 || args.size() > 3)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'LPOP'");
         }
         int count;
         try
@@ -6112,6 +6503,31 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        if (args.size() < 3)
+        {
+            return RespValue::error("ERR wrong number of argument for 'SADD'");
+        }
+        const std::string key = args[1].str;
+        int32_t count = 0;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            const std::string member = args[i].str;
+            if (shards.sets[key].find(member) == shards.sets[key].end())
+            {
+                auto [_, res] = shards.sets[key].insert(member);
+                if (res)
+                {
+                    count++;
+                }
+            }
+        }
+        return RespValue::integer(count);
     }
 
     template <typename T>
@@ -6120,6 +6536,24 @@ namespace blue
                                                 bool aof,
                                                 CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        std::vector<RespValue> results;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.sets.find(key);
+        if (it == shards.sets.end())
+        {
+            return RespValue::array(std::move(results));
+        }
+        for (auto &member : it->second)
+        {
+            results.push_back(RespValue::bulk_string(member));
+        }
+        return RespValue::array(std::move(results));
     }
 
     template <typename T>
@@ -6128,6 +6562,28 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        int32_t count = 0;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.sets.find(key);
+        if (it == shards.sets.end())
+        {
+            return RespValue::integer(0);
+        }
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            count += it->second.erase(args[i].str);
+        }
+        if (it->second.empty())
+        {
+            shards.sets.erase(it);
+        }
+        return RespValue::integer(count);
     }
 
     template <typename T>
@@ -6136,6 +6592,20 @@ namespace blue
                                                  bool aof,
                                                  CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string member = args[2].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.sets.find(key);
+        if (it == shards.sets.end())
+        {
+            return RespValue::integer(0);
+        }
+        return RespValue::integer(it->second.count(member));
     }
 
     template <typename T>
@@ -6144,6 +6614,19 @@ namespace blue
                                              bool aof,
                                              CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.sets.find(key);
+        if (it == shards.sets.end())
+        {
+            return RespValue::integer(0);
+        }
+        return RespValue::integer(it->second.size());
     }
 
     template <typename T>
@@ -6152,6 +6635,64 @@ namespace blue
                                                    bool aof,
                                                    CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int32_t count;
+        try
+        {
+            count = args.size() == 3 ? std::stoi(args[2].str) : 0;
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not an integer or out of range");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.sets.find(key);
+        if (it == shards.sets.end())
+        {
+            if (args.size() == 2)
+            {
+                return RespValue::null_bulk();
+            }
+            else
+            {
+                return RespValue::array({});
+            }
+        }
+        const auto &set = it->second;
+        std::vector<std::string> members(set.begin(), set.end());
+        std::vector<RespValue> results;
+        if (args.size() == 2)
+        {
+            int idx = rand() % members.size();
+            return RespValue::bulk_string(members[idx]);
+        }
+
+        if (count >= 0)
+        {
+            // 正数：不重复
+            int num = std::min(count, (int32_t)(members.size()));
+            std::shuffle(members.begin(), members.end(), std::mt19937(std::random_device()()));
+            for (int i = 0; i < num; i++)
+            {
+                results.push_back(RespValue::bulk_string(members[i]));
+            }
+        }
+        else
+        {
+            // 负数：可重复
+            int num = -count;
+            for (int i = 0; i < num; i++)
+            {
+                int idx = rand() % members.size();
+                results.push_back(RespValue::bulk_string(members[idx]));
+            }
+        }
+        return RespValue::array(std::move(results));
     }
 
     template <typename T>
@@ -6160,6 +6701,76 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int32_t count;
+        try
+        {
+            count = args.size() == 3 ? std::stoi(args[2].str) : 1;
+            if (count < 0)
+            {
+                return RespValue::error("ERR value can't be nagative");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not an integer or out of range");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.sets.find(key);
+        if (it == shards.sets.end())
+        {
+            if (args.size() == 2)
+            {
+                return RespValue::null_bulk();
+            }
+            else
+            {
+                return RespValue::array({});
+            }
+        }
+        auto &set = it->second;
+        std::vector<std::string> members(set.begin(), set.end());
+        std::vector<RespValue> results;
+        if (count == 0)
+        {
+            return RespValue::array({});
+        }
+        if (members.empty())
+        {
+            return RespValue::null_bulk();
+        }
+        if (args.size() == 2)
+        {
+            int idx = rand() % members.size();
+            set.erase(members[idx]);
+            if (set.empty())
+            {
+                shards.sets.erase(it);
+            }
+            return RespValue::bulk_string(members[idx]);
+        }
+
+        if (count > 0)
+        {
+            // 正数：不重复
+            int num = std::min(count, (int32_t)(members.size()));
+            std::shuffle(members.begin(), members.end(), std::mt19937(std::random_device()()));
+            for (int i = 0; i < num; i++)
+            {
+                set.erase(members[i]);
+                results.push_back(RespValue::bulk_string(members[i]));
+            }
+            if (set.empty())
+            {
+                shards.sets.erase(it);
+            }
+        }
+        return RespValue::array(std::move(results));
     }
 
     template <typename T>
@@ -6168,6 +6779,35 @@ namespace blue
                                              bool aof,
                                              CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shard = self->getShard(key, sock);
+        std::vector<RespValue> results;
+        std::shared_lock<std::shared_mutex> lock(shard.mutex);
+        for (const auto &member : shard.sets[key])
+        {
+            bool ok = true;
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                const std::string tem_key = args[i].str;
+                auto &tem_shard = self->getShard(tem_key, sock);
+                std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
+                auto &tem_members = tem_shard.sets[tem_key];
+                if (tem_members.contains(member))
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok)
+            {
+                results.push_back(RespValue::bulk_string(member));
+            }
+        }
+        return RespValue::array(std::move(results));
     }
 
     template <typename T>
@@ -6176,6 +6816,35 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shard = self->getShard(key, sock);
+        std::vector<RespValue> results;
+        std::shared_lock<std::shared_mutex> lock(shard.mutex);
+        for (const auto &member : shard.sets[key])
+        {
+            bool ok = true;
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                const std::string tem_key = args[i].str;
+                auto &tem_shard = self->getShard(tem_key, sock);
+                std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
+                auto &tem_members = tem_shard.sets[tem_key];
+                if (!tem_members.contains(member))
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok)
+            {
+                results.push_back(RespValue::bulk_string(member));
+            }
+        }
+        return RespValue::array(std::move(results));
     }
 
     template <typename T>
@@ -6184,6 +6853,36 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shard = self->getShard(key, sock);
+        std::unordered_set<std::string> results_set;
+        std::shared_lock<std::shared_mutex> lock(shard.mutex);
+        for (const auto &member : shard.sets[key])
+        {
+            results_set.insert(member);
+        }
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            const std::string tem_key = args[i].str;
+            auto &tem_shard = self->getShard(tem_key, sock);
+            std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
+            auto &tem_members = tem_shard.sets[tem_key];
+            for (const auto &tem_member : tem_members)
+            {
+                results_set.insert(tem_member);
+            }
+        }
+        lock.unlock();
+        std::vector<RespValue> results;
+        for (const auto &member : results_set)
+        {
+            results.push_back(RespValue::bulk_string(member));
+        }
+        return RespValue::array(std::move(results));
     }
 
     template <typename T>
@@ -6192,6 +6891,57 @@ namespace blue
                                              bool aof,
                                              CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string source_key = args[1].str;
+        const std::string destination_key = args[2].str;
+        if (source_key == destination_key)
+        {
+            return RespValue::integer(1);
+        }
+        const std::string member = args[3].str;
+        int src_shard_idx = self->getShardIndex(source_key);
+        int dest_shard_idx = self->getShardIndex(destination_key);
+        if (src_shard_idx > dest_shard_idx)
+        {
+            std::swap(src_shard_idx, dest_shard_idx);
+        }
+        auto &src_shard = self->getShard(source_key, sock);
+        auto &dest_shard = self->getShard(destination_key, sock);
+
+        std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
+        std::unique_lock<std::shared_mutex> lock2;
+        if (src_shard_idx != dest_shard_idx)
+        {
+            lock2 = std::unique_lock<std::shared_mutex>(dest_shard.mutex);
+        }
+
+        auto src_it = src_shard.sets.find(source_key);
+        if (src_it == src_shard.sets.end())
+        {
+            return RespValue::integer(0);
+        }
+
+        auto dest_it = dest_shard.sets.find(destination_key);
+        if (dest_it == dest_shard.sets.end())
+        {
+            dest_shard.sets[destination_key] = std::unordered_set<std::string>();
+            dest_it = dest_shard.sets.find(destination_key);
+        }
+        // 检查member是否在源集合中
+        if (src_it->second.find(member) == src_it->second.end())
+        {
+            return RespValue::integer(0);
+        }
+        src_it->second.erase(member);
+        dest_it->second.insert(member);
+        if (src_it->second.empty())
+        {
+            src_shard.sets.erase(src_it);
+        }
+        return RespValue::integer(1);
     }
 
     // ========== ZSet 命令 ==========
@@ -6204,6 +6954,10 @@ namespace blue
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
+        }
+        if (args.size() < 4 || args.size() % 2 != 0)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'ZADD'");
         }
         int count = 0;
         const std::string key = args[1].str;
@@ -6252,6 +7006,66 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        int start, stop;
+        try
+        {
+            start = std::stoi(args[2].str);
+            stop = std::stoi(args[3].str);
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a integer or out of range");
+        }
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.zset.find(key);
+        if (it == shards.zset.end())
+        {
+            return RespValue::array({});
+        }
+        bool withscores = (args.size() == 5 && (args[4].str == "WITHSCORES" || args[4].str == "withscores"));
+        auto &skiplist_map = it->second;
+        int size = skiplist_map.size();
+        if (start < 0)
+        {
+            start += size;
+        }
+        if (stop < 0)
+        {
+            stop += size;
+        }
+        if (start < 0)
+        {
+            start = 0;
+        }
+        if (stop >= size)
+        {
+            stop = size - 1;
+        }
+        if (start > stop)
+        {
+            return RespValue::array({});
+        }
+        std::vector<RespValue> results;
+        for (int i = start; i <= stop; i++)
+        {
+            auto *node = skiplist_map.getByIndex(i);
+            if (!node)
+            {
+                break;
+            }
+            results.push_back(RespValue::bulk_string(node->val));
+            if (withscores)
+            {
+                results.push_back(RespValue::bulk_string(self->format_score(node->key.score)));
+            }
+        }
+        return RespValue::array(std::move(results));
     }
 
     template <typename T>
@@ -6260,6 +7074,44 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int count = 0;
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.zset.find(key);
+        if (it == shards.zset.end())
+        {
+            return RespValue::integer(count);
+        }
+        auto sit = shards.zset_score.find(key);
+        if (sit != shards.zset_score.end())
+        {
+            auto &skiplist_map = it->second;
+            auto &scores = sit->second;
+
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                const std::string member = args[i].str;
+                auto member_score = scores.find(member);
+                if (member_score != scores.end())
+                {
+                    // key = {score,member}
+                    skiplist_map.remove({member_score->second, member_score->first});
+                    scores.erase(member_score);
+                    count++;
+                }
+            }
+            if (skiplist_map.empty())
+            {
+                shards.zset.erase(it);
+                shards.zset_score.erase(key);
+            }
+        }
+        return RespValue::integer(count);
     }
 
     template <typename T>
@@ -6268,6 +7120,25 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.zset_score.find(key);
+        if (it == shards.zset_score.end())
+        {
+            return RespValue::null_bulk();
+        }
+        auto &skiplist_map = it->second;
+        auto sit = skiplist_map.find(args[2].str);
+        if (sit != skiplist_map.end())
+        {
+            return RespValue::bulk_string(self->format_score(sit->second));
+        }
+        return RespValue::null_bulk();
     }
 
     template <typename T>
@@ -6276,6 +7147,30 @@ namespace blue
                                              bool aof,
                                              CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str, member = args[2].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        auto it = shards.zset_score.find(key);
+        if (it == shards.zset_score.end())
+        {
+            return RespValue::null_bulk();
+        }
+        auto &score_map = it->second;
+        auto sit = score_map.find(member);
+        if (sit != score_map.end())
+        {
+            // key  = {score,member}
+            int rank = shards.zset[key].getRank({sit->second, member});
+            if (rank >= 0)
+            {
+                return RespValue::integer(rank);
+            }
+        }
+        return RespValue::null_bulk();
     }
 
     template <typename T>
@@ -6284,6 +7179,44 @@ namespace blue
                                                bool aof,
                                                CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string member = args[3].str;
+        int64_t incr;
+        try
+        {
+            incr = std::stoll(args[2].str);
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a integer or out of range");
+        }
+        auto &shard = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shard.mutex);
+        auto it = shard.zset.find(key);
+        if (it == shard.zset.end())
+        {
+            return RespValue::null_bulk();
+        }
+        auto sit = shard.zset_score.find(key);
+        if (sit == shard.zset_score.end())
+        {
+            return RespValue::null_bulk();
+        }
+        auto &skiplist = it->second;
+        auto &scores_map = sit->second;
+        if (scores_map.find(member) != scores_map.end())
+        {
+            ZSetKey old_val(scores_map[member], member);
+            scores_map[member] += incr;
+            skiplist.remove(old_val);
+            skiplist.insert({scores_map[member], member}, member);
+            return RespValue::bulk_string(self->format_score(scores_map[member]));
+        }
+        return RespValue::null_bulk();
     }
 
     template <typename T>
@@ -6292,6 +7225,44 @@ namespace blue
                                                     bool aof,
                                                     CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string member = args[3].str;
+        double incr;
+        try
+        {
+            incr = std::stod(args[2].str);
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a float or out of range");
+        }
+        auto &shard = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shard.mutex);
+        auto it = shard.zset.find(key);
+        if (it == shard.zset.end())
+        {
+            return RespValue::null_bulk();
+        }
+        auto sit = shard.zset_score.find(key);
+        if (sit == shard.zset_score.end())
+        {
+            return RespValue::null_bulk();
+        }
+        auto &skiplist = it->second;
+        auto &scores_map = sit->second;
+        if (scores_map.find(member) != scores_map.end())
+        {
+            ZSetKey old_val(scores_map[member], member);
+            scores_map[member] += incr;
+            skiplist.remove(old_val);
+            skiplist.insert({scores_map[member], member}, member);
+            return RespValue::bulk_string(self->format_score(scores_map[member]));
+        }
+        return RespValue::null_bulk();
     }
 
     template <typename T>
@@ -6300,6 +7271,41 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        double min = 0, max = 0;
+        try
+        {
+            min = std::stod(args[2].str);
+            max = std::stod(args[3].str);
+            if (min > max)
+            {
+                return RespValue::error("ERR min can't greater than max");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a double or out of range");
+        }
+        int64_t count = 0;
+        auto &shard = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shard.mutex);
+        auto it = shard.zset_score.find(key);
+        if (it == shard.zset_score.end())
+        {
+            return RespValue::integer(0);
+        }
+        for (const auto &[_, score] : it->second)
+        {
+            if (score >= min && score <= max)
+            {
+                count++;
+            }
+        }
+        return RespValue::integer(count);
     }
 
     template <typename T>
@@ -6308,6 +7314,46 @@ namespace blue
                                                      bool aof,
                                                      CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        double min = 0, max = 0;
+        try
+        {
+            min = std::stod(args[2].str);
+            max = std::stod(args[3].str);
+            if (min > max)
+            {
+                return RespValue::error("ERR min can't greater than max");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a double or out of range");
+        }
+        std::vector<RespValue> results;
+        bool withscore = (args.size() == 5 && (args[4].str == "WITHSCORE" || args[4].str == "withscore"));
+        auto &shard = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shard.mutex);
+        auto it = shard.zset_score.find(key);
+        if (it == shard.zset_score.end())
+        {
+            return RespValue::array({});
+        }
+        for (const auto &[member, score] : it->second)
+        {
+            if (score >= min && score <= max)
+            {
+                results.push_back(RespValue::bulk_string(member));
+                if (withscore)
+                {
+                    results.push_back(RespValue::bulk_string((self->format_score(score))));
+                }
+            }
+        }
+        return RespValue::array(std::move(results));
     }
 
     template <typename T>
@@ -6316,6 +7362,61 @@ namespace blue
                                                         bool aof,
                                                         CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        double min = 0, max = 0;
+        try
+        {
+            min = std::stod(args[2].str);
+            max = std::stod(args[3].str);
+            if (min > max)
+            {
+                return RespValue::error("ERR min can't greater than max");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not a double or out of range");
+        }
+        int64_t count = 0;
+        auto &shard = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shard.mutex);
+        auto it = shard.zset.find(key);
+        if (it == shard.zset.end())
+        {
+            return RespValue::integer(-1);
+        }
+        auto sit = shard.zset_score.find(key);
+        if (sit == shard.zset_score.end())
+        {
+            return RespValue::integer(-1);
+        }
+        auto &skiplist = it->second;
+        auto &scores = sit->second;
+        std::vector<std::string> tem;
+        for (const auto &[member, score] : scores)
+        {
+            if (score >= min && score <= max)
+            {
+                ZSetKey old_val(score, member);
+                skiplist.remove(old_val);
+                tem.push_back(member);
+                count++;
+            }
+        }
+        for (auto &mem : tem)
+        {
+            scores.erase(mem);
+        }
+        if (scores.empty())
+        {
+            shard.zset.erase(it);
+            shard.zset_score.erase(sit);
+        }
+        return RespValue::integer(count);
     }
 
     // ========== DB 命令 ==========
@@ -6325,6 +7426,55 @@ namespace blue
                                                bool aof,
                                                CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        if (self->isAdmin(sock))
+        {
+            if (args.size() < 1 || args.size() > 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'FLUSHDB'");
+            }
+            for (auto &shards : self->m_dbs[sock->getClientId()])
+            {
+                std::unique_lock<std::shared_mutex> lock(shards.mutex);
+                shards.store.clear();
+                shards.expire.clear();
+                shards.lists.clear();
+                shards.hash.clear();
+                shards.sets.clear();
+                shards.zset.clear();
+                shards.zset_score.clear();
+            }
+            return RespValue::simple_string("OK");
+        }
+        else if (sock->getClientlevel() == 1)
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR maybe need 'FLUSHAD CONFIRM");
+            }
+            std::string confirm = args[1].str;
+            std::transform(confirm.begin(), confirm.end(), confirm.begin(), ::toupper);
+            if (confirm == "CONFIRM")
+            {
+                for (auto &shards : self->m_dbs[sock->getClientId()])
+                {
+                    std::unique_lock<std::shared_mutex> lock(shards.mutex);
+                    shards.store.clear();
+                    shards.expire.clear();
+                    shards.lists.clear();
+                    shards.hash.clear();
+                    shards.sets.clear();
+                    shards.zset.clear();
+                    shards.zset_score.clear();
+                }
+                return RespValue::simple_string("OK");
+            }
+            return RespValue::error("ERR maybe need 'FLUSHDB CONFIRM'");
+        }
+        return RespValue::error("ERR authentication required");
     }
 
     template <typename T>
@@ -6333,6 +7483,61 @@ namespace blue
                                                   bool aof,
                                                   CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        if (self->isAdmin(sock))
+        {
+            if (args.size() < 1 || args.size() > 2)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'FLUSHDBALL'");
+            }
+            for (int db = 0; db < DB_COUNT; db++)
+            {
+                for (auto &shards : self->m_dbs[db])
+                {
+                    std::unique_lock<std::shared_mutex> lock(shards.mutex);
+                    shards.store.clear();
+                    shards.expire.clear();
+                    shards.lists.clear();
+                    shards.hash.clear();
+                    shards.sets.clear();
+                    shards.zset.clear();
+                    shards.zset_score.clear();
+                }
+            }
+            return RespValue::simple_string("OK");
+        }
+        else if (sock->getClientlevel() == 1)
+        {
+            if (args.size() != 2)
+            {
+                return RespValue::error("ERR maybe need 'FLUSHADALL CONFIRM");
+            }
+            std::string confirm = args[1].str;
+            std::transform(confirm.begin(), confirm.end(), confirm.begin(), ::toupper);
+            if (confirm == "CONFIRM")
+            {
+                for (int db = 0; db < DB_COUNT; db++)
+                {
+                    for (auto &shards : self->m_dbs[db])
+                    {
+                        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+                        shards.store.clear();
+                        shards.expire.clear();
+                        shards.lists.clear();
+                        shards.hash.clear();
+                        shards.sets.clear();
+                        shards.zset.clear();
+                        shards.zset_score.clear();
+                    }
+                }
+                return RespValue::simple_string("OK");
+            }
+            return RespValue::error("ERR authentication required, maybe need 'FLUSHADALL CONFIRM");
+        }
+        return RespValue::error("ERR authentication required");
     }
 
     template <typename T>
@@ -6341,6 +7546,17 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int64_t count = 0;
+        for (auto &shards : self->m_dbs[sock->getClientId()])
+        {
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            count += shards.store.size() + shards.lists.size() + shards.hash.size() + shards.zset.size();
+        }
+        return RespValue::integer(count);
     }
 
     // ========== Key 命令 ==========
@@ -6350,6 +7566,33 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int64_t second;
+        try
+        {
+            second = std::stoll(args[2].str);
+            if (second <= 0)
+            {
+                return RespValue::error("ERR invalid expire time");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not an integer or out of range");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        if (it == shards.store.end())
+        {
+            return RespValue::integer(0);
+        }
+        shards.expire[key] = SteadyClock::now() + std::chrono::seconds(second);
+        return RespValue::integer(1);
     }
 
     template <typename T>
@@ -6358,6 +7601,35 @@ namespace blue
                                            bool aof,
                                            CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        auto expire_it = shards.expire.find(key);
+        if (it == shards.store.end())
+        {
+            return RespValue::integer(-2);
+        }
+        else if (expire_it == shards.expire.end())
+        {
+            return RespValue::integer(-1);
+        }
+        // 计算剩余秒数
+        auto now = SteadyClock::now();
+        if (now >= expire_it->second)
+        {
+            return RespValue::integer(-2);
+        }
+
+        auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+                             expire_it->second - now)
+                             .count();
+
+        return RespValue::integer(remaining);
     }
 
     template <typename T>
@@ -6366,6 +7638,33 @@ namespace blue
                                                bool aof,
                                                CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        int64_t milliseconds;
+        try
+        {
+            milliseconds = std::stoll(args[2].str);
+            if (milliseconds <= 0)
+            {
+                return RespValue::error("ERR invalid expire time");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not an integer or out of range");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        if (it == shards.store.end())
+        {
+            return RespValue::integer(0);
+        }
+        shards.expire[key] = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
+        return RespValue::integer(1);
     }
 
     template <typename T>
@@ -6374,6 +7673,35 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        auto expire_it = shards.expire.find(key);
+        if (it == shards.store.end())
+        {
+            return RespValue::integer(-2);
+        }
+        else if (expire_it == shards.expire.end())
+        {
+            return RespValue::integer(-1);
+        }
+        // 计算剩余秒数
+        auto now = SteadyClock::now();
+        if (now >= expire_it->second)
+        {
+            return RespValue::integer(-2);
+        }
+
+        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             expire_it->second - now)
+                             .count();
+
+        return RespValue::integer(remaining);
     }
 
     template <typename T>
@@ -6382,6 +7710,22 @@ namespace blue
                                                bool aof,
                                                CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        auto it = shards.store.find(key);
+        auto expire_it = shards.expire.find(key);
+        // 不存在或没有过期时间
+        if (it == shards.store.end() || expire_it == shards.expire.end())
+        {
+            return RespValue::integer(0);
+        }
+        shards.expire.erase(expire_it);
+        return RespValue::integer(1);
     }
 
     template <typename T>
@@ -6390,6 +7734,178 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string newkey = args[2].str;
+
+        if (key == newkey)
+        {
+            return RespValue::simple_string("OK");
+        }
+
+        int old_shard_idx = self->getShardIndex(key);
+        int new_shard_idx = self->getShardIndex(newkey);
+
+        // 按顺序锁，避免死锁
+        int first = old_shard_idx;
+        int second = new_shard_idx;
+        if (first > second)
+        {
+            std::swap(first, second);
+        }
+        auto &m_shards = self->m_dbs[sock->getClientId()];
+        std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
+        std::unique_lock<std::shared_mutex> lock2;
+        if (old_shard_idx != new_shard_idx)
+        {
+            lock2 = std::unique_lock<std::shared_mutex>(m_shards[second].mutex);
+        }
+
+        auto &old_shard = m_shards[old_shard_idx];
+        auto &new_shard = m_shards[new_shard_idx];
+
+        // 检查 key 是否存在
+        bool exists = false;
+        int type = -1; // 0:string, 1:hash, 2:list, 3:set, 4:zset
+
+        if (old_shard.store.find(key) != old_shard.store.end())
+        {
+            exists = true;
+            type = 0;
+        }
+        else if (old_shard.hash.find(key) != old_shard.hash.end())
+        {
+            exists = true;
+            type = 1;
+        }
+        else if (old_shard.lists.find(key) != old_shard.lists.end())
+        {
+            exists = true;
+            type = 2;
+        }
+        else if (old_shard.sets.find(key) != old_shard.sets.end())
+        {
+            exists = true;
+            type = 3;
+        }
+        else if (old_shard.zset.find(key) != old_shard.zset.end())
+        {
+            exists = true;
+            type = 4;
+        }
+
+        if (!exists)
+        {
+            return RespValue::error("ERR no such key");
+        }
+
+        // 删除 newkey（如果存在）
+        if (new_shard.store.find(newkey) != new_shard.store.end())
+        {
+            new_shard.store.erase(newkey);
+            new_shard.expire.erase(newkey);
+        }
+        else if (new_shard.hash.find(newkey) != new_shard.hash.end())
+        {
+            new_shard.hash.erase(newkey);
+        }
+        else if (new_shard.lists.find(newkey) != new_shard.lists.end())
+        {
+            new_shard.lists.erase(newkey);
+        }
+        else if (new_shard.sets.find(newkey) != new_shard.sets.end())
+        {
+            new_shard.sets.erase(newkey);
+        }
+        else if (new_shard.zset.find(newkey) != new_shard.zset.end())
+        {
+            new_shard.zset.erase(newkey);
+            new_shard.zset_score.erase(newkey);
+        }
+        new_shard.expire.erase(newkey);
+
+        // 移动数据
+        if (old_shard_idx == new_shard_idx)
+        {
+            // 同分片：直接移动
+            if (type == 0)
+            {
+                new_shard.store[newkey] = std::move(old_shard.store[key]);
+                old_shard.store.erase(key);
+            }
+            else if (type == 1)
+            {
+                new_shard.hash[newkey] = std::move(old_shard.hash[key]);
+                old_shard.hash.erase(key);
+            }
+            else if (type == 2)
+            {
+                new_shard.lists[newkey] = std::move(old_shard.lists[key]);
+                old_shard.lists.erase(key);
+            }
+            else if (type == 3)
+            {
+                new_shard.sets[newkey] = std::move(old_shard.sets[key]);
+                old_shard.sets.erase(key);
+            }
+            else if (type == 4)
+            {
+                new_shard.zset[newkey] = std::move(old_shard.zset[key]);
+                new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
+                old_shard.zset.erase(key);
+                old_shard.zset_score.erase(key);
+            }
+
+            // 移动过期时间
+            auto expire_it = old_shard.expire.find(key);
+            if (expire_it != old_shard.expire.end())
+            {
+                new_shard.expire[newkey] = expire_it->second;
+                old_shard.expire.erase(expire_it);
+            }
+        }
+        else
+        {
+            // 跨分片：复制到新分片，删除旧分片
+            if (type == 0)
+            {
+                new_shard.store[newkey] = old_shard.store[key];
+                old_shard.store.erase(key);
+            }
+            else if (type == 1)
+            {
+                new_shard.hash[newkey] = old_shard.hash[key];
+                old_shard.hash.erase(key);
+            }
+            else if (type == 2)
+            {
+                new_shard.lists[newkey] = old_shard.lists[key];
+                old_shard.lists.erase(key);
+            }
+            else if (type == 3)
+            {
+                new_shard.sets[newkey] = old_shard.sets[key];
+                old_shard.sets.erase(key);
+            }
+            else if (type == 4)
+            {
+                new_shard.zset[newkey] = std::move(old_shard.zset[key]);
+                new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
+                old_shard.zset.erase(key);
+                old_shard.zset_score.erase(key);
+            }
+
+            auto expire_it = old_shard.expire.find(key);
+            if (expire_it != old_shard.expire.end())
+            {
+                new_shard.expire[newkey] = expire_it->second;
+                old_shard.expire.erase(expire_it);
+            }
+        }
+        return RespValue::simple_string("OK");
     }
 
     template <typename T>
@@ -6398,6 +7914,180 @@ namespace blue
                                                 bool aof,
                                                 CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        const std::string key = args[1].str;
+        const std::string newkey = args[2].str;
+
+        if (key == newkey)
+        {
+            return RespValue::integer(1);
+        }
+
+        int old_shard_idx = self->getShardIndex(key);
+        int new_shard_idx = self->getShardIndex(newkey);
+
+        // 按顺序锁，避免死锁
+        int first = old_shard_idx;
+        int second = new_shard_idx;
+        if (first > second)
+        {
+            std::swap(first, second);
+        }
+        auto &m_shards = self->m_dbs[sock->getClientId()];
+        std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
+        std::unique_lock<std::shared_mutex> lock2;
+        if (old_shard_idx != new_shard_idx)
+        {
+            lock2 = std::unique_lock<std::shared_mutex>(m_shards[second].mutex);
+        }
+
+        auto &old_shard = m_shards[old_shard_idx];
+        auto &new_shard = m_shards[new_shard_idx];
+
+        // 检查 key 是否存在
+        bool exists = false;
+        int type = -1; // 0:string, 1:hash, 2:list, 3:set, 4:zset
+
+        if (old_shard.store.find(key) != old_shard.store.end())
+        {
+            exists = true;
+            type = 0;
+        }
+        else if (old_shard.hash.find(key) != old_shard.hash.end())
+        {
+            exists = true;
+            type = 1;
+        }
+        else if (old_shard.lists.find(key) != old_shard.lists.end())
+        {
+            exists = true;
+            type = 2;
+        }
+        else if (old_shard.sets.find(key) != old_shard.sets.end())
+        {
+            exists = true;
+            type = 3;
+        }
+        else if (old_shard.zset.find(key) != old_shard.zset.end())
+        {
+            exists = true;
+            type = 4;
+        }
+
+        if (!exists)
+        {
+            return RespValue::error("ERR no such key");
+        }
+
+        // 查看newkey是否存在
+        bool newkey_exists = false;
+        if (new_shard.store.find(newkey) != new_shard.store.end())
+        {
+            newkey_exists = true;
+        }
+        else if (new_shard.hash.find(newkey) != new_shard.hash.end())
+        {
+            newkey_exists = true;
+        }
+        else if (new_shard.lists.find(newkey) != new_shard.lists.end())
+        {
+            newkey_exists = true;
+        }
+        else if (new_shard.sets.find(newkey) != new_shard.sets.end())
+        {
+            newkey_exists = true;
+        }
+        else if (new_shard.zset.find(newkey) != new_shard.zset.end())
+        {
+            newkey_exists = true;
+        }
+        if (newkey_exists)
+        {
+            return RespValue::integer(0);
+        }
+
+        // 移动数据
+        if (old_shard_idx == new_shard_idx)
+        {
+            // 同分片：直接移动
+            if (type == 0)
+            {
+                new_shard.store[newkey] = std::move(old_shard.store[key]);
+                old_shard.store.erase(key);
+            }
+            else if (type == 1)
+            {
+                new_shard.hash[newkey] = std::move(old_shard.hash[key]);
+                old_shard.hash.erase(key);
+            }
+            else if (type == 2)
+            {
+                new_shard.lists[newkey] = std::move(old_shard.lists[key]);
+                old_shard.lists.erase(key);
+            }
+            else if (type == 3)
+            {
+                new_shard.sets[newkey] = std::move(old_shard.sets[key]);
+                old_shard.sets.erase(key);
+            }
+            else if (type == 4)
+            {
+                new_shard.zset[newkey] = std::move(old_shard.zset[key]);
+                new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
+                old_shard.zset.erase(key);
+                old_shard.zset_score.erase(key);
+            }
+
+            // 移动过期时间
+            auto expire_it = old_shard.expire.find(key);
+            if (expire_it != old_shard.expire.end())
+            {
+                new_shard.expire[newkey] = expire_it->second;
+                old_shard.expire.erase(expire_it);
+            }
+        }
+        else
+        {
+            // 跨分片：复制到新分片，删除旧分片
+            if (type == 0)
+            {
+                new_shard.store[newkey] = old_shard.store[key];
+                old_shard.store.erase(key);
+            }
+            else if (type == 1)
+            {
+                new_shard.hash[newkey] = old_shard.hash[key];
+                old_shard.hash.erase(key);
+            }
+            else if (type == 2)
+            {
+                new_shard.lists[newkey] = old_shard.lists[key];
+                old_shard.lists.erase(key);
+            }
+            else if (type == 3)
+            {
+                new_shard.sets[newkey] = old_shard.sets[key];
+                old_shard.sets.erase(key);
+            }
+            else if (type == 4)
+            {
+                new_shard.zset[newkey] = std::move(old_shard.zset[key]);
+                new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
+                old_shard.zset.erase(key);
+                old_shard.zset_score.erase(key);
+            }
+
+            auto expire_it = old_shard.expire.find(key);
+            if (expire_it != old_shard.expire.end())
+            {
+                new_shard.expire[newkey] = expire_it->second;
+                old_shard.expire.erase(expire_it);
+            }
+        }
+        return RespValue::integer(1);
     }
 
     template <typename T>
@@ -6406,6 +8096,48 @@ namespace blue
                                                  bool aof,
                                                  CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        std::vector<std::string> all_keys;
+        for (auto &shards : self->m_dbs[sock->getClientId()])
+        {
+            std::shared_lock<std::shared_mutex> lock(shards.mutex);
+            // string
+            for (auto &[key, _] : shards.store)
+            {
+                all_keys.push_back(key);
+            }
+            // hash
+            for (auto &[key, _] : shards.hash)
+            {
+                all_keys.push_back(key);
+            }
+            // lists
+            for (auto &[key, _] : shards.lists)
+            {
+                all_keys.push_back(key);
+            }
+            // sets
+            for (auto &[key, _] : shards.sets)
+            {
+                all_keys.push_back(key);
+            }
+            // zset
+            for (auto &[key, _] : shards.zset)
+            {
+                all_keys.push_back(key);
+            }
+        }
+        if (all_keys.size() == 0)
+        {
+            return RespValue::null_bulk();
+        }
+        static std::random_device rd;
+        static std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, all_keys.size() - 1);
+        return RespValue::bulk_string(all_keys[dis(gen)]);
     }
 
     // ========== Server 命令 ==========
@@ -6415,6 +8147,57 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        std::string info;
+        // Server
+        info += "# Server\r\n";
+        info += "redis_version:1.0.0\r\n";
+        info += "tcp_port:6666\r\n";
+        info += "\r\n";
+
+        // Client
+        info += "# Client\r\n";
+        info += "connections:" + std::to_string(self->getConnection()) + "\r\n";
+        info += "maxclient:" + std::to_string(self->m_config.maxClients) + "\r\n";
+        info += "reject_connections:" + std::to_string(self->getRejectConnection()) + "\r\n";
+        info += "\r\n";
+
+        // AOF
+        info += "# AOF\r\n";
+        info += "aof_enabled:" + std::string(self->m_aof.getConfig_AOFEnabled() ? "1" : "0") + "\r\n";
+        info += "aof_sync:" + self->m_aof.getConfig_AOFSync() + "\r\n";
+        info += "aof_current_file:" + self->m_aof.getCurrentFileName() + "\r\n";
+        info += "aof_file_index:" + std::to_string(self->m_aof.getCurrentFileIdx()) + "\r\n";
+        info += "aof_current_size:" + std::to_string(self->m_aof.getCurrentFileSize()) + "\r\n";
+        info += "aof_max_file_size:" + std::to_string(self->m_aof.getConfig_AOFMaxFileSize()) + "\r\n";
+        info += "aof_max_files:" + std::to_string(self->m_aof.getConfig_AOFMaxFileNumber()) + "\r\n";
+        info += "aof_max_buffer_size" + std::to_string(self->m_aof.getMaxAOFBufferSize()) + "\r\n";
+        info += "\r\n";
+
+        // Monitor
+        info += "# Monitor\r\n";
+        info += "monitor_clients:" + std::to_string(self->m_monitor.size()) + "\r\n";
+        info += "\r\n";
+
+        // Stats
+        info += "# Stats\r\n";
+        info += "total_connections_received:" + std::to_string(self->getConnection()) + "\r\n";
+        info += "total_commands_processed:" + std::to_string(self->m_commands.load(std::memory_order_acquire)) + "\r\n";
+        info += "\r\n";
+
+        // Memory
+        info += "# Memory\r\n";
+        size_t total_keys = 0;
+        for (auto &shard : self->m_dbs[sock->getClientId()])
+        {
+            std::shared_lock lock(shard.mutex);
+            total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
+        }
+        info += "total_keys:" + std::to_string(total_keys) + "\r\n";
+        return RespValue::bulk_string(info);
     }
 
     template <typename T>
@@ -6423,6 +8206,12 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        self->saveToFile();
+        return RespValue::simple_string("OK");
     }
 
     template <typename T>
@@ -6431,6 +8220,22 @@ namespace blue
                                               bool aof,
                                               CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        if (self->m_bgsave_running.load(std::memory_order_acquire))
+        {
+            return RespValue::error("ERR Background save already in progress");
+        }
+        self->m_bgsave_running.store(true, std::memory_order_release);
+        std::thread([self]
+                    {
+            self->saveToFile();
+            self->m_bgsave_running.store(false,std::memory_order_release);
+            BLUE_LOG_INFO(xx::g_logger) << "BGSAVE completed"; })
+            .detach();
+        return RespValue::simple_string("Background saving started");
     }
 
     template <typename T>
@@ -6439,6 +8244,11 @@ namespace blue
                                                 bool aof,
                                                 CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        return RespValue::integer(self->m_last_time.load(std::memory_order_acquire));
     }
 
     template <typename T>
@@ -6447,6 +8257,20 @@ namespace blue
                                                  bool aof,
                                                  CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        std::time_t beijing_t = self->m_last_time.load(std::memory_order_acquire) + 8 * 3600;
+        std::tm time_local;
+#ifdef _WIN32
+        gmtime_s(&time_local, &beijing_t);
+#else
+        gmtime_r(&beijing_t, &time_local);
+#endif
+        std::ostringstream os;
+        os << std::put_time(&time_local, "%Y-%m-%d %H:%M:%S");
+        return RespValue::bulk_string(os.str());
     }
 
     template <typename T>
@@ -6455,6 +8279,51 @@ namespace blue
                                                bool aof,
                                                CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+
+        std::vector<RespValue> commands;
+
+        // 返回所有支持的命令列表
+        static const std::vector<std::string> cmd_list = {
+            // 连接
+            "PING", "AUTH", "SELECT", "CLIENT", "CONFIG",
+            // string
+            "SET", "GET", "MSET", "MGET", "APPEND", "SETNX",
+            "INCR", "INCRBY", "DEL", "EXISTS", "STRLEN", "TYPE",
+            "GETSET",
+            // hash
+            "HSET", "HGET", "HGETALL", "HDEL", "HLEN", "HEXISTS", "HKEYS", "HVALS",
+            // list
+            "LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE", "LLEN", "LINSERT", "LINDEX", "LSET",
+            "LPOPRPUSH", "RPOPLPUSH",
+            // set
+            "SADD", "SMEMBERS", "SREM", "SISMEMBER", "SCARD", "SRANDMEMBER", "SPOP", "SDIFF", "SINTER", "SUNION", "SMOVE",
+            // zset
+            "ZADD", "ZRANGE", "ZREM", "ZSCORE", "ZRANK", "ZINCRBY", "ZCOUNT", "ZRANGEBYSCORE", "ZREMRANGEBYSCORE",
+            "ZINCRBYFLOAT",
+            // server
+            "KEYS", "FLUSHDB", "FLUSHDBALL", "DBSIZE", "INFO", "SAVE", "BGSAVE", "LASTSAVE",
+            "LASTSAVE1", "ECHO", "TIME", "LOCALTIME", "SHUTDOWN", "COMMAND",
+            "RENAME", "RENAMENX", "RANDOMKEY", "EXPIRE", "TTL", "PEXPIRE", "PTTL",
+            "PERSIST",
+            // 事务模式
+            "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH",
+            // 订阅模式
+            "SUBSCRIBE", "PUBLISH", "UNSUBSCRIBE",
+            // 慢查询
+            "SLOWLOG",
+            // 监控模式
+            "MONITOR"};
+
+        for (const auto &name : cmd_list)
+        {
+            commands.push_back(RespValue::bulk_string(name));
+        }
+
+        return RespValue::array(std::move(commands));
     }
 
     template <typename T>
@@ -6463,6 +8332,11 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        return RespValue::bulk_string(args[1].str);
     }
 
     template <typename T>
@@ -6471,6 +8345,17 @@ namespace blue
                                             bool aof,
                                             CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        auto now = SteadyClock::now();
+        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() % 1000000;
+        std::vector<RespValue> results;
+        results.push_back(RespValue::bulk_string(std::to_string(seconds)));
+        results.push_back(RespValue::bulk_string(std::to_string(microseconds)));
+        return RespValue::array(std::move(results));
     }
 
     template <typename T>
@@ -6479,6 +8364,23 @@ namespace blue
                                                  bool aof,
                                                  CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        auto now = std::chrono::system_clock::now();
+        auto now_t = std::chrono::system_clock::to_time_t(now);
+
+        std::time_t beijing_t = now_t + 8 * 3600;
+        std::tm time_local;
+#ifdef _WIN32
+        gmtime_s(&time_local, &beijing_t);
+#else
+        gmtime_r(&beijing_t, &time_local);
+#endif
+        std::ostringstream os;
+        os << std::put_time(&time_local, "%Y-%m-%d %H:%M:%S");
+        return RespValue::bulk_string(os.str());
     }
 
     template <typename T>
@@ -6487,31 +8389,12 @@ namespace blue
                                                 bool aof,
                                                 CommandHandler<int> *self)
     {
-    }
-
-    // ========== 事务命令 ==========
-    template <typename T>
-    RespValue CommandHandler<T>::handleMULTI(std::vector<RespValue> &args,
-                                             MSocket::MSocketPtr sock,
-                                             bool aof,
-                                             CommandHandler<int> *self)
-    {
-    }
-
-    template <typename T>
-    RespValue CommandHandler<T>::handleEXEC(std::vector<RespValue> &args,
-                                            MSocket::MSocketPtr sock,
-                                            bool aof,
-                                            CommandHandler<int> *self)
-    {
-    }
-
-    template <typename T>
-    RespValue CommandHandler<T>::handleDISCARD(std::vector<RespValue> &args,
-                                               MSocket::MSocketPtr sock,
-                                               bool aof,
-                                               CommandHandler<int> *self)
-    {
+        if (!self->isAdmin(sock))
+        {
+            return RespValue::error("ERR permission denied");
+        }
+        self->m_shutdown.store(true, std::memory_order_release);
+        return RespValue::bulk_string("OK - waiting for clients to disconnect");
     }
 
     template <typename T>
@@ -6520,6 +8403,18 @@ namespace blue
                                              bool aof,
                                              CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        sock->clearWatchedKey();
+
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            const std::string key = args[i].str;
+            sock->addWatchKey(key, self->getKeyVersion(key, sock));
+        }
+        return RespValue::simple_string("OK");
     }
 
     template <typename T>
@@ -6528,31 +8423,12 @@ namespace blue
                                                bool aof,
                                                CommandHandler<int> *self)
     {
-    }
-
-    // ========== 订阅命令 ==========
-    template <typename T>
-    RespValue CommandHandler<T>::handleSUBSCRIBE(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 CommandHandler<int> *self)
-    {
-    }
-
-    template <typename T>
-    RespValue CommandHandler<T>::handleUNSUBSCRIBE(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   CommandHandler<int> *self)
-    {
-    }
-
-    template <typename T>
-    RespValue CommandHandler<T>::handlePUBLISH(std::vector<RespValue> &args,
-                                               MSocket::MSocketPtr sock,
-                                               bool aof,
-                                               CommandHandler<int> *self)
-    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        sock->clearWatchedKey();
+        return RespValue::simple_string("OK");
     }
 
     // ========== 慢查询 ==========
@@ -6562,6 +8438,52 @@ namespace blue
                                                bool aof,
                                                CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        std::string sub_cmd = args[1].str;
+        std::transform(sub_cmd.begin(), sub_cmd.end(), sub_cmd.begin(), ::toupper);
+        if (sub_cmd == "GET")
+        {
+            // 同步数据
+            self->m_slowLog.syncSlowLogs();
+
+            int64_t count = 10;
+            if (args.size() >= 3)
+            {
+                try
+                {
+                    count = std::stoll(args[2].str);
+                    if (count < 0)
+                    {
+                        return RespValue::error("ERR count must be >= 0");
+                    }
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR value is not an integer or out of range");
+                }
+            }
+
+            std::vector<RespValue> results = self->m_slowLog.getSlowLogs(count);
+            return RespValue::array(std::move(results));
+        }
+
+        else if (sub_cmd == "LEN")
+        {
+            self->m_slowLog.syncSlowLogs();
+            return RespValue::integer(self->m_slowLog.len());
+        }
+        else if (sub_cmd == "RESET")
+        {
+            self->m_slowLog.reset();
+            return RespValue::simple_string("OK");
+        }
+        else
+        {
+            return RespValue::error("ERR unknown SLOWLOG subcommand");
+        }
     }
 
     // ========== 监控 ==========
@@ -6571,6 +8493,17 @@ namespace blue
                                                bool aof,
                                                CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+
+        // 添加monitor client
+        self->m_monitor.addMonitorClient(sock);
+
+        sock->setMonitorMode(true);
+
+        return RespValue::simple_string("OK");
     }
 
     // ========== AOF ==========
@@ -6580,6 +8513,26 @@ namespace blue
                                                  bool aof,
                                                  CommandHandler<int> *self)
     {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        if (!self->m_aof.getConfig_AOFEnabled())
+        {
+            return RespValue::error("ERR AOF is disabled");
+        }
+        if (self->m_aof.getAOFRotating())
+        {
+            return RespValue::error("ERR AOF rotation already in progress");
+        }
+        std::thread([self]
+                    {
+            // rotateAOF();
+            self->m_aof.rotateAOF();
+            BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished"; })
+            .detach();
+        return RespValue::simple_string("AOF rotation started");
     }
-
+#else 
+#endif 
 }

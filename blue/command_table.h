@@ -1,4 +1,5 @@
 #pragma once
+#ifdef COMMAND_TABLE
 #include <array>
 #include <algorithm>
 #include <random>
@@ -6,8 +7,14 @@
 
 namespace blue
 {
-    using ArgValidator = bool(*)(size_t argc);
+    template<typename T> class CommandHandler;
+    template <size_t N> class CommandTable;
 
+    using ArgValidator = bool(*)(size_t argc);
+    using CommandHandlerFunc = blue::RespValue (*)(std::vector<RespValue> &,
+                                              MSocket::MSocketPtr,
+                                              bool,
+                                              CommandHandler<int> *);
     // 编译器命令表构建器
     template <size_t MaxCommands = 256>
     struct CommandTableBuilder
@@ -15,7 +22,7 @@ namespace blue
         struct Entry
         {
             const char *name;
-            void *handler; // 用 void* 存储函数指针
+            blue::CommandHandlerFunc handler;
             uint32_t hash;
             bool is_write;
             ArgValidator argV;
@@ -24,8 +31,10 @@ namespace blue
         Entry entries[MaxCommands];
         size_t count = 0;
 
+        consteval CommandTableBuilder() = default;
+
         // 编译期插入
-        consteval void insert(const char *name, void *handler, uint32_t hash, bool write, ArgValidator argv)
+        consteval void insert(const char *name, blue::CommandHandlerFunc handler, uint32_t hash, bool write, ArgValidator argv)
         {
             entries[count] = {name, handler, hash, write, argv};
             count++;
@@ -133,7 +142,7 @@ namespace blue
             {
                 result[i] = entries[i];
             }
-            return result;
+            return CommandTable<MaxCommands>(result, count);
         }
     };
 
@@ -186,8 +195,10 @@ namespace blue
             constexpr const Entry* end() const { return m_table.data() + m_count; }
 
         private:
-            const std::array<Entry, N>& m_table;
+            std::array<Entry, N> m_table;
             size_t m_count;
     };
 
 }
+#else
+#endif

@@ -3,6 +3,28 @@ project(blue)
 set(CMAKE_CXX_COMPILER "g++-12")
 set(CMAKE_C_COMPILER "gcc-12")
 
+# ===== 命令分发模式选择 =====
+option(USE_COMMAND_TABLE "Use compile-time command table for dispatch" ON)
+option(USE_IF_DISPATCH "Use if-else dispatch for commands" OFF)
+
+# 确保只有一个模式被选中
+if(USE_COMMAND_TABLE AND USE_IF_DISPATCH)
+    message(FATAL_ERROR "Cannot enable both USE_COMMAND_TABLE and USE_IF_DISPATCH")
+endif()
+
+# 默认使用 if-else
+if(NOT USE_COMMAND_TABLE AND NOT USE_IF_DISPATCH)
+    set(USE_IF_DISPATCH ON)
+endif()
+
+# 添加编译定义
+if(USE_COMMAND_TABLE)
+    add_compile_definitions(COMMAND_TABLE)
+    message(STATUS "✅ Building with COMMAND TABLE dispatch")
+else()
+    message(STATUS "✅ Building with IF-ELSE dispatch")
+endif()
+
 # 可选：显示详细编译信息
 set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0")
