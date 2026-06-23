@@ -6,17 +6,17 @@
 #include <list>
 #include <iomanip>
 #include <unordered_set>
-#include "config.h"
-#include "task.h"
-#include "tcpServer.h"
-#include "resp_parser.h"
-#include "asyncio.h"
-#include "await.h"
+#include "blue/config.h"
+#include "blue/task.h"
+#include "blue/tcpServer.h"
+#include "blue/resp_parser.h"
+#include "blue/asyncio.h"
+#include "blue/await.h"
 #include "modules/subscription.h"
 #include "modules/slowlog.h"
 #include "modules/monitor.h"
 #include "modules/AOF.h"
-#include "skiplist.h"
+#include "blue/skiplist.h"
 #ifdef COMMAND_TABLE
 #include "command_table.h"
 #include "command_register.h"
@@ -441,9 +441,9 @@ namespace blue
         /* REDIS SERVER CONFIG */
         struct CommConfig
         {
-            int32_t maxClients = 1000; // 最大客户端数量
-            int32_t timeout_s = 0;     // 客户端超时(s)
-            std::string save;          // 保存策略
+            int32_t maxClients = 1000;  // 最大客户端数量
+            int32_t timeout_s = 0;      // 客户端超时(s)
+            std::string save;           // 保存策略
         };
 
         CommConfig m_config;
@@ -467,11 +467,11 @@ namespace blue
         std::atomic<bool> m_push_monitor{true}; // 是否推送给monitor
     private:
         /* MONITOR */
-        MonitorModule m_monitor;  // monitor模式
+        MonitorModule m_monitor; // monitor模式
 
     private:
         /* AOF */
-        AOFModule m_aof;        // AOF
+        AOFModule m_aof; // AOF
     };
 
     template <typename T>
@@ -572,21 +572,26 @@ namespace blue
         std::string cmd = args[0].str;
         std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
 #define HOT_COMMANDS(XX) \
-    XX(GET) \
-    XX(SET) \
-    XX(DEL) \
-    XX(HSET) \
-    XX(HGET) \
-    XX(LPUSH) \
-    XX(LPOP) \
-    XX(SADD) \
-    XX(ZADD) \
+    XX(GET)              \
+    XX(SET)              \
+    XX(DEL)              \
+    XX(HSET)             \
+    XX(HGET)             \
+    XX(LPUSH)            \
+    XX(LPOP)             \
+    XX(SADD)             \
+    XX(ZADD)
 
-#define IF_CMD(name) \
-        if (cmd == #name) { \
-            return handle##name(args, sock, RecordAOF, this); \
-        }
-
+#define IF_CMD(name)                                          \
+    if (cmd == #name)                                         \
+    {                                                         \
+        if (m_aof.isWriteCommand(cmd) && RecordAOF)           \
+        {                                                     \
+            std::string aof_cmds = m_aof.formatCommand(args); \
+            m_aof.appendToAOF(aof_cmds);                      \
+        }                                                     \
+        return handle##name(args, sock, RecordAOF, this);     \
+    }
 
         // 高频命令不走命令表
         HOT_COMMANDS(IF_CMD);
@@ -717,6 +722,10 @@ namespace blue
             }
             if (args[1].str == sock->getClientPassword())
             {
+                if (sock->getClientlevel() != 0)
+                {
+                    return return_with_slowlog(RespValue::error("ERR this connection already have been logged by others"));
+                }
                 sock->setClientlevel(1);
                 return return_with_slowlog(RespValue::simple_string("OK"));
             }
@@ -725,6 +734,10 @@ namespace blue
                 if (!m_admin_sock.expired())
                 {
                     return return_with_slowlog(RespValue::error("ERR admin already logged in elsewhere"));
+                }
+                if (sock->getClientlevel() == 1)
+                {
+                    return return_with_slowlog(RespValue::error("ERR this connection already have been logged by client"));
                 }
                 m_admin_sock = sock;
                 sock->setClientlevel(2);
@@ -892,16 +905,142 @@ namespace blue
                 std::string param = args[2].str;
                 std::string value = args[3].str;
 
-                if (param == "clientpass")
+                if (param == "clientpass") // 客户端密码
                 {
                     sock->setClientPassword(value);
                     return return_with_slowlog(RespValue::simple_string("OK"));
                 }
+                if (param == "slowlog-log-slower-than") // 慢查询的限制时长(超过这个时长记录慢查询)
+                {
+                    try
+                    {
+                        int64_t val = std::stoll(value);
+                        if (val < 0)
+                        {
+                            return return_with_slowlog(RespValue::error("ERR value must be >= 0"));
+                        }
+                        m_slowLog.setSlowLogThan(val);
+                        return return_with_slowlog(RespValue::simple_string("OK"));
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
+                    }
+                }
+                if (param == "slowlog-max-len") // 慢查询记录最大条数
+                {
+                    try
+                    {
+                        size_t val = std::stoul(value);
+                        if (val <= 0)
+                        {
+                            return return_with_slowlog(RespValue::error("ERR value must be > 0"));
+                        }
+                        m_slowLog.setSlowMaxLen(val);
+                        return return_with_slowlog(RespValue::simple_string("OK"));
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
+                    }
+                }
+                if (param == "aof-enabled") // 开启aof记录
+                {
+                    if (value == "yes" || value == "1")
+                    {
+                        m_aof.setConfig_AOFEnabled(true);
+                        m_aof.initAOF();
+                    }
+                    else if (value == "no" || value == "0")
+                    {
+                        m_aof.setConfig_AOFEnabled(false);
+                        m_aof.closeAOF();
+                    }
+                    else
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid value"));
+                    }
+                    return return_with_slowlog(RespValue::simple_string("OK"));
+                }
+                if (param == "aof-sync") // aof策略
+                {
+                    if (value == "always" || value == "everysec" || value == "no")
+                    {
+                        m_aof.setConfig_AOFSync(value);
+                        return return_with_slowlog(RespValue::simple_string("OK"));
+                    }
+                    return return_with_slowlog(RespValue::error("ERR invalid sync mode"));
+                }
+                if (param == "aof-filename") // aof文件名(模板文件名)
+                {
+                    if (value.empty())
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid filename"));
+                    }
+                    m_aof.setConfig_AOFFilename(value);
+                    return return_with_slowlog(RespValue::simple_string("OK"));
+                }
+                if (param == "aof-max_file_size") // 每个aof文件大小
+                {
+                    int64_t val;
+                    try
+                    {
+                        val = std::stoi(value);
+                        if (val < 1024 * 1024)
+                        {
+                            return return_with_slowlog(RespValue::error("ERR max_file_size value too small"));
+                        }
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
+                    }
+
+                    m_aof.setConfig_AOFMaxFileSize(val);
+                    return return_with_slowlog(RespValue::simple_string("OK"));
+                }
+                if (param == "aof-max_file_number") // 最多保留多少aof文件
+                {
+                    int val;
+                    try
+                    {
+                        val = std::stoi(value);
+                        if (val < 5)
+                        {
+                            return return_with_slowlog(RespValue::error("ERR max_file_number value too small"));
+                        }
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
+                    }
+                    m_aof.setConfig_AOFMaxFileNumber(val);
+                    return return_with_slowlog(RespValue::simple_string("OK"));
+                }
+                if (param == "aof-max_buffer_size") // aof缓冲区大小
+                {
+                    int64_t val;
+                    try
+                    {
+                        val = std::stoll(value);
+                        if (val < 1024 * 1024)
+                        {
+                            return return_with_slowlog(RespValue::error("ERR max_file_number value too small"));
+                        }
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
+                    }
+                    m_aof.setMaxAOFBufferSize(val);
+                    return return_with_slowlog(RespValue::simple_string("OK"));
+                }
+                // 以下只允许管理员设置
                 if (!isAdmin(sock))
                 {
                     return return_with_slowlog(RespValue::error("ERR authentication required"));
                 }
-                if (param == "maxclients")
+                if (param == "maxclients") // 服务器最大支持的客户端数量
                 {
                     try
                     {
@@ -922,7 +1061,7 @@ namespace blue
                         return return_with_slowlog(RespValue::error("ERR invalid integer value"));
                     }
                 }
-                if (param == "timeout")
+                if (param == "timeout") // 每个客户端会话的超时时长
                 {
                     try
                     {
@@ -938,131 +1077,6 @@ namespace blue
                     {
                         return return_with_slowlog(RespValue::error("ERR invalid integer value"));
                     }
-                }
-                if (param == "slowlog-log-slower-than")
-                {
-                    try
-                    {
-                        int64_t val = std::stoll(value);
-                        if (val < 0)
-                        {
-                            return return_with_slowlog(RespValue::error("ERR value must be >= 0"));
-                        }
-                        m_slowLog.setSlowLogThan(val);
-                        return return_with_slowlog(RespValue::simple_string("OK"));
-                    }
-                    catch (...)
-                    {
-                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
-                    }
-                }
-                if (param == "slowlog-max-len")
-                {
-                    try
-                    {
-                        size_t val = std::stoul(value);
-                        if (val <= 0)
-                        {
-                            return return_with_slowlog(RespValue::error("ERR value must be > 0"));
-                        }
-                        m_slowLog.setSlowMaxLen(val);
-                        return return_with_slowlog(RespValue::simple_string("OK"));
-                    }
-                    catch (...)
-                    {
-                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
-                    }
-                }
-                if (param == "aof-enabled")
-                {
-                    if (value == "yes" || value == "1")
-                    {
-                        m_aof.setConfig_AOFEnabled(true);
-                        m_aof.initAOF();
-                    }
-                    else if (value == "no" || value == "0")
-                    {
-                        m_aof.setConfig_AOFEnabled(false);
-                        m_aof.closeAOF();
-                    }
-                    else
-                    {
-                        return return_with_slowlog(RespValue::error("ERR invalid value"));
-                    }
-                    return return_with_slowlog(RespValue::simple_string("OK"));
-                }
-                if (param == "aof-sync")
-                {
-                    if (value == "always" || value == "everysec" || value == "no")
-                    {
-                        m_aof.setConfig_AOFSync(value);
-                        return return_with_slowlog(RespValue::simple_string("OK"));
-                    }
-                    return return_with_slowlog(RespValue::error("ERR invalid sync mode"));
-                }
-                if (param == "aof-filename")
-                {
-                    if (value.empty())
-                    {
-                        return return_with_slowlog(RespValue::error("ERR invalid filename"));
-                    }
-                    m_aof.setConfig_AOFFilename(value);
-                    return return_with_slowlog(RespValue::simple_string("OK"));
-                }
-                if (param == "aof-max_file_size")
-                {
-                    int64_t val;
-                    try
-                    {
-                        val = std::stoi(value);
-                        if (val < 1024 * 1024)
-                        {
-                            return return_with_slowlog(RespValue::error("ERR max_file_size value too small"));
-                        }
-                    }
-                    catch (...)
-                    {
-                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
-                    }
-
-                    m_aof.setConfig_AOFMaxFileSize(val);
-                    return return_with_slowlog(RespValue::simple_string("OK"));
-                }
-                if (param == "aof-max_file_number")
-                {
-                    int val;
-                    try
-                    {
-                        val = std::stoi(value);
-                        if (val < 5)
-                        {
-                            return return_with_slowlog(RespValue::error("ERR max_file_number value too small"));
-                        }
-                    }
-                    catch (...)
-                    {
-                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
-                    }
-                    m_aof.setConfig_AOFMaxFileNumber(val);
-                    return return_with_slowlog(RespValue::simple_string("OK"));
-                }
-                if (param == "aof-max_buffer_size")
-                {
-                    int64_t val;
-                    try
-                    {
-                        val = std::stoll(value);
-                        if (val < 1024 * 1024)
-                        {
-                            return return_with_slowlog(RespValue::error("ERR max_file_number value too small"));
-                        }
-                    }
-                    catch (...)
-                    {
-                        return return_with_slowlog(RespValue::error("ERR invalid integer value"));
-                    }
-                    m_aof.setMaxAOFBufferSize(val);
-                    return return_with_slowlog(RespValue::simple_string("OK"));
                 }
                 return return_with_slowlog(RespValue::error("ERR Unsupported CONFIG parameter: " + param));
             }
@@ -4231,7 +4245,7 @@ namespace blue
         }
         return return_with_slowlog(RespValue::error("ERR unknown command"));
     }
-#endif 
+#endif
     template <typename T>
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
@@ -4243,21 +4257,45 @@ namespace blue
         const size_t MAX_COMMAND_SIZE = 1024 * 1024; // 解析缓冲区最大大小
         const size_t BATCH_SIZE = 8192;              // 批量响应大小阈值
 
+        const uint64_t timeout_ms = static_cast<uint64_t>(m_config.timeout_s) * 1000ul;
+
         do
         {
+            if (m_shutdown.load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
+            {
+                break;
+            }
             char tmp[8192];
-            ssize_t ret = co_await sock->recv(tmp, sizeof(tmp));
+            ssize_t ret;
+            if (timeout_ms > 0)
+            {
+                BLUE_LOG_INFO(xx::g_logger) << "超时recv";
+                ret = co_await sock->recvT(tmp, sizeof(tmp),0,timeout_ms);
+            }
+            else
+            {
+                BLUE_LOG_INFO(xx::g_logger) << "recv";
+                ret = co_await sock->recv(tmp, sizeof(tmp));
+            }
             if (ret <= 0)
             {
                 if (ret == 0)
                 {
                     BLUE_LOG_INFO(xx::g_logger) << "[client " << sock->getSocketfd() << "] 正常关闭";
+                    break;
                 }
-                else
+                if (errno == ETIMEDOUT)
                 {
-                    BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
-                                                 << "] 读取出错: " << strerror(errno);
+                    BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd() 
+                                            << "] timeout (" << m_config.timeout_s << "s), closing";
+                    break;
                 }
+                else if (errno == EAGAIN || errno == EWOULDBLOCK)
+                {
+                    continue;
+                }
+                BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
+                                            << "] recv error: " << strerror(errno);
                 break;
             }
 
@@ -4326,11 +4364,11 @@ namespace blue
                                 std::vector<RespValue> results;
                                 for (const auto &transaction : sock->getTransaction())
                                 {
-                        #ifdef COMMAND_TABLE
+#ifdef COMMAND_TABLE
                                     auto response = execute1(transaction, sock, true);
-                        #else
+#else
                                     auto response = execute(transaction, sock, true);
-                        #endif
+#endif
                                     results.push_back(response);
                                 }
                                 sock->clearTransaction();
@@ -4515,12 +4553,12 @@ namespace blue
                     }
                     else
                     {
-                #ifdef COMMAND_TABLE
+#ifdef COMMAND_TABLE
                         // 执行普通命令
                         response = execute1(std::move(copy_arr), sock, true); // move后copy_arr为空
-                #else
+#else
                         response = execute(std::move(copy_arr), sock, true); // move后copy_arr为空
-                #endif
+#endif
                     }
                 }
 
@@ -4846,6 +4884,10 @@ namespace blue
     {
         if (args[1].str == sock->getClientPassword())
         {
+            if (sock->getClientlevel() != 0)
+            {
+                return RespValue::error("ERR this connection already have been logged by others");
+            }
             sock->setClientlevel(1);
             return RespValue::simple_string("OK");
         }
@@ -4854,6 +4896,10 @@ namespace blue
             if (!self->m_admin_sock.expired())
             {
                 return RespValue::error("ERR admin already logged in elsewhere");
+            }
+            if (sock->getClientlevel() == 1)
+            {
+                return RespValue::error("ERR this connection already have been logged by client");
             }
             self->m_admin_sock = sock;
             sock->setClientlevel(2);
@@ -5024,16 +5070,142 @@ namespace blue
             std::string param = args[2].str;
             std::string value = args[3].str;
 
-            if (param == "clientpass")
+            if (param == "clientpass") // 客户端密码
             {
                 sock->setClientPassword(value);
                 return RespValue::simple_string("OK");
             }
+            if (param == "slowlog-log-slower-than") // 慢查询的限制时长(超过这个时长记录慢查询)
+            {
+                try
+                {
+                    int64_t val = std::stoll(value);
+                    if (val < 0)
+                    {
+                        return RespValue::error("ERR value must be >= 0");
+                    }
+                    self->m_slowLog.setSlowLogThan(val);
+                    return RespValue::simple_string("OK");
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+            }
+            if (param == "slowlog-max-len") // 慢查询记录最大条数
+            {
+                try
+                {
+                    size_t val = std::stoul(value);
+                    if (val <= 0)
+                    {
+                        return RespValue::error("ERR value must be > 0");
+                    }
+                    self->m_slowLog.setSlowMaxLen(val);
+                    return RespValue::simple_string("OK");
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+            }
+            if (param == "aof-enabled") // 开启aof记录
+            {
+                if (value == "yes" || value == "1")
+                {
+                    self->m_aof.setConfig_AOFEnabled(true);
+                    self->m_aof.initAOF();
+                }
+                else if (value == "no" || value == "0")
+                {
+                    self->m_aof.setConfig_AOFEnabled(false);
+                    self->m_aof.closeAOF();
+                }
+                else
+                {
+                    return RespValue::error("ERR invalid value");
+                }
+                return RespValue::simple_string("OK");
+            }
+            if (param == "aof-sync") // aof策略
+            {
+                if (value == "always" || value == "everysec" || value == "no")
+                {
+                    self->m_aof.setConfig_AOFSync(value);
+                    return RespValue::simple_string("OK");
+                }
+                return RespValue::error("ERR invalid sync mode");
+            }
+            if (param == "aof-filename") // aof文件名(模板文件名)
+            {
+                if (value.empty())
+                {
+                    return RespValue::error("ERR invalid filename");
+                }
+                self->m_aof.setConfig_AOFFilename(value);
+                return RespValue::simple_string("OK");
+            }
+            if (param == "aof-max_file_size") // 每个aof文件大小
+            {
+                int64_t val;
+                try
+                {
+                    val = std::stoi(value);
+                    if (val < 1024 * 1024)
+                    {
+                        return RespValue::error("ERR max_file_size value too small");
+                    }
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+
+                self->m_aof.setConfig_AOFMaxFileSize(val);
+                return RespValue::simple_string("OK");
+            }
+            if (param == "aof-max_file_number") // 最多保留多少aof文件
+            {
+                int val;
+                try
+                {
+                    val = std::stoi(value);
+                    if (val < 5)
+                    {
+                        return RespValue::error("ERR max_file_number value too small");
+                    }
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+                self->m_aof.setConfig_AOFMaxFileNumber(val);
+                return RespValue::simple_string("OK");
+            }
+            if (param == "aof-max_buffer_size") // aof缓冲区大小
+            {
+                int64_t val;
+                try
+                {
+                    val = std::stoll(value);
+                    if (val < 1024 * 1024)
+                    {
+                        return RespValue::error("ERR max_file_number value too small");
+                    }
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid integer value");
+                }
+                self->m_aof.setMaxAOFBufferSize(val);
+                return RespValue::simple_string("OK");
+            }
+            // 以下只允许管理员设置
             if (!self->isAdmin(sock))
             {
                 return RespValue::error("ERR authentication required");
             }
-            if (param == "maxclients")
+            if (param == "maxclients") // 服务器最大支持的客户端数量
             {
                 try
                 {
@@ -5054,7 +5226,7 @@ namespace blue
                     return RespValue::error("ERR invalid integer value");
                 }
             }
-            if (param == "timeout")
+            if (param == "timeout") // 每个客户端会话的超时时长
             {
                 try
                 {
@@ -5070,131 +5242,6 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid integer value");
                 }
-            }
-            if (param == "slowlog-log-slower-than")
-            {
-                try
-                {
-                    int64_t val = std::stoll(value);
-                    if (val < 0)
-                    {
-                        return RespValue::error("ERR value must be >= 0");
-                    }
-                    self->m_slowLog.setSlowLogThan(val);
-                    return RespValue::simple_string("OK");
-                }
-                catch (...)
-                {
-                    return RespValue::error("ERR invalid integer value");
-                }
-            }
-            if (param == "slowlog-max-len")
-            {
-                try
-                {
-                    size_t val = std::stoul(value);
-                    if (val <= 0)
-                    {
-                        return RespValue::error("ERR value must be > 0");
-                    }
-                    self->m_slowLog.setSlowMaxLen(val);
-                    return RespValue::simple_string("OK");
-                }
-                catch (...)
-                {
-                    return RespValue::error("ERR invalid integer value");
-                }
-            }
-            if (param == "aof-enabled")
-            {
-                if (value == "yes" || value == "1")
-                {
-                    self->m_aof.setConfig_AOFEnabled(true);
-                    self->m_aof.initAOF();
-                }
-                else if (value == "no" || value == "0")
-                {
-                    self->m_aof.setConfig_AOFEnabled(false);
-                    self->m_aof.closeAOF();
-                }
-                else
-                {
-                    return RespValue::error("ERR invalid value");
-                }
-                return RespValue::simple_string("OK");
-            }
-            if (param == "aof-sync")
-            {
-                if (value == "always" || value == "everysec" || value == "no")
-                {
-                    self->m_aof.setConfig_AOFSync(value);
-                    return RespValue::simple_string("OK");
-                }
-                return RespValue::error("ERR invalid sync mode");
-            }
-            if (param == "aof-filename")
-            {
-                if (value.empty())
-                {
-                    return RespValue::error("ERR invalid filename");
-                }
-                self->m_aof.setConfig_AOFFilename(value);
-                return RespValue::simple_string("OK");
-            }
-            if (param == "aof-max_file_size")
-            {
-                int64_t val;
-                try
-                {
-                    val = std::stoi(value);
-                    if (val < 1024 * 1024)
-                    {
-                        return RespValue::error("ERR max_file_size value too small");
-                    }
-                }
-                catch (...)
-                {
-                    return RespValue::error("ERR invalid integer value");
-                }
-
-                self->m_aof.setConfig_AOFMaxFileSize(val);
-                return RespValue::simple_string("OK");
-            }
-            if (param == "aof-max_file_number")
-            {
-                int val;
-                try
-                {
-                    val = std::stoi(value);
-                    if (val < 5)
-                    {
-                        return RespValue::error("ERR max_file_number value too small");
-                    }
-                }
-                catch (...)
-                {
-                    return RespValue::error("ERR invalid integer value");
-                }
-                self->m_aof.setConfig_AOFMaxFileNumber(val);
-                return RespValue::simple_string("OK");
-            }
-            if (param == "aof-max_buffer_size")
-            {
-                int64_t val;
-                try
-                {
-                    val = std::stoll(value);
-                    if (val < 1024 * 1024)
-                    {
-                        return RespValue::error("ERR max_file_number value too small");
-                    }
-                }
-                catch (...)
-                {
-                    return RespValue::error("ERR invalid integer value");
-                }
-                self->m_aof.setMaxAOFBufferSize(val);
-                return RespValue::simple_string("OK");
             }
             return RespValue::error("ERR Unsupported CONFIG parameter: " + param);
         }
@@ -8533,6 +8580,6 @@ namespace blue
             .detach();
         return RespValue::simple_string("AOF rotation started");
     }
-#else 
-#endif 
+#else
+#endif
 }

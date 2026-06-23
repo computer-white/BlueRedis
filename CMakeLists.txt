@@ -153,10 +153,10 @@ set(LIB_SRC
     blue/io_manager.cpp
     blue/timer.cpp
     blue/resp_parser.cpp
-    blue/modules/subscription.cpp
-    blue/modules/slowlog.cpp
-    blue/modules/monitor.cpp
-    blue/modules/AOF.cpp
+    redis_command/modules/subscription.cpp
+    redis_command/modules/slowlog.cpp
+    redis_command/modules/monitor.cpp
+    redis_command/modules/AOF.cpp
     http/http.cpp
     http/httpconnection.cpp
     http/httpParser.cpp
