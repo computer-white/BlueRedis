@@ -423,7 +423,7 @@ namespace blue
             // 获取下一个定时器超时时间
             do
             {
-                uint64_t next_timeout = TimerManager::getNextTime();
+                uint64_t next_timeout = this->getNextTime();
                 if (next_timeout != ~0ull)
                 {
                     timeout = std::min(static_cast<int>(next_timeout), MAX_WAIT_TIMEOUT);
@@ -443,7 +443,7 @@ namespace blue
             } while (true);
 
             // 处理过期的定时器
-            TimerManager::processExpired();
+            this->processExpired();
 
             // 再次检查是否需要停止
             if (stopping())
