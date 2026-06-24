@@ -16,6 +16,7 @@
 #include "modules/slowlog.h"
 #include "modules/monitor.h"
 #include "modules/AOF.h"
+#include "modules/replication.h"
 #include "blue/skiplist.h"
 #ifdef COMMAND_TABLE
 #include "command_table.h"
@@ -221,6 +222,10 @@ namespace blue
         REGISTER_COMMAND(AOFROTATE, handleAOFROTATE);
         REGISTER_COMMAND(SHUTDOWN, handleSHUTDOWN);
 
+        // replication
+        REGISTER_COMMAND(REPLICAOF, handleREPLICAOF);
+        REGISTER_COMMAND(SLAVEOF, handleSLAVEOF);
+
         // 插入所有命令
         static consteval auto buildCommandTable()
         {
@@ -324,6 +329,10 @@ namespace blue
             CMD_ENTRY(MONITOR, handleMONITOR, false, ONLY_ONE);
             CMD_ENTRY(AOFROTATE, handleAOFROTATE, false, ONLY_ONE);
             CMD_ENTRY(SHUTDOWN, handleSHUTDOWN, false, ONLY_ONE);
+
+            // replication
+            CMD_ENTRY(REPLICAOF, handleREPLICAOF, false, ONLY_THREE);
+            CMD_ENTRY(SLAVEOF, handleSLAVEOF, false, ONLY_THREE);
 
             return builder.build();
         }
@@ -463,15 +472,20 @@ namespace blue
 
     private:
         /* SLOWLOG */
-        SlowLogModule m_slowLog;                // monitor
-        std::atomic<bool> m_push_monitor{true}; // 是否推送给monitor
+        SlowLogModule m_slowLog;                // slowlog
+        
     private:
         /* MONITOR */
         MonitorModule m_monitor; // monitor模式
+        std::atomic<bool> m_push_monitor{true}; // 是否推送给monitor
 
     private:
         /* AOF */
         AOFModule m_aof; // AOF
+    
+    private:
+        /* Replication */
+        ReplicationModule m_replication;
     };
 
     template <typename T>
@@ -4241,6 +4255,70 @@ namespace blue
                 BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished"; })
                 .detach();
             return return_with_slowlog(RespValue::simple_string("AOF rotation started"));
+        }
+        else if (cmd == "REPLICAOF" || cmd == "SLAVEOF") 
+        {
+            if (!isAdmin(sock))
+            {
+                return return_with_slowlog(RespValue::error("ERR permission denied"));
+            }
+            if (args.size() != 3) 
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'REPLICAOF'"));
+            }
+            std::string host = args[1].str;
+            std::string port_str = args[2].str;
+
+            // REPLICAOF NO ONE 取消复制
+            if (host == "NO" && port_str == "ONE")
+            {
+                if (!m_replication.getisMaster())
+                {
+                    m_replication.stopReplication();
+                    m_replication.setisMaster(true);
+                    BLUE_LOG_INFO(xx::g_logger) << "Replication stopped, now master";
+                }
+                return return_with_slowlog(RespValue::simple_string("OK"));
+            }
+
+            int32_t port;
+            try
+            {
+                port = std::stoi(port_str);
+                if (port < 0 || port > UINT16_MAX)
+                {
+                    return return_with_slowlog(RespValue::error("ERR value is invalid"));
+                }
+            }
+            catch(...)
+            {
+                return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
+            }
+
+            // 如果已经是从节点且连接到同一个主节点，忽略
+            if (!m_replication.getisMaster() && 
+                m_replication.getMasterHost() == host &&
+                m_replication.getMasterPort() == port)
+            {
+                return return_with_slowlog(RespValue::simple_string("OK"));
+            }
+
+            // 停止旧的复制
+            if (!m_replication.getisMaster())
+            {
+                m_replication.stopReplication();
+            }
+
+            // 设置新的配置
+            m_replication.setisMaster(false);
+            m_replication.setMasterHost(host);
+            m_replication.setMasterPort(static_cast<uint16_t>(port));
+            m_replication.setReplOffset(0);
+
+            // 启动复制
+            m_replication.startReplication();
+
+            return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "SHUTDOWN") // SHUTDOWN 关闭服务器,如果连接数为0
         {
@@ -8591,6 +8669,25 @@ namespace blue
             BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished"; })
             .detach();
         return RespValue::simple_string("AOF rotation started");
+    }
+
+    // ========== Replication ==========
+    template <typename T>
+    RespValue CommandHandler<T>::handleREPLICAOF(std::vector<RespValue> &args,
+                                                MSocket::MSocketPtr sock,
+                                                bool aof,
+                                                CommandHandler<int> *self)
+    {
+
+    }
+
+    template <typename T>
+    RespValue CommandHandler<T>::handleSLAVEOF(std::vector<RespValue> &args,
+                                                MSocket::MSocketPtr sock,
+                                                bool aof,
+                                                CommandHandler<int> *self)
+    {
+
     }
 #else
 #endif

@@ -320,6 +320,7 @@ add_newblue_test(test_redis_stress)
 add_newblue_test(test_sharded_redis)
 add_newblue_test(test_proxy_urlrewrite)
 add_newblue_test(test_redis_stress_all)
+add_newblue_test(test_redis_stress_new)
 add_newblue_test(test_timeout)
 
 # 打印构建信息
