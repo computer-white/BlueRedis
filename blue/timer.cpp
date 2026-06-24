@@ -50,22 +50,8 @@ namespace blue
 
     bool Timer::cancel()
     {
-        // 使用原子操作快速检查
-        if (!m_valid.load(std::memory_order_acquire))
-        {
-            return false;
-        }
-
         std::unique_lock<std::shared_mutex> lock(m_manager->m_mutex);
-
-        // 双重检查
-        if (!m_valid.load(std::memory_order_acquire))
-        {
-            return false;
-        }
-
-        // 标记为无效
-        m_valid.store(false, std::memory_order_release);
+        
         m_cb = nullptr;
         m_handle = nullptr;
 
@@ -77,17 +63,7 @@ namespace blue
 
     bool Timer::reset(uint64_t ms, bool from_now)
     {
-        if (!m_valid.load(std::memory_order_acquire))
-        {
-            return false;
-        }
-
         std::unique_lock<std::shared_mutex> lock(m_manager->m_mutex);
-
-        if (!m_valid.load(std::memory_order_acquire))
-        {
-            return false;
-        }
 
         // 更新周期（如果指定了新值）
         if (ms != static_cast<uint64_t>(-1))
@@ -115,8 +91,6 @@ namespace blue
         }
         else
         {
-            // 不在集合中（不应该发生，但容错处理）
-            m_valid.store(false, std::memory_order_release);
             return false;
         }
 
@@ -126,8 +100,6 @@ namespace blue
 
         if (!inserted)
         {
-            // 插入失败（不应该发生）
-            m_valid.store(false, std::memory_order_release);
             return false;
         }
 
@@ -218,9 +190,8 @@ namespace blue
         auto now = Timer::SClock::now();
         const auto &first_timer = *m_timers.begin();
 
-        if (!first_timer || !first_timer->isValid())
+        if (!first_timer)
         {
-            // 存在无效定时器（不应该发生），返回 0 让 processExpired 清理
             return 0;
         }
 
@@ -240,13 +211,6 @@ namespace blue
         auto now = Timer::SClock::now();
         std::vector<Timer::TimerPtr> expired_timers;
 
-        {
-            std::shared_lock<std::shared_mutex> read_lock(m_mutex);
-            if (m_timers.empty())
-            {
-                return;
-            }
-        }
 
         std::unique_lock<std::shared_mutex> write_lock(m_mutex);
 
@@ -262,12 +226,6 @@ namespace blue
         {
             auto timer = *it;
 
-            if (!timer->isValid())
-            {
-                it = m_timers.erase(it);
-                continue;
-            }
-
             if (timer->m_expire <= now)
             {
                 to_process.push_back(timer);
@@ -280,7 +238,6 @@ namespace blue
                 }
                 else
                 {
-                    timer->m_valid.store(false, std::memory_order_release);
                     it = m_timers.erase(it);
                 }
             }
@@ -295,10 +252,6 @@ namespace blue
         // 调度所有过期的定时器回调（不持有锁）
         for (auto &timer : to_process)
         {
-            if (!timer->m_valid.load(std::memory_order_acquire))
-            {
-                continue;
-            }
             std::function<void()> cb;
             std::coroutine_handle<> handle = nullptr;
 

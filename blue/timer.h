@@ -41,11 +41,6 @@ namespace blue
          */
         TimePoint getExpire() const { return m_expire; }
 
-        /**
-         * @brief 检查定时器是否有效
-         */
-        bool isValid() const { return m_valid.load(std::memory_order_acquire); }
-
     private:
         explicit Timer(uint64_t ms, std::coroutine_handle<> h, 
                       std::function<void()> cb, bool recurring, TimerManager *manager);
@@ -71,7 +66,6 @@ namespace blue
         std::coroutine_handle<> m_handle;   
         std::function<void()> m_cb;         
         TimerManager *m_manager = nullptr;
-        std::atomic<bool> m_valid{true};    // 原子标志，标记定时器是否有效
 
         struct Comparator
         {

@@ -525,12 +525,24 @@ namespace blue
     template <typename T>
     void CommandHandler<T>::removeExpireCycle()
     {
+        if (m_shutdown.load(std::memory_order_acquire))
+        {
+            return;
+        }
         int count = 0;
         auto now = SteadyClock::now();
         for (int db = 0; db < DB_COUNT; db++)
         {
+            if (m_shutdown.load(std::memory_order_acquire))
+            {
+                return;
+            }
             for (auto &shards : m_dbs[db])
             {
+                if (m_shutdown.load(std::memory_order_acquire))
+                {
+                    return;
+                }
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 auto it = shards.expire.begin();
                 while (it != shards.expire.end() && count < 20)
@@ -553,7 +565,7 @@ namespace blue
     template <typename T>
     Task<void> CommandHandler<T>::expireTime()
     {
-        while (true)
+        while (m_shutdown.load(std::memory_order_acquire))
         {
             co_await sleepFor(1);
             removeExpireCycle();

@@ -30,8 +30,14 @@ namespace blue
     {
         BLUE_LOG_INFO(g_logger) << "~TcpServer";
         m_isStop.store(true,std::memory_order_release);
+        if (m_socks.empty())
+        {
+            BLUE_LOG_INFO(g_logger) << "m_socks is empty";
+        }
         for (auto &sock : m_socks)
         {
+            sock->cancelAll();
+            sock->shutdown(SHUT_RDWR);
             sock->close();
         }
         m_socks.clear();
