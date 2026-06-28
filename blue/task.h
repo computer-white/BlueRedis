@@ -35,7 +35,7 @@ namespace blue
             {
                 return fa; // 直接跳转到父协程（对称转移）
             }
-            caller.destroy();
+            // caller.destroy();
             return std::noop_coroutine(); // 没有父协程，挂起在空操作上
         }
 
@@ -109,7 +109,11 @@ namespace blue
         Task() : handle(nullptr) {}
         explicit Task(HandleType h) : handle(h) {}
 
-        ~Task() = default;
+        // ~Task() = default;
+        ~Task()
+        {
+            destroySafe();
+        }
 
         // 禁止拷贝
         Task(const Task &) = delete;
@@ -292,7 +296,11 @@ namespace blue
         Task() : handle(nullptr) {}
         explicit Task(HandleType h) : handle(h) {}
 
-        ~Task() = default;
+        // ~Task() = default;
+        ~Task()
+        {
+            destroySafe();
+        }
 
         Task(const Task &) = delete;
         Task &operator=(const Task &) = delete;
