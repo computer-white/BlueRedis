@@ -14,7 +14,8 @@ namespace blue
     using CommandHandlerFunc = blue::RespValue (*)(std::vector<RespValue> &,
                                               MSocket::MSocketPtr,
                                               bool,
-                                              ServerData<int>& self);
+                                              ServerData<int>& self,
+                                              CommandHandler<int> *comm);
     // 编译器命令表构建器
     template <size_t MaxCommands = 256>
     struct CommandTableBuilder

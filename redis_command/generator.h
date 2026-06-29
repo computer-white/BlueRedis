@@ -110,6 +110,10 @@ namespace blue
 
         Iterator begin()
         {
+            if (!handle || handle.done())
+            {
+                return {nullptr};
+            }
             handle.resume();
             return {handle};
         }
@@ -219,7 +223,7 @@ namespace blue
     template <typename Func>
     auto transform(Func &&func)
     {
-        return [func = std::forward<Func>(func)]<typename S>(S source) -> Generator<decltype(func(std::decay<typename S::value_type>()))>
+        return [func = std::forward<Func>(func)]<typename S>(S source) -> Generator<decltype(func(std::declval<typename S::value_type>()))>
         {
             for (auto &&val : source)
             {

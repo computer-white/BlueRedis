@@ -322,6 +322,7 @@ add_newblue_test(test_proxy_urlrewrite)
 add_newblue_test(test_redis_stress_all)
 add_newblue_test(test_redis_stress_new)
 add_newblue_test(test_timeout)
+add_newblue_test(test_generator)
 
 # 打印构建信息
 message(STATUS "========================")

@@ -42,7 +42,7 @@ namespace blue
     };
 
     template <typename T>
-    class ServerData : public TcpServer<T>
+    class ServerData
     {
     public:
         using SteadyClock = std::chrono::steady_clock;
@@ -98,7 +98,7 @@ namespace blue
         void setBgSaveRunning(bool val) { m_bgsave_running.store(val, std::memory_order_release); }
 
         // ========== 管理员 ==========
-        MSocket::MSocketWPtr getAdminSocket() { return m_admin_sock; }
+        MSocket::MSocketWPtr &getAdminSocket() { return m_admin_sock; }
         void setAdminSocket(MSocket::MSocketWPtr sock) { m_admin_sock = sock; }
         /**
          * @brief 是否是管理员

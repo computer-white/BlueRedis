@@ -148,7 +148,6 @@ namespace blue
             co_return true;
         }
         m_isStop.store(false,std::memory_order_release);
-        auto self = this->shared_from_this();
         for (auto &sock : m_socks)
         {
             m_acceptworker->schedule(startAccept(sock));
@@ -159,16 +158,6 @@ namespace blue
     template <typename T>
     Task<bool> TcpServer<T>::stop()
     {
-        // m_isStop.store(true,std::memory_order_release);
-        // auto self = this->shared_from_this();
-        // m_worker->schedule([s = self](){
-        //     for (auto& sock : s->m_socks)
-        //     {
-        //         sock->cancelAll();
-        //         sock->close();
-        //     }
-        //     s->m_socks.clear();
-        // });
         if (m_connections.load(std::memory_order_acquire))
         {
             co_return false;

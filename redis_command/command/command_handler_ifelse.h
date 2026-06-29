@@ -1,7 +1,6 @@
 #pragma once
 #include "command_handler_base.h"
 
-
 namespace blue
 {
     template <typename T>
@@ -10,26 +9,32 @@ namespace blue
     public:
         using SteadyClock = std::chrono::steady_clock;
         using TimePoint = SteadyClock::time_point;
+
     public:
         /**
          * @brief ifelse处理命令
          * @param args 命令列表
          * @param sock 客户端sock
+         * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, bool RecordAOF = true) override;
+        virtual RespValue executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, 
+            bool RecordAOF = true, CommandHandler<int> *comm = nullptr) override;
 
         /**
          * @brief 命令表处理命令
          * @param args 命令列表
          * @param sock 客户端sock
+         * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, bool RecordAOF = true) override { }
+        virtual RespValue executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, 
+            bool RecordAOF = true, CommandHandler<int> *comm = nullptr) override { return RespValue{}; }
     };
-    
+
     template <typename T>
-    inline RespValue CommandHandlerIfelse<T>::executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, bool RecordAOF)
+    inline RespValue CommandHandlerIfelse<T>::executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, 
+        bool RecordAOF, CommandHandler<int> *comm)
     {
         auto start = SteadyClock::now();
 
@@ -63,9 +68,8 @@ namespace blue
             // 每300条命令异步保存进入rbg
             if (self.getCommands().load(std::memory_order_acquire) % 300 == 0)
             {
-                auto self_ptr = self.shared_from_this();
-                std::thread([self_ptr]()
-                            { self_ptr->saveToFile(); })
+                std::thread([&self]()
+                            { self.saveToFile(); })
                     .detach();
             }
             return resp;
@@ -485,7 +489,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             shards.store[key] = val;
             if (args.size() >= 5)
@@ -540,7 +544,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'GET'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             if (it == shards.store.end())
@@ -572,7 +576,7 @@ namespace blue
             {
                 const std::string key = args[i].str;
                 const std::string val = args[i + 1].str;
-                auto &shards = self.getShard()(key, sock);
+                auto &shards = self.getShard(key, sock);
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 shards.store[key] = val;
             }
@@ -592,7 +596,7 @@ namespace blue
 
             for (size_t i = 1; i < args.size(); i++)
             {
-                auto &shards = self.getShard()(args[i].str, sock);
+                auto &shards = self.getShard(args[i].str, sock);
                 std::shared_lock<std::shared_mutex> lock(shards.mutex);
                 auto it = shards.store.find(args[i].str);
                 if (it == shards.store.end())
@@ -629,7 +633,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             if (it == shards.store.end())
@@ -653,7 +657,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             if (it == shards.store.end())
@@ -678,7 +682,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             const std::string val = args[2].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             if (it == shards.store.end())
@@ -702,7 +706,7 @@ namespace blue
             for (size_t i = 1; i < args.size(); i++)
             {
                 const std::string key = args[i].str;
-                auto &shards = self.getShard()(key, sock);
+                auto &shards = self.getShard(key, sock);
                 std::shared_lock<std::shared_mutex> lock(shards.mutex);
                 if (shards.store.find(key) != shards.store.end() ||
                     shards.hash.find(key) != shards.hash.end() ||
@@ -729,7 +733,7 @@ namespace blue
             for (size_t i = 1; i < args.size(); i++)
             {
                 const std::string key = args[i].str;
-                auto &shards = self.getShard()(key, sock);
+                auto &shards = self.getShard(key, sock);
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 auto it = shards.store.find(key);
                 if (it != shards.store.end())
@@ -755,7 +759,7 @@ namespace blue
             std::string key = args[1].str;
             for (size_t i = 2; i < args.size(); i += 2)
             {
-                auto &shards = self.getShard()(key, sock);
+                auto &shards = self.getShard(key, sock);
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 auto &field = args[i].str;
                 auto &value = args[i + 1].str; // size 是偶数所以不会出界
@@ -779,7 +783,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             const std::string field = args[2].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
@@ -806,7 +810,7 @@ namespace blue
             }
             std::vector<RespValue> result;
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
@@ -832,7 +836,7 @@ namespace blue
             }
             int count = 0;
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
@@ -860,7 +864,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HLEN'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> rdlock(shards.mutex);
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
@@ -900,7 +904,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             const std::string field = args[2].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
@@ -945,7 +949,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             std::vector<RespValue> results;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
@@ -990,7 +994,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             std::vector<RespValue> results;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.hash.find(key);
             if (it == shards.hash.end())
@@ -1128,7 +1132,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LPUSH'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto &lhs = shards.lists[key];
             for (size_t i = 2; i < args.size(); i++)
@@ -1148,7 +1152,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RPUSH'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto &lhs = shards.lists[key];
             for (size_t i = 2; i < args.size(); i++)
@@ -1181,7 +1185,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.lists.find(key);
             if (it == shards.lists.end() || it->second.empty())
@@ -1228,7 +1232,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.lists.find(key);
             if (it == shards.lists.end() || it->second.empty())
@@ -1262,7 +1266,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LLEN'"));
             }
             const std::string key = args[1].str;
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.lists.find(key);
             if (it == shard.lists.end())
@@ -1286,7 +1290,7 @@ namespace blue
             const std::string pivot = args[3].str;
             const std::string val = args[4].str;
 
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.lists.find(key);
             if (it == shard.lists.end())
@@ -1334,7 +1338,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.lists.find(key);
             if (it == shard.lists.end())
@@ -1378,7 +1382,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.lists.find(key);
             if (it == shard.lists.end())
@@ -1424,8 +1428,8 @@ namespace blue
             {
                 std::swap(src_idx, dest_idx);
             }
-            auto &src_shard = self.getShard()(source_key, sock);
-            auto &dest_shard = self.getShard()(dest_key, sock);
+            auto &src_shard = self.getShard(source_key, sock);
+            auto &dest_shard = self.getShard(dest_key, sock);
             std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
             std::unique_lock<std::shared_mutex> lock2;
             if (src_idx != dest_idx)
@@ -1469,7 +1473,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LRANGE'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             int start, stop;
             try
             {
@@ -1528,7 +1532,7 @@ namespace blue
             }
             int count = 0;
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
 
             shards.zset_score.try_emplace(key);
@@ -1577,7 +1581,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZRANGE'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             int start, stop;
             try
             {
@@ -1645,7 +1649,7 @@ namespace blue
             }
             int count = 0;
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.zset.find(key);
             if (it == shards.zset.end())
@@ -1689,7 +1693,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ASCORE'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.zset_score.find(key);
             if (it == shards.zset_score.end())
@@ -1715,7 +1719,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZRANK'"));
             }
             const std::string key = args[1].str, member = args[2].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.zset_score.find(key);
             if (it == shards.zset_score.end())
@@ -1756,7 +1760,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.zset.find(key);
             if (it == shard.zset.end())
@@ -1801,7 +1805,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not a float or out of range"));
             }
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.zset.find(key);
             if (it == shard.zset.end())
@@ -1851,7 +1855,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR value is not a double or out of range"));
             }
             int64_t count = 0;
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.zset_score.find(key);
             if (it == shard.zset_score.end())
@@ -1894,7 +1898,7 @@ namespace blue
             }
             std::vector<RespValue> results;
             bool withscore = (args.size() == 5 && (args[4].str == "WITHSCORE" || args[4].str == "withscore"));
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.zset_score.find(key);
             if (it == shard.zset_score.end())
@@ -1940,7 +1944,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR value is not a double or out of range"));
             }
             int64_t count = 0;
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.zset.find(key);
             if (it == shard.zset.end())
@@ -1988,7 +1992,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             int64_t val = 0;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> rdlock(shards.mutex);
             auto it = shards.store.find(key);
             if (it != shards.store.end())
@@ -2026,7 +2030,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             int64_t val = 0;
@@ -2056,7 +2060,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'STRLEN'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.store.find(key);
             if (it == shards.store.end())
@@ -2103,7 +2107,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'TYPE'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             if (shards.store.find(key) != shards.store.end())
             {
@@ -2139,7 +2143,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             int32_t count = 0;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             for (size_t i = 2; i < args.size(); i++)
             {
@@ -2167,7 +2171,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             std::vector<RespValue> results;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
@@ -2192,7 +2196,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             int32_t count = 0;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
@@ -2221,7 +2225,7 @@ namespace blue
             }
             const std::string key = args[1].str;
             const std::string member = args[2].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
@@ -2241,7 +2245,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR number wrong of arguments for 'SCARD'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
@@ -2270,7 +2274,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
@@ -2339,7 +2343,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.sets.find(key);
             if (it == shards.sets.end())
@@ -2403,7 +2407,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SDIFF'"));
             }
             const std::string key = args[1].str;
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::vector<RespValue> results;
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             for (const auto &member : shard.sets[key])
@@ -2412,7 +2416,7 @@ namespace blue
                 for (size_t i = 2; i < args.size(); i++)
                 {
                     const std::string tem_key = args[i].str;
-                    auto &tem_shard = self.getShard()(tem_key, sock);
+                    auto &tem_shard = self.getShard(tem_key, sock);
                     std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
                     auto &tem_members = tem_shard.sets[tem_key];
                     if (tem_members.contains(member))
@@ -2439,7 +2443,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SINTER'"));
             }
             const std::string key = args[1].str;
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::vector<RespValue> results;
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             for (const auto &member : shard.sets[key])
@@ -2448,7 +2452,7 @@ namespace blue
                 for (size_t i = 2; i < args.size(); i++)
                 {
                     const std::string tem_key = args[i].str;
-                    auto &tem_shard = self.getShard()(tem_key, sock);
+                    auto &tem_shard = self.getShard(tem_key, sock);
                     std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
                     auto &tem_members = tem_shard.sets[tem_key];
                     if (!tem_members.contains(member))
@@ -2475,7 +2479,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SUNION'"));
             }
             const std::string key = args[1].str;
-            auto &shard = self.getShard()(key, sock);
+            auto &shard = self.getShard(key, sock);
             std::unordered_set<std::string> results_set;
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             for (const auto &member : shard.sets[key])
@@ -2485,7 +2489,7 @@ namespace blue
             for (size_t i = 2; i < args.size(); i++)
             {
                 const std::string tem_key = args[i].str;
-                auto &tem_shard = self.getShard()(tem_key, sock);
+                auto &tem_shard = self.getShard(tem_key, sock);
                 std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
                 auto &tem_members = tem_shard.sets[tem_key];
                 for (const auto &tem_member : tem_members)
@@ -2524,8 +2528,8 @@ namespace blue
             {
                 std::swap(src_shard_idx, dest_shard_idx);
             }
-            auto &src_shard = self.getShard()(source_key, sock);
-            auto &dest_shard = self.getShard()(destination_key, sock);
+            auto &src_shard = self.getShard(source_key, sock);
+            auto &dest_shard = self.getShard(destination_key, sock);
 
             std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
             std::unique_lock<std::shared_mutex> lock2;
@@ -2711,7 +2715,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             if (it == shards.store.end())
@@ -2732,7 +2736,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'TTL'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             auto expire_it = shards.expire.find(key);
@@ -2781,7 +2785,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             if (it == shards.store.end())
@@ -2802,7 +2806,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'PTTL'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             auto expire_it = shards.expire.find(key);
@@ -2838,7 +2842,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of argument for 'PERSIST'"));
             }
             const std::string key = args[1].str;
-            auto &shards = self.getShard()(key, sock);
+            auto &shards = self.getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             auto expire_it = shards.expire.find(key);
@@ -3345,11 +3349,10 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR Background save already in progress"));
             }
             self.setBgSaveRunning(true);
-            auto self_ptr = self.shared_from_this();
-            std::thread([self_ptr]
+            std::thread([&self]
                         {
-                self_ptr->saveToFile();
-                self_ptr->setBgSaveRunning(false);
+                self.saveToFile();
+                self.setBgSaveRunning(false);
                 BLUE_LOG_INFO(xx::g_logger) << "BGSAVE completed"; })
                 .detach();
             return return_with_slowlog(RespValue::simple_string("Background saving started"));
@@ -3614,11 +3617,10 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR AOF rotation already in progress"));
             }
-            auto self_ptr = self.shared_from_this();
-            std::thread([self_ptr]
+            std::thread([&self]
                         {
                 // rotateAOF();
-                self_ptr->getAOF().rotateAOF();
+                self.getAOF().rotateAOF();
                 BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished"; })
                 .detach();
             return return_with_slowlog(RespValue::simple_string("AOF rotation started"));

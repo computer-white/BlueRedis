@@ -13,11 +13,14 @@
 #include "blue/asyncio.h"
 #include "blue/await.h"
 #include "server_data.h"
+#include "generator.h"
 #include "command/command_handler_ifelse.h"
 #ifdef COMMAND_TABLE
 #include "command/command_handler_table.h"
 #else
 #endif
+
+#define USE_GENERATOR 0  // 1: Generator, 0: Batch
 
 namespace blue
 {
@@ -54,6 +57,13 @@ namespace blue
         ~CommandHandler();
 
     public:
+        /**
+         * @brief 搭配generator流式处理命令
+         * @param sock 
+         */
+        Generator<RespValue> commandFlow(MSocket::MSocketPtr sock, RespStreamParser& parser, 
+            const char* data, size_t size, bool& should_done);
+
         /**
          * @brief 批量处理命令
          * @param batch_commands 批量命令列表
@@ -122,13 +132,13 @@ namespace blue
         m_server.getAOF().setExecutor([this](std::vector<RespValue> args,
                                              MSocket::MSocketPtr sock,
                                              bool record) -> RespValue
-                                      { return m_table.executeTable(args, sock, m_server, record); });
+                                      { return m_table.executeTable(args, sock, m_server, record, this); });
 #else
         // 设置 AOF 执行器
         m_server.getAOF().setExecutor([this](std::vector<RespValue> args,
                                              MSocket::MSocketPtr sock,
                                              bool record) -> RespValue
-                                      { return m_ifelse.executeIfelse(args, sock, m_server, record); });
+                                      { return m_ifelse.executeIfelse(args, sock, m_server, record, this); });
 #endif
         m_server.loadFromFile();
         m_server.getAOF().loadAOF();
@@ -164,14 +174,165 @@ namespace blue
         for (auto &args : batch_commands)
         {
 #ifdef COMMAND_TABLE
-            results.push_back(m_table.executeTable(args, sock, m_server, RecordAOF));
+            results.push_back(m_table.executeTable(args, sock, m_server, RecordAOF, this));
 #else
-            results.push_back(m_ifelse.executeIfelse(args, sock, m_server, RecordAOF));
+            results.push_back(m_ifelse.executeIfelse(args, sock, m_server, RecordAOF, this));
 #endif
         }
         return results;
     }
 
+#ifdef USE_GENERATOR
+    template <typename T>
+    Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
+    {
+        BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
+        // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
+        // BLUE_LOG_INFO(xx::g_logger) << "local address : " <<  sock->getLocalAddress()->toString();
+
+        RespStreamParser parser;                            // 解析器
+        const size_t MAX_COMMAND_SIZE = 1024 * 1024;        // 解析缓冲区最大大小
+        const size_t BATCH_SIZE = 8192;                     // 批量响应大小阈值
+
+        std::string batch_response;
+        batch_response.reserve(BATCH_SIZE);
+        int cmd_count = 0;
+
+        const uint64_t timeout_ms = static_cast<uint64_t>(m_server.getTimeoutS()) * 1000ul;
+
+        // 回复函数
+        auto send_response = [&](std::string &data) -> Task<void>
+        {
+            if (data.empty())
+            {
+                co_return;
+            }
+            size_t sent = 0;
+            while (sent < data.size())
+            {
+                ssize_t n = co_await sock->send(data.data() + sent, data.size() - sent);
+                if (n <= 0)
+                {
+                    BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd() << "] 发送失败";
+                    break;
+                }
+                sent += n;
+            }
+            data.clear();
+        };
+
+        do
+        {
+            if (m_server.getShutdown().load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
+            {
+                break;
+            }
+            char tmp[8192];
+            ssize_t ret;
+            if (timeout_ms > 0)
+            {
+                ret = co_await sock->recvT(tmp, sizeof(tmp), 0, timeout_ms);
+            }
+            else
+            {
+                ret = co_await sock->recv(tmp, sizeof(tmp));
+            }
+            if (ret <= 0)
+            {
+                if (ret == 0)
+                {
+                    BLUE_LOG_INFO(xx::g_logger) << "[client " << sock->getSocketfd() << "] 正常关闭";
+                    break;
+                }
+                if (errno == ETIMEDOUT)
+                {
+                    BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
+                                                << "] timeout (" << m_server.getTimeoutS() << "s), closing";
+                    break;
+                }
+                else if (errno == EAGAIN || errno == EWOULDBLOCK)
+                {
+                    continue;
+                }
+                BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
+                                             << "] recv error: " << strerror(errno);
+                break;
+            }
+
+            bool should_done = false;
+            for (const auto& response : commandFlow(sock, parser, tmp, ret, should_done))
+            {
+                if (should_done)
+                {
+                    break;
+                }
+                batch_response += RespValue::encode(response);
+                cmd_count++;
+                m_server.incrementCommands();
+
+                if (batch_response.size() >= BATCH_SIZE)
+                {
+                    co_await send_response(batch_response);
+                    co_await std::suspend_always{};
+                }
+            }
+            if (should_done)
+            {
+                break;
+            }
+
+            // 发送剩余的响应
+            if (!batch_response.empty())
+            {
+                co_await send_response(batch_response);
+            }
+
+            if (cmd_count > 0)
+            {
+                BLUE_LOG_DEBUGE(xx::g_logger) << "Processed " << cmd_count
+                                              << " commands in batch, batch_size="
+                                              << batch_response.size();
+            }
+
+            // 检查缓冲区大小
+            if (parser.bufferSize() > MAX_COMMAND_SIZE)
+            {
+                BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
+                                             << "] 命令过大，关闭连接";
+                break;
+            }
+
+        } while (true);
+
+        // 检查是否是管理员连接断开
+        auto admin = m_server.getAdminSocket().lock();
+        if (admin && admin.get() == sock.get())
+        {
+            m_server.getAdminSocket().reset();
+        }
+
+        // 关闭前清理订阅
+        m_server.getSubscription().removeAllSubscribers(sock);
+
+        sock->clearSubScription();
+        BLUE_LOG_INFO(xx::g_logger) << "one Client exit, fd:" << sock->getSocketfd();
+        sock->close();
+
+        // 删除过期的monitor
+        m_server.getMonitor().removeMonitor();
+
+        TcpServer<T>::subConnection();
+        if (TcpServer<T>::getConnection() == 0 && m_server.getShutdown().load(std::memory_order_acquire))
+        {
+            bool end = co_await TcpServer<T>::stop();
+            if (end)
+            {
+                BLUE_LOG_INFO(xx::g_logger) << "tcpserver stoped";
+            }
+        }
+        co_return;
+    }
+#else
     template <typename T>
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
@@ -346,36 +507,37 @@ namespace blue
                     continue;
                 }
 
+                std::string cmd_str;
+                for (size_t i = 0; i < cmd_Resp.arr.size(); i++)
+                {
+                    if (i > 0)
+                    {
+                        cmd_str += " ";
+                    }
+                    cmd_str += cmd_Resp.arr[i].str;
+                }
+
                 if (is_special)
                 {
                     auto end = SteadyClock::now();
-                    std::string cmd_str;
-                    for (size_t i = 0; i < cmd_Resp.arr.size(); i++)
-                    {
-                        if (i > 0)
-                        {
-                            cmd_str += " ";
-                        }
-                        cmd_str += cmd_Resp.arr[i].str;
-                    }
 
                     // 记录慢查询
                     m_server.getSlowLog().pushEntry(cmd_str, sock, start, end);
+                    
+                }
+                if (response.str != "QUEUED" && m_server.getPushMonitor().load(std::memory_order_acquire))
+                {
+                    // 推送消息给监控客户端
+                    m_server.getMonitor().pushToMonitor(cmd_str, sock);
+                }
 
-                    if (response.str != "QUEUED" && m_server.getPushMonitor().load(std::memory_order_acquire))
-                    {
-                        // 推送消息给监控客户端
-                        m_server.getMonitor().pushToMonitor(cmd_str, sock);
-                    }
+                batch_response += RespValue::encode(response);
+                cmd_count++;
+                m_server.incrementCommands();
 
-                    batch_response += RespValue::encode(response);
-                    cmd_count++;
-                    m_server.incrementCommands();
-
-                    if (!batch_response.empty())
-                    {
-                        co_await send_response(batch_response);
-                    }
+                if (!batch_response.empty())
+                {
+                    co_await send_response(batch_response);
                 }
             }
 
@@ -436,6 +598,7 @@ namespace blue
         }
         co_return;
     }
+#endif
 
     template <typename T>
     RespValue CommandHandler<T>::handleTransactionCommand(const std::string &cmd,
@@ -469,9 +632,9 @@ namespace blue
                     for (const auto &transaction : sock->getTransaction())
                     {
 #ifdef COMMAND_TABLE
-                        auto response = m_table.executeTable(transaction, sock, m_server, true);
+                        auto response = m_table.executeTable(transaction, sock, m_server, true, this);
 #else
-                        auto response = m_ifelse.executeIfelse(transaction, sock, m_server, true);
+                        auto response = m_ifelse.executeIfelse(transaction, sock, m_server, true, this);
 #endif
                         results.push_back(response);
                     }
@@ -661,6 +824,103 @@ namespace blue
             int receiver_count = m_server.getSubscription().publishMessage(channel, message);
 
             return RespValue::integer(receiver_count);
+        }
+    }
+
+    template <typename T>
+    Generator<RespValue> CommandHandler<T>::commandFlow(MSocket::MSocketPtr sock, 
+        RespStreamParser& parser, const char* data, size_t size, bool& should_done)
+    {
+
+        if (!parser.feed({data, size}))
+        {
+            BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
+                                            << "] 缓冲区溢出，关闭连接";
+            should_done = true;
+            co_return;
+        }
+
+        RespValue cmd_Resp;
+
+        while (parser.next(cmd_Resp))
+        {
+            auto copy_arr = cmd_Resp.arr;
+            if (copy_arr.empty())
+            {
+                continue;
+            }
+            // 安全检查
+            if (cmd_Resp.type == RespValue::Type::ARRAY && copy_arr.size() > 1000)
+            {
+                BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
+                                            << "] 命令数组过大: " << copy_arr.size();
+                co_yield RespValue::error("ERR command too large");
+                break;
+            }
+
+            // 命令cmd
+            std::string cmd = copy_arr[0].str;
+            std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
+
+            blue::RespValue response;
+            bool is_special = false; // 是否需要特殊处理
+
+            auto start = SteadyClock::now();
+            std::chrono::_V2::steady_clock::time_point end;
+            if (sock->inTransaction()) // 事务模式
+            {
+                is_special = true;
+                response = handleTransactionCommand(cmd, copy_arr, sock, start);
+            }
+            else if (sock->inSubScription()) // 订阅模式
+            {
+                is_special = true;
+                response = handleSubscriptionCommand(cmd, copy_arr, sock, start);
+            }
+            else if (cmd == "MULTI" || cmd == "SUBSCRIBE") // MULTI, 进入事务模式, SUBSCRIBE channel [channel...] 订阅channel 进入订阅模式
+            {
+                is_special = true;
+                response = handleModeSwitchCommand(cmd, copy_arr, sock, start);
+            }
+            else if (cmd == "PUBLISH") // PUBLISH channel message 发布channel 内容为message
+            {
+                is_special = true;
+                response = handlePublishCommand(cmd, copy_arr, sock, start);
+            }
+            else
+            {
+#ifdef COMMAND_TABLE
+                response = m_table.executeTable(copy_arr, sock, m_server, true);
+#else
+                response = m_ifelse.executeIfelse(copy_arr, sock, m_server, true);
+#endif
+            }
+
+            std::string cmd_str;
+            for (size_t i = 0; i < cmd_Resp.arr.size(); i++)
+            {
+                if (i > 0)
+                {
+                    cmd_str += " ";
+                }
+                cmd_str += cmd_Resp.arr[i].str;
+            }
+
+            if (is_special)
+            {
+                auto end = SteadyClock::now();
+
+                // 记录慢查询
+                m_server.getSlowLog().pushEntry(cmd_str, sock, start, end);
+                
+            }
+            if (response.str != "QUEUED" && m_server.getPushMonitor().load(std::memory_order_acquire))
+            {
+                // 推送消息给监控客户端
+                m_server.getMonitor().pushToMonitor(cmd_str, sock);
+            }
+
+            co_yield response;
         }
     }
 }

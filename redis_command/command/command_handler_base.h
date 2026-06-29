@@ -15,7 +15,10 @@
 
 
 namespace blue
-{
+{   
+    template <typename T>
+    class CommandHandler;
+
     template <typename T>
     class CommandHandlerBased
     {
@@ -26,16 +29,20 @@ namespace blue
          * @brief ifelse处理命令
          * @param args 命令列表
          * @param sock 客户端sock
+         * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, bool RecordAOF = true) = 0;
+        virtual RespValue executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, 
+            bool RecordAOF = true, CommandHandler<int> *comm = nullptr) = 0;
 
         /**
          * @brief 命令表处理命令
          * @param args 命令列表
          * @param sock 客户端sock
+         * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, bool RecordAOF = true) = 0;
+        virtual RespValue executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, 
+            bool RecordAOF = true, CommandHandler<int> *comm = nullptr) = 0;
     };
 }
