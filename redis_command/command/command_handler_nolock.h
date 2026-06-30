@@ -9,7 +9,7 @@
 namespace blue
 {
     template <typename T>
-    class CommandHandlerTable : public CommandHandlerBased<T>
+    class CommandHandlerTableNoLock : public CommandHandlerBased<T>
     {
     public:
         using SteadyClock = std::chrono::steady_clock;
@@ -36,8 +36,8 @@ namespace blue
          */
         virtual RespValue executeTable(std::vector<RespValue> args,
                                        MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
-                                       bool RecordAOF = true) override;
-
+                                       bool RecordAOF = true) override { return RespValue{}; }
+        
         /**
          * @brief 无锁命令表处理命令
          * @param args 命令列表
@@ -45,8 +45,8 @@ namespace blue
          * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeTableNoLock(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
-                                             bool RecordAOF = true) override { return RespValue{}; }
+        virtual RespValue executeTableNoLock(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self, 
+            bool RecordAOF = true) override;
 
     private:
         static constexpr auto EVEN_VALIDATOR = [](size_t argc) -> bool
@@ -312,9 +312,9 @@ namespace blue
         }
     };
     template <typename T>
-    inline RespValue CommandHandlerTable<T>::executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock,
-                                                          std::shared_ptr<ServerData<T>> self,
-                                                          bool RecordAOF)
+    inline RespValue CommandHandlerTableNoLock<T>::executeTableNoLock(std::vector<RespValue> args, MSocket::MSocketPtr sock, 
+        std::shared_ptr<ServerData<T>> self, 
+        bool RecordAOF)
     {
         auto start = SteadyClock::now();
         if (args.empty())
@@ -334,15 +334,15 @@ namespace blue
     XX(SADD)             \
     XX(ZADD)
 
-#define IF_CMD(name)                                                   \
-    if (cmd == #name)                                                  \
-    {                                                                  \
+#define IF_CMD(name)                                                  \
+    if (cmd == #name)                                                 \
+    {                                                                 \
         if (self->getAOF().isWriteCommand(cmd) && RecordAOF)           \
-        {                                                              \
+        {                                                             \
             std::string aof_cmds = self->getAOF().formatCommand(args); \
             self->getAOF().appendToAOF(aof_cmds);                      \
-        }                                                              \
-        return handle##name(args, sock, RecordAOF, self);              \
+        }                                                             \
+        return handle##name(args, sock, RecordAOF, self);             \
     }
 
         // 高频命令不走命令表
@@ -392,7 +392,7 @@ namespace blue
 
     // ========== 连接命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handlePING(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handlePING(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -409,7 +409,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleAUTH(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleAUTH(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -441,7 +441,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSELECT(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSELECT(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -468,7 +468,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleCLIENT(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleCLIENT(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -518,7 +518,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleCONFIG(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleCONFIG(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -599,8 +599,8 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'CONFIG SET'");
             }
 
-            const std::string &param = args[2].str;
-            const std::string &value = args[3].str;
+            const std::string& param = args[2].str;
+            const std::string& value = args[3].str;
 
             if (param == "clientpass") // 客户端密码
             {
@@ -782,7 +782,7 @@ namespace blue
 
     // ========== String 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSET(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSET(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
                                                 std::shared_ptr<ServerData<int>> self)
@@ -795,10 +795,9 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of arguments for 'SET'");
         }
-        const std::string &key = args[1].str;
-        const std::string &val = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& val = args[2].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         shards.store[key] = val;
         if (args.size() >= 5)
         {
@@ -843,7 +842,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleGET(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleGET(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
                                                 std::shared_ptr<ServerData<int>> self)
@@ -852,9 +851,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> rdlock(shards.mutex);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
@@ -867,8 +866,8 @@ namespace blue
         auto expire_it = shards.expire.find(key);
         if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
         {
-            rdlock.unlock();
-            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            lock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             shards.expire.erase(key);
             shards.store.erase(key);
             return RespValue::null_bulk();
@@ -878,7 +877,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleMSET(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleMSET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -889,17 +888,16 @@ namespace blue
         }
         for (size_t i = 1; i < args.size(); i += 2)
         {
-            const std::string &key = args[i].str;
-            const std::string &val = args[i + 1].str;
+            const std::string& key = args[i].str;
+            const std::string& val = args[i + 1].str;
             auto &shards = self->getShard(key, sock);
-            std::unique_lock<std::shared_mutex> lock(shards.mutex);
             shards.store[key] = val;
         }
         return RespValue::simple_string("OK");
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleMGET(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleMGET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -912,7 +910,7 @@ namespace blue
 
         for (size_t i = 1; i < args.size(); i++)
         {
-            const std::string &key = args[i].str;
+            const std::string& key = args[i].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -942,7 +940,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleGETSET(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleGETSET(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -951,10 +949,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &val = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& val = args[2].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
@@ -967,7 +964,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleAPPEND(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleAPPEND(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -976,10 +973,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &val = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& val = args[2].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
@@ -993,7 +989,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSETNX(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSETNX(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1002,10 +998,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &val = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& val = args[2].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
@@ -1016,7 +1011,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleEXISTS(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleEXISTS(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -1028,9 +1023,8 @@ namespace blue
         int64_t count = 0;
         for (size_t i = 1; i < args.size(); i++)
         {
-            const std::string &key = args[i].str;
+            const std::string& key = args[i].str;
             auto &shards = self->getShard(key, sock);
-            std::shared_lock<std::shared_mutex> lock(shards.mutex);
             if (shards.store.find(key) != shards.store.end() ||
                 shards.hash.find(key) != shards.hash.end() ||
                 shards.lists.find(key) != shards.lists.end() ||
@@ -1044,7 +1038,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleDEL(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleDEL(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
                                                 std::shared_ptr<ServerData<int>> self)
@@ -1060,9 +1054,8 @@ namespace blue
         int count = 0;
         for (size_t i = 1; i < args.size(); i++)
         {
-            const std::string &key = args[i].str;
+            const std::string& key = args[i].str;
             auto &shards = self->getShard(key, sock);
-            std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             if (it != shards.store.end())
             {
@@ -1075,7 +1068,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleINCR(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleINCR(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1084,10 +1077,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         int64_t val = 0;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> rdlock(shards.mutex);
         auto it = shards.store.find(key);
         if (it != shards.store.end())
         {
@@ -1106,7 +1098,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleINCRBY(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleINCRBY(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -1115,7 +1107,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         int64_t increment;
         try
         {
@@ -1126,7 +1118,6 @@ namespace blue
             return RespValue::error("ERR value is not an integer or out of range");
         }
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         int64_t val = 0;
         if (it != shards.store.end())
@@ -1146,7 +1137,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSTRLEN(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSTRLEN(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -1155,7 +1146,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
@@ -1196,7 +1187,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleTYPE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleTYPE(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1205,9 +1196,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         if (shards.store.find(key) != shards.store.end())
         {
             return RespValue::bulk_string("string");
@@ -1232,7 +1222,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleKEYS(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleKEYS(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1280,7 +1270,6 @@ namespace blue
                 BLUE_LOG_WARN(xx::g_logger) << "KEYS command truncated at " << MAX_KEYS << " keys";
                 break;
             }
-            std::shared_lock<std::shared_mutex> lock(shard.mutex);
 
             for (auto &[key, value] : shard.store)
             {
@@ -1328,7 +1317,7 @@ namespace blue
 
     // ========== Hash 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHSET(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleHSET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1342,11 +1331,10 @@ namespace blue
             return RespValue::error("ERR wrong number of arguments for 'HSET'");
         }
         int count = 0;
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         for (size_t i = 2; i < args.size(); i += 2)
         {
             auto &shards = self->getShard(key, sock);
-            std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto &field = args[i].str;
             auto &value = args[i + 1].str; // size 是偶数所以不会出界
             if (shards.hash[key].find(field) == shards.hash[key].end())
@@ -1359,7 +1347,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHGET(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleHGET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1372,10 +1360,9 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of arguments for 'HGET'");
         }
-        const std::string &key = args[1].str;
-        const std::string &field = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& field = args[2].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
         {
@@ -1391,7 +1378,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHGETALL(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleHGETALL(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -1401,9 +1388,8 @@ namespace blue
             return RespValue::error("ERR authentication required");
         }
         std::vector<RespValue> result;
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
         {
@@ -1418,7 +1404,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHDEL(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleHDEL(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1428,9 +1414,8 @@ namespace blue
             return RespValue::error("ERR authentication required");
         }
         int count = 0;
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
         {
@@ -1448,7 +1433,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHLEN(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleHLEN(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1457,9 +1442,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> rdlock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
         {
@@ -1488,7 +1472,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHEXISTS(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleHEXISTS(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -1497,10 +1481,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &field = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& field = args[2].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
         {
@@ -1534,7 +1517,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHKEYS(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleHKEYS(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1543,10 +1526,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         std::vector<RespValue> results;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
         {
@@ -1580,7 +1562,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHVALS(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleHVALS(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1589,10 +1571,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         std::vector<RespValue> results;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
         {
@@ -1627,7 +1608,7 @@ namespace blue
 
     // ========== List 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLPUSH(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLPUSH(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1640,9 +1621,8 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of arguments for 'LPUSH'");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto &lhs = shards.lists[key];
         for (size_t i = 2; i < args.size(); i++)
         {
@@ -1652,7 +1632,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRPUSH(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleRPUSH(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1661,9 +1641,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto &lhs = shards.lists[key];
         for (size_t i = 2; i < args.size(); i++)
         {
@@ -1673,7 +1652,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLPOP(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLPOP(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1699,9 +1678,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.lists.find(key);
         if (it == shards.lists.end() || it->second.empty())
         {
@@ -1725,7 +1703,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRPOP(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleRPOP(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1747,9 +1725,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.lists.find(key);
         if (it == shards.lists.end() || it->second.empty())
         {
@@ -1773,7 +1750,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLLEN(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLLEN(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1782,9 +1759,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shard = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.lists.find(key);
         if (it == shard.lists.end())
         {
@@ -1794,7 +1770,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLINSERT(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLINSERT(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -1803,13 +1779,12 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &pos = args[2].str;
-        const std::string &pivot = args[3].str;
-        const std::string &val = args[4].str;
+        const std::string& key = args[1].str;
+        const std::string& pos = args[2].str;
+        const std::string& pivot = args[3].str;
+        const std::string& val = args[4].str;
 
         auto &shard = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.lists.find(key);
         if (it == shard.lists.end())
         {
@@ -1838,7 +1813,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLINDEX(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLINDEX(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -1847,7 +1822,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         int64_t idx = 0;
         try
         {
@@ -1858,7 +1833,6 @@ namespace blue
             return RespValue::error("ERR value is not a integer or out of range");
         }
         auto &shard = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.lists.find(key);
         if (it == shard.lists.end())
         {
@@ -1882,7 +1856,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLSET(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLSET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1891,8 +1865,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &val = args[3].str;
+        const std::string& key = args[1].str;
+        const std::string& val = args[3].str;
         int64_t idx = 0;
         try
         {
@@ -1903,7 +1877,6 @@ namespace blue
             return RespValue::error("ERR value is not a integer or out of range");
         }
         auto &shard = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.lists.find(key);
         if (it == shard.lists.end())
         {
@@ -1928,7 +1901,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRPOPLPUSH(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleRPOPLPUSH(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -1937,8 +1910,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &source_key = args[1].str;
-        const std::string &dest_key = args[2].str;
+        const std::string& source_key = args[1].str;
+        const std::string& dest_key = args[2].str;
         if (source_key == dest_key)
         {
             return RespValue::integer(1);
@@ -1976,7 +1949,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLPOPRPUSH(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLPOPRPUSH(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -1985,8 +1958,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &source_key = args[1].str;
-        const std::string &dest_key = args[2].str;
+        const std::string& source_key = args[1].str;
+        const std::string& dest_key = args[2].str;
         if (source_key == dest_key)
         {
             return RespValue::integer(1);
@@ -2024,7 +1997,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLRANGE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLRANGE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2033,7 +2006,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
         int start, stop;
         try
@@ -2045,7 +2018,6 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.lists.find(key);
         if (it == shards.lists.end())
         {
@@ -2084,7 +2056,7 @@ namespace blue
 
     // ========== Set 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSADD(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSADD(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2097,10 +2069,9 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of argument for 'SADD'");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         int32_t count = 0;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         for (size_t i = 2; i < args.size(); i++)
         {
             const std::string member = args[i].str;
@@ -2117,7 +2088,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSMEMBERS(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSMEMBERS(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
                                                      std::shared_ptr<ServerData<int>> self)
@@ -2126,10 +2097,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         std::vector<RespValue> results;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
         {
@@ -2143,7 +2113,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSREM(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSREM(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2152,10 +2122,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         int32_t count = 0;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
         {
@@ -2173,7 +2142,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSISMEMBER(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSISMEMBER(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -2182,10 +2151,9 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         const std::string member = args[2].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
         {
@@ -2195,7 +2163,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSCARD(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSCARD(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -2204,9 +2172,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
         {
@@ -2216,7 +2183,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSRANDMEMBER(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSRANDMEMBER(std::vector<RespValue> &args,
                                                         MSocket::MSocketPtr sock,
                                                         bool aof,
                                                         std::shared_ptr<ServerData<int>> self)
@@ -2234,9 +2201,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not an integer or out of range");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
         {
@@ -2282,7 +2248,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSPOP(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSPOP(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2304,9 +2270,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not an integer or out of range");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
         {
@@ -2360,7 +2325,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSDIFF(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSDIFF(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -2369,7 +2334,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shard = self->getShard(key, sock);
         std::vector<RespValue> results;
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
@@ -2397,7 +2362,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSINTER(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSINTER(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2406,7 +2371,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shard = self->getShard(key, sock);
         std::vector<RespValue> results;
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
@@ -2434,7 +2399,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSUNION(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSUNION(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2443,7 +2408,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shard = self->getShard(key, sock);
         std::unordered_set<std::string> results_set;
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
@@ -2472,7 +2437,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSMOVE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSMOVE(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -2481,13 +2446,13 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &source_key = args[1].str;
-        const std::string &destination_key = args[2].str;
+        const std::string& source_key = args[1].str;
+        const std::string& destination_key = args[2].str;
         if (source_key == destination_key)
         {
             return RespValue::integer(1);
         }
-        const std::string &member = args[3].str;
+        const std::string& member = args[3].str;
         int src_shard_idx = self->getShardIndex(source_key);
         int dest_shard_idx = self->getShardIndex(destination_key);
         if (src_shard_idx > dest_shard_idx)
@@ -2532,7 +2497,7 @@ namespace blue
 
     // ========== ZSet 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZADD(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZADD(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2546,9 +2511,8 @@ namespace blue
             return RespValue::error("ERR wrong number of arguments for 'ZADD'");
         }
         int count = 0;
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
 
         shards.zset_score.try_emplace(key);
         shards.zset.try_emplace(key);
@@ -2587,7 +2551,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZRANGE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZRANGE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2596,7 +2560,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
         int start, stop;
         try
@@ -2608,7 +2572,6 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.zset.find(key);
         if (it == shards.zset.end())
         {
@@ -2655,7 +2618,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZREM(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZREM(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2665,9 +2628,8 @@ namespace blue
             return RespValue::error("ERR authentication required");
         }
         int count = 0;
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.zset.find(key);
         if (it == shards.zset.end())
         {
@@ -2701,7 +2663,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZSCORE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZSCORE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2710,9 +2672,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.zset_score.find(key);
         if (it == shards.zset_score.end())
         {
@@ -2728,7 +2689,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZRANK(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZRANK(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -2737,9 +2698,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str, member = args[2].str;
+        const std::string& key = args[1].str, member = args[2].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.zset_score.find(key);
         if (it == shards.zset_score.end())
         {
@@ -2760,7 +2720,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZINCRBY(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZINCRBY(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -2769,8 +2729,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &member = args[3].str;
+        const std::string& key = args[1].str;
+        const std::string& member = args[3].str;
         int64_t incr;
         try
         {
@@ -2781,7 +2741,6 @@ namespace blue
             return RespValue::error("ERR value is not a integer or out of range");
         }
         auto &shard = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset.find(key);
         if (it == shard.zset.end())
         {
@@ -2806,7 +2765,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZINCRBYFLOAT(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZINCRBYFLOAT(std::vector<RespValue> &args,
                                                          MSocket::MSocketPtr sock,
                                                          bool aof,
                                                          std::shared_ptr<ServerData<int>> self)
@@ -2815,8 +2774,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &member = args[3].str;
+        const std::string& key = args[1].str;
+        const std::string& member = args[3].str;
         double incr;
         try
         {
@@ -2827,7 +2786,6 @@ namespace blue
             return RespValue::error("ERR value is not a float or out of range");
         }
         auto &shard = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset.find(key);
         if (it == shard.zset.end())
         {
@@ -2852,7 +2810,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZCOUNT(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZCOUNT(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2861,7 +2819,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         double min = 0, max = 0;
         try
         {
@@ -2878,7 +2836,6 @@ namespace blue
         }
         int64_t count = 0;
         auto &shard = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset_score.find(key);
         if (it == shard.zset_score.end())
         {
@@ -2895,7 +2852,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZRANGEBYSCORE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZRANGEBYSCORE(std::vector<RespValue> &args,
                                                           MSocket::MSocketPtr sock,
                                                           bool aof,
                                                           std::shared_ptr<ServerData<int>> self)
@@ -2904,7 +2861,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         double min = 0, max = 0;
         try
         {
@@ -2922,7 +2879,6 @@ namespace blue
         std::vector<RespValue> results;
         bool withscore = (args.size() == 5 && (args[4].str == "WITHSCORE" || args[4].str == "withscore"));
         auto &shard = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset_score.find(key);
         if (it == shard.zset_score.end())
         {
@@ -2943,7 +2899,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZREMRANGEBYSCORE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleZREMRANGEBYSCORE(std::vector<RespValue> &args,
                                                              MSocket::MSocketPtr sock,
                                                              bool aof,
                                                              std::shared_ptr<ServerData<int>> self)
@@ -2952,7 +2908,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         double min = 0, max = 0;
         try
         {
@@ -2969,7 +2925,6 @@ namespace blue
         }
         int64_t count = 0;
         auto &shard = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset.find(key);
         if (it == shard.zset.end())
         {
@@ -3007,7 +2962,7 @@ namespace blue
 
     // ========== DB 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleFLUSHDB(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleFLUSHDB(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -3024,7 +2979,6 @@ namespace blue
             }
             for (auto &shards : self->getDBs()[sock->getClientId()])
             {
-                std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 shards.store.clear();
                 shards.expire.clear();
                 shards.lists.clear();
@@ -3047,7 +3001,6 @@ namespace blue
             {
                 for (auto &shards : self->getDBs()[sock->getClientId()])
                 {
-                    std::unique_lock<std::shared_mutex> lock(shards.mutex);
                     shards.store.clear();
                     shards.expire.clear();
                     shards.lists.clear();
@@ -3064,7 +3017,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleFLUSHDBALL(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleFLUSHDBALL(std::vector<RespValue> &args,
                                                        MSocket::MSocketPtr sock,
                                                        bool aof,
                                                        std::shared_ptr<ServerData<int>> self)
@@ -3083,7 +3036,6 @@ namespace blue
             {
                 for (auto &shards : self->getDBs()[db])
                 {
-                    std::unique_lock<std::shared_mutex> lock(shards.mutex);
                     shards.store.clear();
                     shards.expire.clear();
                     shards.lists.clear();
@@ -3109,7 +3061,6 @@ namespace blue
                 {
                     for (auto &shards : self->getDBs()[db])
                     {
-                        std::unique_lock<std::shared_mutex> lock(shards.mutex);
                         shards.store.clear();
                         shards.expire.clear();
                         shards.lists.clear();
@@ -3127,7 +3078,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleDBSIZE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleDBSIZE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -3139,7 +3090,6 @@ namespace blue
         int64_t count = 0;
         for (auto &shards : self->getDBs()[sock->getClientId()])
         {
-            std::shared_lock<std::shared_mutex> lock(shards.mutex);
             count += shards.store.size() + shards.lists.size() + shards.hash.size() + shards.zset.size();
         }
         return RespValue::integer(count);
@@ -3147,7 +3097,7 @@ namespace blue
 
     // ========== Key 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleEXPIRE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleEXPIRE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -3169,9 +3119,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not an integer or out of range");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
@@ -3182,7 +3131,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleTTL(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleTTL(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
                                                 std::shared_ptr<ServerData<int>> self)
@@ -3191,9 +3140,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         auto expire_it = shards.expire.find(key);
         if (it == shards.store.end())
@@ -3219,7 +3167,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handlePEXPIRE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handlePEXPIRE(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -3241,9 +3189,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not an integer or out of range");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
@@ -3254,7 +3201,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handlePTTL(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handlePTTL(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -3263,9 +3210,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         auto expire_it = shards.expire.find(key);
         if (it == shards.store.end())
@@ -3291,7 +3237,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handlePERSIST(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handlePERSIST(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -3300,9 +3246,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
+        const std::string& key = args[1].str;
         auto &shards = self->getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         auto expire_it = shards.expire.find(key);
         // 不存在或没有过期时间
@@ -3315,7 +3260,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRENAME(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleRENAME(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -3324,8 +3269,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &newkey = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& newkey = args[2].str;
 
         if (key == newkey)
         {
@@ -3495,7 +3440,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRENAMENX(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleRENAMENX(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
                                                      std::shared_ptr<ServerData<int>> self)
@@ -3504,8 +3449,8 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string &key = args[1].str;
-        const std::string &newkey = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& newkey = args[2].str;
 
         if (key == newkey)
         {
@@ -3677,7 +3622,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRANDOMKEY(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleRANDOMKEY(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -3689,7 +3634,6 @@ namespace blue
         std::vector<std::string> all_keys;
         for (auto &shards : self->getDBs()[sock->getClientId()])
         {
-            std::shared_lock<std::shared_mutex> lock(shards.mutex);
             // string
             for (auto &[key, _] : shards.store)
             {
@@ -3728,7 +3672,7 @@ namespace blue
 
     // ========== Server 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleINFO(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleINFO(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -3779,7 +3723,6 @@ namespace blue
         size_t total_keys = 0;
         for (auto &shard : self->getDBs()[sock->getClientId()])
         {
-            std::shared_lock lock(shard.mutex);
             total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
         }
         info += "total_keys:" + std::to_string(total_keys) + "\r\n";
@@ -3787,7 +3730,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSAVE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSAVE(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -3801,7 +3744,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleBGSAVE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleBGSAVE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -3816,8 +3759,8 @@ namespace blue
         }
         self->setBgSaveRunning(true);
         std::weak_ptr<ServerData<int>> weak_self = self;
-        std::thread([weak_self]
-                    {
+            std::thread([weak_self]
+                        {
                 auto ptr = weak_self.lock();
                 if (ptr)
                 {
@@ -3828,13 +3771,13 @@ namespace blue
                 else
                 {
                     BLUE_LOG_INFO(xx::g_logger) << "BGSAVE: ServerData already destroyed";
-                } })
-            .detach();
+                }
+            }).detach();
         return RespValue::simple_string("Background saving started");
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLASTSAVE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLASTSAVE(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
                                                      std::shared_ptr<ServerData<int>> self)
@@ -3847,7 +3790,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLASTSAVE1(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLASTSAVE1(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -3869,7 +3812,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleCOMMAND(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleCOMMAND(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -3922,7 +3865,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleECHO(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleECHO(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -3935,7 +3878,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleTIME(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleTIME(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -3954,7 +3897,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLOCALTIME(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleLOCALTIME(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -3979,7 +3922,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSHUTDOWN(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSHUTDOWN(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
                                                      std::shared_ptr<ServerData<int>> self)
@@ -3993,7 +3936,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleWATCH(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleWATCH(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -4006,14 +3949,14 @@ namespace blue
 
         for (size_t i = 1; i < args.size(); i++)
         {
-            const std::string &key = args[i].str;
+            const std::string& key = args[i].str;
             sock->addWatchKey(key, self->getKeyVersion(key, sock));
         }
         return RespValue::simple_string("OK");
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleUNWATCH(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleUNWATCH(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -4028,7 +3971,7 @@ namespace blue
 
     // ========== 慢查询 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSLOWLOG(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSLOWLOG(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -4083,7 +4026,7 @@ namespace blue
 
     // ========== 监控 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleMONITOR(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleMONITOR(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -4103,7 +4046,7 @@ namespace blue
 
     // ========== AOF ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleAOFROTATE(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleAOFROTATE(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -4121,21 +4064,21 @@ namespace blue
             return RespValue::error("ERR AOF rotation already in progress");
         }
         std::weak_ptr<ServerData<int>> weak_self = self;
-        std::thread([weak_self]
-                    {
+            std::thread([weak_self]
+                        {
                 auto ptr = weak_self.lock();
                 if (ptr)
                 {
                     ptr->getAOF().rotateAOF();
                     BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished"; 
-                } })
-            .detach();
+                }
+                }).detach();
         return RespValue::simple_string("AOF rotation started");
     }
 
     // ========== Replication ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleREPLICAOF(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleREPLICAOF(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -4143,7 +4086,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSLAVEOF(std::vector<RespValue> &args,
+    RespValue CommandHandlerTableNoLock<T>::handleSLAVEOF(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)

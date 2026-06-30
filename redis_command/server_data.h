@@ -157,6 +157,7 @@ namespace blue
                 "HGET", "HGETALL", "HLEN", "HEXISTS", "HKEYS", "HVALS",
                 "LLEN", "LINDEX", "LRANGE",
                 "SCARD", "SISMEMBER", "SMEMBERS", "SRANDMEMBER",
+                "SDIFF", "SUNION", "SINTER"
                 "ZSCORE", "ZRANK", "ZCOUNT", "ZRANGE", "ZRANGEBYSCORE",
                 "KEYS", "DBSIZE", "INFO", "TIME", "LOCALTIME", "LASTSAVE"};
             return read_only.count(cmd) > 0;

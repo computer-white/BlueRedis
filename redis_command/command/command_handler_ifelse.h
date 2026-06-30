@@ -18,8 +18,8 @@ namespace blue
          * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self, 
-            bool RecordAOF = true) override;
+        virtual RespValue executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
+                                        bool RecordAOF = true) override;
 
         /**
          * @brief 命令表处理命令
@@ -28,13 +28,23 @@ namespace blue
          * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self, 
-            bool RecordAOF = true) override { return RespValue{}; }
+        virtual RespValue executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
+                                       bool RecordAOF = true) override { return RespValue{}; }
+
+        /**
+         * @brief 无锁命令表处理命令
+         * @param args 命令列表
+         * @param sock 客户端sock
+         * @param self 服务器数据
+         * @param RecordAOF 是否记录AOF
+         */
+        virtual RespValue executeTableNoLock(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
+                                             bool RecordAOF = true) override { return RespValue{}; }
     };
 
     template <typename T>
-    inline RespValue CommandHandlerIfelse<T>::executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, 
-        std::shared_ptr<ServerData<T>> self, bool RecordAOF)
+    inline RespValue CommandHandlerIfelse<T>::executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock,
+                                                            std::shared_ptr<ServerData<T>> self, bool RecordAOF)
     {
         auto start = SteadyClock::now();
 
@@ -75,8 +85,8 @@ namespace blue
                                 if (ptr)
                                 {
                                     ptr->saveToFile(); 
-                                }
-                            }).detach();
+                                } })
+                    .detach();
             }
             return resp;
         };
@@ -303,8 +313,8 @@ namespace blue
                     return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'CONFIG SET'"));
                 }
 
-                const std::string& param = args[2].str;
-                const std::string& value = args[3].str;
+                const std::string &param = args[2].str;
+                const std::string &value = args[3].str;
 
                 if (param == "clientpass") // 客户端密码
                 {
@@ -493,8 +503,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SET'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& val = args[2].str;
+            const std::string &key = args[1].str;
+            const std::string &val = args[2].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             shards.store[key] = val;
@@ -549,7 +559,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'GET'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -566,7 +576,7 @@ namespace blue
                 shards.store.erase(key);
                 return return_with_slowlog(RespValue::null_bulk());
             }
-            const std::string& val = it->second;
+            const std::string &val = it->second;
             return return_with_slowlog(RespValue::bulk_string(val));
         }
         else if (cmd == "MSET") // MSET key val [key val]
@@ -582,8 +592,8 @@ namespace blue
 
             for (size_t i = 1; i < args.size(); i += 2)
             {
-                const std::string& key = args[i].str;
-                const std::string& val = args[i + 1].str;
+                const std::string &key = args[i].str;
+                const std::string &val = args[i + 1].str;
                 auto &shards = self->getShard(key, sock);
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 shards.store[key] = val;
@@ -639,8 +649,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong of arguments for 'GETSET'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& val = args[2].str;
+            const std::string &key = args[1].str;
+            const std::string &val = args[2].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -663,8 +673,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong of arguments for 'APPEND'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& val = args[2].str;
+            const std::string &key = args[1].str;
+            const std::string &val = args[2].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -688,8 +698,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong of arguments for 'SETNX'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& val = args[2].str;
+            const std::string &key = args[1].str;
+            const std::string &val = args[2].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -713,7 +723,7 @@ namespace blue
             int64_t count = 0;
             for (size_t i = 1; i < args.size(); i++)
             {
-                const std::string& key = args[i].str;
+                const std::string &key = args[i].str;
                 auto &shards = self->getShard(key, sock);
                 std::shared_lock<std::shared_mutex> lock(shards.mutex);
                 if (shards.store.find(key) != shards.store.end() ||
@@ -740,7 +750,7 @@ namespace blue
             int count = 0;
             for (size_t i = 1; i < args.size(); i++)
             {
-                const std::string& key = args[i].str;
+                const std::string &key = args[i].str;
                 auto &shards = self->getShard(key, sock);
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 auto it = shards.store.find(key);
@@ -764,7 +774,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HSET'"));
             }
             int count = 0;
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             for (size_t i = 2; i < args.size(); i += 2)
             {
                 auto &shards = self->getShard(key, sock);
@@ -789,8 +799,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HGET'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& field = args[2].str;
+            const std::string &key = args[1].str;
+            const std::string &field = args[2].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.hash.find(key);
@@ -803,7 +813,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::null_bulk());
             }
-            const std::string& val = fit->second;
+            const std::string &val = fit->second;
             return return_with_slowlog(RespValue::bulk_string(val));
         }
         else if (cmd == "HGETALL") // HGETALL key
@@ -817,7 +827,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HGETALL'"));
             }
             std::vector<RespValue> result;
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.hash.find(key);
@@ -843,7 +853,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HDEL'"));
             }
             int count = 0;
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.hash.find(key);
@@ -871,7 +881,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HLEN'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> rdlock(shards.mutex);
             auto it = shards.hash.find(key);
@@ -910,8 +920,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HEXISTS'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& field = args[2].str;
+            const std::string &key = args[1].str;
+            const std::string &field = args[2].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.hash.find(key);
@@ -955,7 +965,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HKEYS'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             std::vector<RespValue> results;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
@@ -1000,7 +1010,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'HKEYS'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             std::vector<RespValue> results;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
@@ -1139,7 +1149,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LPUSH'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto &lhs = shards.lists[key];
@@ -1159,7 +1169,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RPUSH'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto &lhs = shards.lists[key];
@@ -1192,7 +1202,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.lists.find(key);
@@ -1239,7 +1249,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.lists.find(key);
@@ -1273,7 +1283,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LLEN'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shard = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
             auto it = shard.lists.find(key);
@@ -1293,10 +1303,10 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LINSERT'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& pos = args[2].str;
-            const std::string& pivot = args[3].str;
-            const std::string& val = args[4].str;
+            const std::string &key = args[1].str;
+            const std::string &pos = args[2].str;
+            const std::string &pivot = args[3].str;
+            const std::string &val = args[4].str;
 
             auto &shard = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shard.mutex);
@@ -1336,7 +1346,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LINDEX'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             int64_t idx = 0;
             try
             {
@@ -1379,8 +1389,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LSET'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& val = args[3].str;
+            const std::string &key = args[1].str;
+            const std::string &val = args[3].str;
             int64_t idx = 0;
             try
             {
@@ -1424,8 +1434,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RPOPLPUSH'"));
             }
-            const std::string& source_key = args[1].str;
-            const std::string& dest_key = args[2].str;
+            const std::string &source_key = args[1].str;
+            const std::string &dest_key = args[2].str;
             if (source_key == dest_key)
             {
                 return return_with_slowlog(RespValue::integer(1));
@@ -1480,7 +1490,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'LRANGE'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             int start, stop;
             try
@@ -1539,7 +1549,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZADD'"));
             }
             int count = 0;
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
 
@@ -1559,7 +1569,7 @@ namespace blue
                 {
                     return return_with_slowlog(RespValue::error("ERR value is not a double or out of range"));
                 }
-                const std::string& member = args[i + 1].str;
+                const std::string &member = args[i + 1].str;
 
                 auto it = score_map.find(member);
                 if (it != score_map.end())
@@ -1588,7 +1598,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZRANGE'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             int start, stop;
             try
@@ -1656,7 +1666,7 @@ namespace blue
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZREM'"));
             }
             int count = 0;
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.zset.find(key);
@@ -1672,7 +1682,7 @@ namespace blue
 
                 for (size_t i = 2; i < args.size(); i++)
                 {
-                    const std::string& member = args[i].str;
+                    const std::string &member = args[i].str;
                     auto member_score = scores.find(member);
                     if (member_score != scores.end())
                     {
@@ -1700,7 +1710,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ASCORE'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.zset_score.find(key);
@@ -1726,7 +1736,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZRANK'"));
             }
-            const std::string& key = args[1].str, member = args[2].str;
+            const std::string &key = args[1].str, member = args[2].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.zset_score.find(key);
@@ -1757,8 +1767,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZINCRBY'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& member = args[3].str;
+            const std::string &key = args[1].str;
+            const std::string &member = args[3].str;
             int64_t incr;
             try
             {
@@ -1802,8 +1812,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZINCRBY'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& member = args[3].str;
+            const std::string &key = args[1].str;
+            const std::string &member = args[3].str;
             double incr;
             try
             {
@@ -1847,7 +1857,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZCOUNT'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             double min = 0, max = 0;
             try
             {
@@ -1889,7 +1899,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZRANGEBYSCORE'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             double min = 0, max = 0;
             try
             {
@@ -1936,7 +1946,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'ZREMRANGEBYSCORE'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             double min = 0, max = 0;
             try
             {
@@ -1998,7 +2008,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'INCR'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             int64_t val = 0;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> rdlock(shards.mutex);
@@ -2028,7 +2038,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'INCRBY'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             int64_t increment;
             try
             {
@@ -2067,7 +2077,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'STRLEN'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -2116,7 +2126,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'TYPE'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             if (shards.store.find(key) != shards.store.end())
@@ -2151,13 +2161,13 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of argument for 'SADD'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             int32_t count = 0;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             for (size_t i = 2; i < args.size(); i++)
             {
-                const std::string& member = args[i].str;
+                const std::string &member = args[i].str;
                 if (shards.sets[key].find(member) == shards.sets[key].end())
                 {
                     auto [_, res] = shards.sets[key].insert(member);
@@ -2179,7 +2189,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SMEMBERS'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             std::vector<RespValue> results;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
@@ -2204,7 +2214,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SREM'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             int32_t count = 0;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
@@ -2233,8 +2243,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR number wrong of arguments for 'SISMEMBER'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& member = args[2].str;
+            const std::string &key = args[1].str;
+            const std::string &member = args[2].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.sets.find(key);
@@ -2254,7 +2264,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR number wrong of arguments for 'SCARD'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.sets.find(key);
@@ -2283,7 +2293,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.sets.find(key);
@@ -2352,7 +2362,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
             auto it = shards.sets.find(key);
@@ -2416,7 +2426,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SDIFF'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shard = self->getShard(key, sock);
             std::vector<RespValue> results;
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
@@ -2425,7 +2435,7 @@ namespace blue
                 bool ok = true;
                 for (size_t i = 2; i < args.size(); i++)
                 {
-                    const std::string& tem_key = args[i].str;
+                    const std::string &tem_key = args[i].str;
                     auto &tem_shard = self->getShard(tem_key, sock);
                     std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
                     auto &tem_members = tem_shard.sets[tem_key];
@@ -2452,7 +2462,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SINTER'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shard = self->getShard(key, sock);
             std::vector<RespValue> results;
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
@@ -2461,7 +2471,7 @@ namespace blue
                 bool ok = true;
                 for (size_t i = 2; i < args.size(); i++)
                 {
-                    const std::string& tem_key = args[i].str;
+                    const std::string &tem_key = args[i].str;
                     auto &tem_shard = self->getShard(tem_key, sock);
                     std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
                     auto &tem_members = tem_shard.sets[tem_key];
@@ -2488,7 +2498,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SUNION'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shard = self->getShard(key, sock);
             std::unordered_set<std::string> results_set;
             std::shared_lock<std::shared_mutex> lock(shard.mutex);
@@ -2498,7 +2508,7 @@ namespace blue
             }
             for (size_t i = 2; i < args.size(); i++)
             {
-                const std::string& tem_key = args[i].str;
+                const std::string &tem_key = args[i].str;
                 auto &tem_shard = self->getShard(tem_key, sock);
                 std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
                 auto &tem_members = tem_shard.sets[tem_key];
@@ -2525,13 +2535,13 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SMOVE'"));
             }
-            const std::string& source_key = args[1].str;
-            const std::string& destination_key = args[2].str;
+            const std::string &source_key = args[1].str;
+            const std::string &destination_key = args[2].str;
             if (source_key == destination_key)
             {
                 return return_with_slowlog(RespValue::integer(1));
             }
-            const std::string& member = args[3].str;
+            const std::string &member = args[3].str;
             int src_shard_idx = self->getShardIndex(source_key);
             int dest_shard_idx = self->getShardIndex(destination_key);
             if (src_shard_idx > dest_shard_idx)
@@ -2724,7 +2734,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -2745,7 +2755,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'TTL'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -2794,7 +2804,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR value is not an integer or out of range"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -2815,7 +2825,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'PTTL'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -2851,7 +2861,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of argument for 'PERSIST'"));
             }
-            const std::string& key = args[1].str;
+            const std::string &key = args[1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
@@ -2874,8 +2884,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RENAME'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& newkey = args[2].str;
+            const std::string &key = args[1].str;
+            const std::string &newkey = args[2].str;
 
             if (key == newkey)
             {
@@ -3053,8 +3063,8 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'RENAME'"));
             }
-            const std::string& key = args[1].str;
-            const std::string& newkey = args[2].str;
+            const std::string &key = args[1].str;
+            const std::string &newkey = args[2].str;
 
             if (key == newkey)
             {
@@ -3372,8 +3382,8 @@ namespace blue
                 else
                 {
                     BLUE_LOG_INFO(xx::g_logger) << "BGSAVE: ServerData already destroyed";
-                }
-            }).detach();
+                } })
+                .detach();
             return return_with_slowlog(RespValue::simple_string("Background saving started"));
         }
         else if (cmd == "LASTSAVE") // LASTSAVE 上一次保存成功时间
@@ -3644,8 +3654,8 @@ namespace blue
                 {
                     ptr->getAOF().rotateAOF();
                     BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished"; 
-                }
-                }).detach();
+                } })
+                .detach();
             return return_with_slowlog(RespValue::simple_string("AOF rotation started"));
         }
         else if (cmd == "REPLICAOF" || cmd == "SLAVEOF")
