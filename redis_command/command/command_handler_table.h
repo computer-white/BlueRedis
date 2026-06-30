@@ -38,16 +38,6 @@ namespace blue
                                        MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
                                        bool RecordAOF = true) override;
 
-        /**
-         * @brief 无锁命令表处理命令
-         * @param args 命令列表
-         * @param sock 客户端sock
-         * @param self 服务器数据
-         * @param RecordAOF 是否记录AOF
-         */
-        virtual RespValue executeTableNoLock(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
-                                             bool RecordAOF = true) override { return RespValue{}; }
-
     private:
         static constexpr auto EVEN_VALIDATOR = [](size_t argc) -> bool
         {
