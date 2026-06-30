@@ -32,8 +32,8 @@ namespace blue
          * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, 
-            bool RecordAOF = true, CommandHandler<int> *comm = nullptr) = 0;
+        virtual RespValue executeIfelse(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self, 
+            bool RecordAOF = true) = 0;
 
         /**
          * @brief 命令表处理命令
@@ -42,7 +42,7 @@ namespace blue
          * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<T> &self, 
-            bool RecordAOF = true, CommandHandler<int> *comm = nullptr) = 0;
+        virtual RespValue executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self, 
+            bool RecordAOF = true) = 0;
     };
 }

@@ -1,5 +1,6 @@
 #pragma once
 #ifdef COMMAND_TABLE
+#include <memory>
 #include "command_handler_base.h"
 #include "blue/tcpServer.h"
 #include "redis_command/command_table.h"
@@ -23,8 +24,8 @@ namespace blue
          * @param RecordAOF 是否记录AOF
          */
         virtual RespValue executeIfelse(std::vector<RespValue> args,
-                                        MSocket::MSocketPtr sock, ServerData<T> &self,
-                                        bool RecordAOF = true, CommandHandler<int> *comm = nullptr) override { return RespValue{}; }
+                                        MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
+                                        bool RecordAOF = true) override { return RespValue{}; }
 
         /**
          * @brief 命令表处理命令
@@ -34,8 +35,8 @@ namespace blue
          * @param RecordAOF 是否记录AOF
          */
         virtual RespValue executeTable(std::vector<RespValue> args,
-                                       MSocket::MSocketPtr sock, ServerData<int> &self,
-                                       bool RecordAOF = true, CommandHandler<int> *comm = nullptr) override;
+                                       MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
+                                       bool RecordAOF = true) override;
 
     private:
         static constexpr auto EVEN_VALIDATOR = [](size_t argc) -> bool
@@ -79,8 +80,7 @@ namespace blue
         using CommandHandlerFunc = blue::RespValue (*)(std::vector<RespValue> &,
                                                        MSocket::MSocketPtr,
                                                        bool,
-                                                       ServerData<int> &, 
-                                                        CommandHandler<int> *);
+                                                       std::shared_ptr<ServerData<int>>);
         // 声明所有命令
         // connect
         REGISTER_COMMAND_T(PING, handlePING);
@@ -302,8 +302,9 @@ namespace blue
         }
     };
     template <typename T>
-    inline RespValue CommandHandlerTable<T>::executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, ServerData<int> &self, 
-        bool RecordAOF, CommandHandler<int> *comm)
+    inline RespValue CommandHandlerTable<T>::executeTable(std::vector<RespValue> args, MSocket::MSocketPtr sock, 
+        std::shared_ptr<ServerData<T>> self, 
+        bool RecordAOF)
     {
         auto start = SteadyClock::now();
         if (args.empty())
@@ -326,12 +327,12 @@ namespace blue
 #define IF_CMD(name)                                                  \
     if (cmd == #name)                                                 \
     {                                                                 \
-        if (self.getAOF().isWriteCommand(cmd) && RecordAOF)           \
+        if (self->getAOF().isWriteCommand(cmd) && RecordAOF)           \
         {                                                             \
-            std::string aof_cmds = self.getAOF().formatCommand(args); \
-            self.getAOF().appendToAOF(aof_cmds);                      \
+            std::string aof_cmds = self->getAOF().formatCommand(args); \
+            self->getAOF().appendToAOF(aof_cmds);                      \
         }                                                             \
-        return handle##name(args, sock, RecordAOF, self, comm);             \
+        return handle##name(args, sock, RecordAOF, self);             \
     }
 
         // 高频命令不走命令表
@@ -355,13 +356,13 @@ namespace blue
 
         if (RecordAOF && entry->is_write)
         {
-            std::string aof_cmds = self.getAOF().formatCommand(args);
-            self.getAOF().appendToAOF(aof_cmds);
+            std::string aof_cmds = self->getAOF().formatCommand(args);
+            self->getAOF().appendToAOF(aof_cmds);
         }
 
         // 执行命令
         auto handler = entry->handler;
-        RespValue result = handler(args, sock, RecordAOF, self, comm);
+        RespValue result = handler(args, sock, RecordAOF, self);
 
         // 慢查询记录
         auto end = SteadyClock::now();
@@ -374,7 +375,7 @@ namespace blue
             }
             cmd_str += args[i].str;
         }
-        self.getSlowLog().pushEntry(cmd_str, sock, start, end);
+        self->getSlowLog().pushEntry(cmd_str, sock, start, end);
 
         return result;
     }
@@ -384,8 +385,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handlePING(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         BLUE_LOG_INFO(xx::g_logger) << "commandTable 模式";
         if (sock->getClientlevel() < 1)
@@ -402,8 +402,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleAUTH(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (args[1].str == sock->getClientPassword())
         {
@@ -414,9 +413,9 @@ namespace blue
             sock->setClientlevel(1);
             return RespValue::simple_string("OK");
         }
-        if (args[1].str == self.getPassword())
+        if (args[1].str == self->getPassword())
         {
-            if (!self.getAdminSocket().expired())
+            if (!self->getAdminSocket().expired())
             {
                 return RespValue::error("ERR admin already logged in elsewhere");
             }
@@ -424,7 +423,7 @@ namespace blue
             {
                 return RespValue::error("ERR this connection already have been logged by client");
             }
-            self.setAdminSocket(sock);
+            self->setAdminSocket(sock);
             sock->setClientlevel(2);
             return RespValue::simple_string("OK");
         }
@@ -435,8 +434,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSELECT(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -463,8 +461,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleCLIENT(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -514,8 +511,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleCONFIG(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         // 同一时刻只能存在一个管理员，并且由于CommandHandler只有一个实例化，所以修改和获取不需要锁
         std::string subcmd = args[1].str;
@@ -537,52 +533,52 @@ namespace blue
             if (pattern == "*" || pattern == "maxclients")
             {
                 result.push_back(RespValue::bulk_string("maxclients"));
-                result.push_back(RespValue::bulk_string(std::to_string(self.getMaxClientCount())));
+                result.push_back(RespValue::bulk_string(std::to_string(self->getMaxClientCount())));
             }
             if (pattern == "*" || pattern == "timeout")
             {
                 result.push_back(RespValue::bulk_string("timeout"));
-                result.push_back(RespValue::bulk_string(std::to_string(self.getTimeoutS())));
+                result.push_back(RespValue::bulk_string(std::to_string(self->getTimeoutS())));
             }
             if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*")
             {
                 result.push_back(RespValue::bulk_string("slowlog-log-slower-than"));
-                result.push_back(RespValue::bulk_string(std::to_string(self.getSlowLog().getSlowLogThan())));
+                result.push_back(RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowLogThan())));
             }
             if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*")
             {
                 result.push_back(RespValue::bulk_string("slowlog-max-len"));
-                result.push_back(RespValue::bulk_string(std::to_string(self.getSlowLog().getSlowMaxLen())));
+                result.push_back(RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowMaxLen())));
             }
             if (pattern == "*" || pattern == "aof-enabled" || pattern == "aof-*")
             {
                 result.push_back(RespValue::bulk_string("aof-enabled"));
-                result.push_back(RespValue::bulk_string(self.getAOF().getConfig_AOFEnabled() ? "yes" : "no"));
+                result.push_back(RespValue::bulk_string(self->getAOF().getConfig_AOFEnabled() ? "yes" : "no"));
             }
             if (pattern == "*" || pattern == "aof-filename" || pattern == "aof-*")
             {
                 result.push_back(RespValue::bulk_string("aof-filename"));
-                result.push_back(RespValue::bulk_string(self.getAOF().getConfig_AOFFilename()));
+                result.push_back(RespValue::bulk_string(self->getAOF().getConfig_AOFFilename()));
             }
             if (pattern == "*" || pattern == "aof-sync" || pattern == "aof-*")
             {
                 result.push_back(RespValue::bulk_string("aof-sync"));
-                result.push_back(RespValue::bulk_string(self.getAOF().getConfig_AOFSync()));
+                result.push_back(RespValue::bulk_string(self->getAOF().getConfig_AOFSync()));
             }
             if (pattern == "*" || pattern == "aof-max_file_size" || pattern == "aof-*")
             {
                 result.push_back(RespValue::bulk_string("aof-max_file_size"));
-                result.push_back(RespValue::bulk_string(std::to_string(self.getAOF().getConfig_AOFMaxFileSize())));
+                result.push_back(RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileSize())));
             }
             if (pattern == "*" || pattern == "aof-max_file_number" || pattern == "aof-*")
             {
                 result.push_back(RespValue::bulk_string("aof-max_file_number"));
-                result.push_back(RespValue::bulk_string(std::to_string(self.getAOF().getConfig_AOFMaxFileNumber())));
+                result.push_back(RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileNumber())));
             }
             if (pattern == "*" || pattern == "aof-max_buffer_size" || pattern == "aof-*")
             {
                 result.push_back(RespValue::bulk_string("aof-max_buffer_size"));
-                result.push_back(RespValue::bulk_string(std::to_string(self.getAOF().getMaxAOFBufferSize())));
+                result.push_back(RespValue::bulk_string(std::to_string(self->getAOF().getMaxAOFBufferSize())));
             }
             return RespValue::array(std::move(result));
         }
@@ -593,8 +589,8 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'CONFIG SET'");
             }
 
-            std::string param = args[2].str;
-            std::string value = args[3].str;
+            const std::string& param = args[2].str;
+            const std::string& value = args[3].str;
 
             if (param == "clientpass") // 客户端密码
             {
@@ -610,7 +606,7 @@ namespace blue
                     {
                         return RespValue::error("ERR value must be >= 0");
                     }
-                    self.getSlowLog().setSlowLogThan(val);
+                    self->getSlowLog().setSlowLogThan(val);
                     return RespValue::simple_string("OK");
                 }
                 catch (...)
@@ -627,7 +623,7 @@ namespace blue
                     {
                         return RespValue::error("ERR value must be > 0");
                     }
-                    self.getSlowLog().setSlowMaxLen(val);
+                    self->getSlowLog().setSlowMaxLen(val);
                     return RespValue::simple_string("OK");
                 }
                 catch (...)
@@ -639,13 +635,13 @@ namespace blue
             {
                 if (value == "yes" || value == "1")
                 {
-                    self.getAOF().setConfig_AOFEnabled(true);
-                    self.getAOF().initAOF();
+                    self->getAOF().setConfig_AOFEnabled(true);
+                    self->getAOF().initAOF();
                 }
                 else if (value == "no" || value == "0")
                 {
-                    self.getAOF().setConfig_AOFEnabled(false);
-                    self.getAOF().closeAOF();
+                    self->getAOF().setConfig_AOFEnabled(false);
+                    self->getAOF().closeAOF();
                 }
                 else
                 {
@@ -657,7 +653,7 @@ namespace blue
             {
                 if (value == "always" || value == "everysec" || value == "no")
                 {
-                    self.getAOF().setConfig_AOFSync(value);
+                    self->getAOF().setConfig_AOFSync(value);
                     return RespValue::simple_string("OK");
                 }
                 return RespValue::error("ERR invalid sync mode");
@@ -668,7 +664,7 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid filename");
                 }
-                self.getAOF().setConfig_AOFFilename(value);
+                self->getAOF().setConfig_AOFFilename(value);
                 return RespValue::simple_string("OK");
             }
             if (param == "aof-max_file_size") // 每个aof文件大小
@@ -687,7 +683,7 @@ namespace blue
                     return RespValue::error("ERR invalid integer value");
                 }
 
-                self.getAOF().setConfig_AOFMaxFileSize(val);
+                self->getAOF().setConfig_AOFMaxFileSize(val);
                 return RespValue::simple_string("OK");
             }
             if (param == "aof-max_file_number") // 最多保留多少aof文件
@@ -705,7 +701,7 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid integer value");
                 }
-                self.getAOF().setConfig_AOFMaxFileNumber(val);
+                self->getAOF().setConfig_AOFMaxFileNumber(val);
                 return RespValue::simple_string("OK");
             }
             if (param == "aof-max_buffer_size") // aof缓冲区大小
@@ -723,11 +719,11 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid integer value");
                 }
-                self.getAOF().setMaxAOFBufferSize(val);
+                self->getAOF().setMaxAOFBufferSize(val);
                 return RespValue::simple_string("OK");
             }
             // 以下只允许管理员设置
-            if (!self.isAdmin(sock))
+            if (!self->isAdmin(sock))
             {
                 return RespValue::error("ERR authentication required");
             }
@@ -740,11 +736,11 @@ namespace blue
                     {
                         return RespValue::error("ERR invalid maxclients value");
                     }
-                    if (newmax < comm->getConnection())
+                    if (newmax < self->getConnection())
                     {
                         return RespValue::error("ERR maxclients can't be less than current connections");
                     }
-                    self.setMaxClientCount(newmax);
+                    self->setMaxClientCount(newmax);
                     return RespValue::simple_string("OK");
                 }
                 catch (...)
@@ -761,7 +757,7 @@ namespace blue
                     {
                         return RespValue::error("ERR invalid timeout value");
                     }
-                    self.setTimeoutS(timeout);
+                    self->setTimeoutS(timeout);
                     return RespValue::simple_string("OK");
                 }
                 catch (...)
@@ -779,8 +775,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSET(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
-                                                ServerData<int> &self,
-                                                CommandHandler<int> *comm)
+                                                std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -790,9 +785,9 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of arguments for 'SET'");
         }
-        const std::string key = args[1].str;
-        const std::string val = args[2].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        const std::string& val = args[2].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         shards.store[key] = val;
         if (args.size() >= 5)
@@ -841,16 +836,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleGET(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
-                                                ServerData<int> &self,
-                                                CommandHandler<int> *comm)
+                                                std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
-        std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> rdlock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
@@ -863,8 +857,10 @@ namespace blue
         auto expire_it = shards.expire.find(key);
         if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
         {
-            shards.expire.erase(expire_it);
-            shards.store.erase(it);
+            rdlock.unlock();
+            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            shards.expire.erase(key);
+            shards.store.erase(key);
             return RespValue::null_bulk();
         }
         const std::string val = it->second;
@@ -875,8 +871,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleMSET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -884,9 +879,9 @@ namespace blue
         }
         for (size_t i = 1; i < args.size(); i += 2)
         {
-            const std::string key = args[i].str;
-            const std::string val = args[i + 1].str;
-            auto &shards = self.getShard(key, sock);
+            const std::string& key = args[i].str;
+            const std::string& val = args[i + 1].str;
+            auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             shards.store[key] = val;
         }
@@ -897,8 +892,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleMGET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -908,20 +902,23 @@ namespace blue
 
         for (size_t i = 1; i < args.size(); i++)
         {
-            auto &shards = self.getShard(args[i].str, sock);
+            const std::string& key = args[i].str;
+            auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
-            auto it = shards.store.find(args[i].str);
+            auto it = shards.store.find(key);
             if (it == shards.store.end())
             {
                 results.push_back(RespValue::null_bulk());
             }
             else
             {
-                auto expire_it = shards.expire.find(args[i].str);
+                auto expire_it = shards.expire.find(key);
                 if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
                 {
-                    shards.expire.erase(expire_it);
-                    shards.store.erase(it);
+                    lock.unlock();
+                    std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+                    shards.expire.erase(key);
+                    shards.store.erase(key);
                     results.push_back(RespValue::null_bulk());
                 }
                 else
@@ -938,16 +935,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleGETSET(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string val = args[2].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        const std::string& val = args[2].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
@@ -964,16 +960,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleAPPEND(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string val = args[2].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        const std::string& val = args[2].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
@@ -991,16 +986,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSETNX(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string val = args[2].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        const std::string& val = args[2].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
@@ -1015,8 +1009,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleEXISTS(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1025,8 +1018,8 @@ namespace blue
         int64_t count = 0;
         for (size_t i = 1; i < args.size(); i++)
         {
-            const std::string key = args[i].str;
-            auto &shards = self.getShard(key, sock);
+            const std::string& key = args[i].str;
+            auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             if (shards.store.find(key) != shards.store.end() ||
                 shards.hash.find(key) != shards.hash.end() ||
@@ -1044,8 +1037,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleDEL(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
-                                                ServerData<int> &self,
-                                                CommandHandler<int> *comm)
+                                                std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1058,8 +1050,8 @@ namespace blue
         int count = 0;
         for (size_t i = 1; i < args.size(); i++)
         {
-            const std::string key = args[i].str;
-            auto &shards = self.getShard(key, sock);
+            const std::string& key = args[i].str;
+            auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             if (it != shards.store.end())
@@ -1076,16 +1068,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleINCR(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         int64_t val = 0;
-        auto &shards = self.getShard(key, sock);
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> rdlock(shards.mutex);
         auto it = shards.store.find(key);
         if (it != shards.store.end())
@@ -1108,14 +1099,13 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleINCRBY(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         int64_t increment;
         try
         {
@@ -1125,7 +1115,7 @@ namespace blue
         {
             return RespValue::error("ERR value is not an integer or out of range");
         }
-        auto &shards = self.getShard(key, sock);
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         int64_t val = 0;
@@ -1149,16 +1139,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSTRLEN(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
@@ -1187,8 +1176,10 @@ namespace blue
         auto expire_it = shards.expire.find(key);
         if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
         {
-            shards.expire.erase(expire_it);
-            shards.store.erase(it);
+            lock.unlock();
+            std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+            shards.expire.erase(key);
+            shards.store.erase(key);
             return RespValue::integer(0);
         }
         return RespValue::integer(it->second.size());
@@ -1198,15 +1189,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleTYPE(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         if (shards.store.find(key) != shards.store.end())
         {
@@ -1235,8 +1225,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleKEYS(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1274,7 +1263,7 @@ namespace blue
         result.reserve(MAX_KEYS);
 
         // 遍历所有分片
-        for (auto &shard : self.getDBs()[sock->getClientId()])
+        for (auto &shard : self->getDBs()[sock->getClientId()])
         {
             if (result.size() >= MAX_KEYS)
             {
@@ -1332,8 +1321,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleHSET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1344,10 +1332,10 @@ namespace blue
             return RespValue::error("ERR wrong number of arguments for 'HSET'");
         }
         int count = 0;
-        std::string key = args[1].str;
+        const std::string& key = args[1].str;
         for (size_t i = 2; i < args.size(); i += 2)
         {
-            auto &shards = self.getShard(key, sock);
+            auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto &field = args[i].str;
             auto &value = args[i + 1].str; // size 是偶数所以不会出界
@@ -1364,8 +1352,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleHGET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1375,9 +1362,9 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of arguments for 'HGET'");
         }
-        const std::string key = args[1].str;
-        const std::string field = args[2].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        const std::string& field = args[2].str;
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
@@ -1397,16 +1384,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleHGETALL(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
         std::vector<RespValue> result;
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
@@ -1425,16 +1411,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleHDEL(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
         int count = 0;
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
@@ -1456,15 +1441,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleHLEN(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> rdlock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
@@ -1497,16 +1481,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleHEXISTS(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string field = args[2].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        const std::string& field = args[2].str;
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
@@ -1544,16 +1527,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleHKEYS(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         std::vector<RespValue> results;
-        auto &shards = self.getShard(key, sock);
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
@@ -1591,16 +1573,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleHVALS(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         std::vector<RespValue> results;
-        auto &shards = self.getShard(key, sock);
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.hash.find(key);
         if (it == shards.hash.end())
@@ -1639,8 +1620,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLPUSH(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1650,8 +1630,8 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of arguments for 'LPUSH'");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto &lhs = shards.lists[key];
         for (size_t i = 2; i < args.size(); i++)
@@ -1665,15 +1645,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleRPUSH(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto &lhs = shards.lists[key];
         for (size_t i = 2; i < args.size(); i++)
@@ -1687,8 +1666,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLPOP(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1711,8 +1689,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.lists.find(key);
         if (it == shards.lists.end() || it->second.empty())
@@ -1740,8 +1718,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleRPOP(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1760,8 +1737,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.lists.find(key);
         if (it == shards.lists.end() || it->second.empty())
@@ -1789,15 +1766,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLLEN(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shard = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shard = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.lists.find(key);
         if (it == shard.lists.end())
@@ -1811,19 +1787,18 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLINSERT(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string pos = args[2].str;
-        const std::string pivot = args[3].str;
-        const std::string val = args[4].str;
+        const std::string& key = args[1].str;
+        const std::string& pos = args[2].str;
+        const std::string& pivot = args[3].str;
+        const std::string& val = args[4].str;
 
-        auto &shard = self.getShard(key, sock);
+        auto &shard = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.lists.find(key);
         if (it == shard.lists.end())
@@ -1856,14 +1831,13 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLINDEX(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         int64_t idx = 0;
         try
         {
@@ -1873,7 +1847,7 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        auto &shard = self.getShard(key, sock);
+        auto &shard = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.lists.find(key);
         if (it == shard.lists.end())
@@ -1901,15 +1875,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLSET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string val = args[3].str;
+        const std::string& key = args[1].str;
+        const std::string& val = args[3].str;
         int64_t idx = 0;
         try
         {
@@ -1919,8 +1892,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        auto &shard = self.getShard(key, sock);
-        std::shared_lock<std::shared_mutex> lock(shard.mutex);
+        auto &shard = self->getShard(key, sock);
+        std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.lists.find(key);
         if (it == shard.lists.end())
         {
@@ -1948,27 +1921,26 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleRPOPLPUSH(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
-                                                      ServerData<int> &self,
-                                                      CommandHandler<int> *comm)
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string source_key = args[1].str;
-        const std::string dest_key = args[2].str;
+        const std::string& source_key = args[1].str;
+        const std::string& dest_key = args[2].str;
         if (source_key == dest_key)
         {
             return RespValue::integer(1);
         }
-        int src_idx = self.getShardIndex(source_key);
-        int dest_idx = self.getShardIndex(dest_key);
+        int src_idx = self->getShardIndex(source_key);
+        int dest_idx = self->getShardIndex(dest_key);
         if (src_idx > dest_idx)
         {
             std::swap(src_idx, dest_idx);
         }
-        auto &src_shard = self.getShard(source_key, sock);
-        auto &dest_shard = self.getShard(dest_key, sock);
+        auto &src_shard = self->getShard(source_key, sock);
+        auto &dest_shard = self->getShard(dest_key, sock);
         std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
         std::unique_lock<std::shared_mutex> lock2;
         if (src_idx != dest_idx)
@@ -1997,27 +1969,26 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLPOPRPUSH(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
-                                                      ServerData<int> &self,
-                                                      CommandHandler<int> *comm)
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string source_key = args[1].str;
-        const std::string dest_key = args[2].str;
+        const std::string& source_key = args[1].str;
+        const std::string& dest_key = args[2].str;
         if (source_key == dest_key)
         {
             return RespValue::integer(1);
         }
-        int src_idx = self.getShardIndex(source_key);
-        int dest_idx = self.getShardIndex(dest_key);
+        int src_idx = self->getShardIndex(source_key);
+        int dest_idx = self->getShardIndex(dest_key);
         if (src_idx > dest_idx)
         {
             std::swap(src_idx, dest_idx);
         }
-        auto &src_shard = self.getShard(source_key, sock);
-        auto &dest_shard = self.getShard(dest_key, sock);
+        auto &src_shard = self->getShard(source_key, sock);
+        auto &dest_shard = self->getShard(dest_key, sock);
         std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
         std::unique_lock<std::shared_mutex> lock2;
         if (src_idx != dest_idx)
@@ -2046,15 +2017,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLRANGE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         int start, stop;
         try
         {
@@ -2065,7 +2035,7 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.lists.find(key);
         if (it == shards.lists.end())
         {
@@ -2107,8 +2077,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSADD(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2118,9 +2087,9 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of argument for 'SADD'");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         int32_t count = 0;
-        auto &shards = self.getShard(key, sock);
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         for (size_t i = 2; i < args.size(); i++)
         {
@@ -2141,16 +2110,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSMEMBERS(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
-                                                     ServerData<int> &self,
-                                                     CommandHandler<int> *comm)
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         std::vector<RespValue> results;
-        auto &shards = self.getShard(key, sock);
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
@@ -2168,16 +2136,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSREM(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         int32_t count = 0;
-        auto &shards = self.getShard(key, sock);
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
@@ -2199,16 +2166,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSISMEMBER(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
-                                                      ServerData<int> &self,
-                                                      CommandHandler<int> *comm)
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         const std::string member = args[2].str;
-        auto &shards = self.getShard(key, sock);
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
@@ -2222,15 +2188,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSCARD(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
@@ -2244,8 +2209,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSRANDMEMBER(std::vector<RespValue> &args,
                                                         MSocket::MSocketPtr sock,
                                                         bool aof,
-                                                        ServerData<int> &self,
-                                                        CommandHandler<int> *comm)
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2260,8 +2224,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not an integer or out of range");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
@@ -2311,8 +2275,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSPOP(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2331,8 +2294,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not an integer or out of range");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.sets.find(key);
         if (it == shards.sets.end())
@@ -2390,15 +2353,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSDIFF(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shard = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shard = self->getShard(key, sock);
         std::vector<RespValue> results;
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
         for (const auto &member : shard.sets[key])
@@ -2407,7 +2369,7 @@ namespace blue
             for (size_t i = 2; i < args.size(); i++)
             {
                 const std::string tem_key = args[i].str;
-                auto &tem_shard = self.getShard(tem_key, sock);
+                auto &tem_shard = self->getShard(tem_key, sock);
                 std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
                 auto &tem_members = tem_shard.sets[tem_key];
                 if (tem_members.contains(member))
@@ -2428,15 +2390,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSINTER(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shard = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shard = self->getShard(key, sock);
         std::vector<RespValue> results;
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
         for (const auto &member : shard.sets[key])
@@ -2445,7 +2406,7 @@ namespace blue
             for (size_t i = 2; i < args.size(); i++)
             {
                 const std::string tem_key = args[i].str;
-                auto &tem_shard = self.getShard(tem_key, sock);
+                auto &tem_shard = self->getShard(tem_key, sock);
                 std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
                 auto &tem_members = tem_shard.sets[tem_key];
                 if (!tem_members.contains(member))
@@ -2466,15 +2427,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSUNION(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shard = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shard = self->getShard(key, sock);
         std::unordered_set<std::string> results_set;
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
         for (const auto &member : shard.sets[key])
@@ -2484,7 +2444,7 @@ namespace blue
         for (size_t i = 2; i < args.size(); i++)
         {
             const std::string tem_key = args[i].str;
-            auto &tem_shard = self.getShard(tem_key, sock);
+            auto &tem_shard = self->getShard(tem_key, sock);
             std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
             auto &tem_members = tem_shard.sets[tem_key];
             for (const auto &tem_member : tem_members)
@@ -2505,28 +2465,27 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSMOVE(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string source_key = args[1].str;
-        const std::string destination_key = args[2].str;
+        const std::string& source_key = args[1].str;
+        const std::string& destination_key = args[2].str;
         if (source_key == destination_key)
         {
             return RespValue::integer(1);
         }
-        const std::string member = args[3].str;
-        int src_shard_idx = self.getShardIndex(source_key);
-        int dest_shard_idx = self.getShardIndex(destination_key);
+        const std::string& member = args[3].str;
+        int src_shard_idx = self->getShardIndex(source_key);
+        int dest_shard_idx = self->getShardIndex(destination_key);
         if (src_shard_idx > dest_shard_idx)
         {
             std::swap(src_shard_idx, dest_shard_idx);
         }
-        auto &src_shard = self.getShard(source_key, sock);
-        auto &dest_shard = self.getShard(destination_key, sock);
+        auto &src_shard = self->getShard(source_key, sock);
+        auto &dest_shard = self->getShard(destination_key, sock);
 
         std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
         std::unique_lock<std::shared_mutex> lock2;
@@ -2566,8 +2525,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZADD(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2578,8 +2536,8 @@ namespace blue
             return RespValue::error("ERR wrong number of arguments for 'ZADD'");
         }
         int count = 0;
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
 
         shards.zset_score.try_emplace(key);
@@ -2622,15 +2580,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZRANGE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         int start, stop;
         try
         {
@@ -2641,7 +2598,7 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.zset.find(key);
         if (it == shards.zset.end())
         {
@@ -2681,7 +2638,7 @@ namespace blue
             results.push_back(RespValue::bulk_string(node->val));
             if (withscores)
             {
-                results.push_back(RespValue::bulk_string(self.format_score(node->key.score)));
+                results.push_back(RespValue::bulk_string(self->format_score(node->key.score)));
             }
         }
         return RespValue::array(std::move(results));
@@ -2691,16 +2648,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZREM(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
         int count = 0;
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
         auto it = shards.zset.find(key);
         if (it == shards.zset.end())
@@ -2738,16 +2694,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZSCORE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.zset_score.find(key);
         if (it == shards.zset_score.end())
         {
@@ -2757,7 +2712,7 @@ namespace blue
         auto sit = skiplist_map.find(args[2].str);
         if (sit != skiplist_map.end())
         {
-            return RespValue::bulk_string(self.format_score(sit->second));
+            return RespValue::bulk_string(self->format_score(sit->second));
         }
         return RespValue::null_bulk();
     }
@@ -2766,16 +2721,15 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZRANK(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str, member = args[2].str;
-        auto &shards = self.getShard(key, sock);
-        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+        const std::string& key = args[1].str, member = args[2].str;
+        auto &shards = self->getShard(key, sock);
+        std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.zset_score.find(key);
         if (it == shards.zset_score.end())
         {
@@ -2799,15 +2753,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZINCRBY(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string member = args[3].str;
+        const std::string& key = args[1].str;
+        const std::string& member = args[3].str;
         int64_t incr;
         try
         {
@@ -2817,7 +2770,7 @@ namespace blue
         {
             return RespValue::error("ERR value is not a integer or out of range");
         }
-        auto &shard = self.getShard(key, sock);
+        auto &shard = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset.find(key);
         if (it == shard.zset.end())
@@ -2837,7 +2790,7 @@ namespace blue
             scores_map[member] += incr;
             skiplist.remove(old_val);
             skiplist.insert({scores_map[member], member}, member);
-            return RespValue::bulk_string(self.format_score(scores_map[member]));
+            return RespValue::bulk_string(self->format_score(scores_map[member]));
         }
         return RespValue::null_bulk();
     }
@@ -2846,15 +2799,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZINCRBYFLOAT(std::vector<RespValue> &args,
                                                          MSocket::MSocketPtr sock,
                                                          bool aof,
-                                                         ServerData<int> &self,
-                                                         CommandHandler<int> *comm)
+                                                         std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string member = args[3].str;
+        const std::string& key = args[1].str;
+        const std::string& member = args[3].str;
         double incr;
         try
         {
@@ -2864,7 +2816,7 @@ namespace blue
         {
             return RespValue::error("ERR value is not a float or out of range");
         }
-        auto &shard = self.getShard(key, sock);
+        auto &shard = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset.find(key);
         if (it == shard.zset.end())
@@ -2884,7 +2836,7 @@ namespace blue
             scores_map[member] += incr;
             skiplist.remove(old_val);
             skiplist.insert({scores_map[member], member}, member);
-            return RespValue::bulk_string(self.format_score(scores_map[member]));
+            return RespValue::bulk_string(self->format_score(scores_map[member]));
         }
         return RespValue::null_bulk();
     }
@@ -2893,14 +2845,13 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZCOUNT(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         double min = 0, max = 0;
         try
         {
@@ -2916,7 +2867,7 @@ namespace blue
             return RespValue::error("ERR value is not a double or out of range");
         }
         int64_t count = 0;
-        auto &shard = self.getShard(key, sock);
+        auto &shard = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset_score.find(key);
         if (it == shard.zset_score.end())
@@ -2937,14 +2888,13 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZRANGEBYSCORE(std::vector<RespValue> &args,
                                                           MSocket::MSocketPtr sock,
                                                           bool aof,
-                                                          ServerData<int> &self,
-                                                          CommandHandler<int> *comm)
+                                                          std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         double min = 0, max = 0;
         try
         {
@@ -2961,7 +2911,7 @@ namespace blue
         }
         std::vector<RespValue> results;
         bool withscore = (args.size() == 5 && (args[4].str == "WITHSCORE" || args[4].str == "withscore"));
-        auto &shard = self.getShard(key, sock);
+        auto &shard = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset_score.find(key);
         if (it == shard.zset_score.end())
@@ -2975,7 +2925,7 @@ namespace blue
                 results.push_back(RespValue::bulk_string(member));
                 if (withscore)
                 {
-                    results.push_back(RespValue::bulk_string((self.format_score(score))));
+                    results.push_back(RespValue::bulk_string((self->format_score(score))));
                 }
             }
         }
@@ -2986,14 +2936,13 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleZREMRANGEBYSCORE(std::vector<RespValue> &args,
                                                              MSocket::MSocketPtr sock,
                                                              bool aof,
-                                                             ServerData<int> &self,
-                                                             CommandHandler<int> *comm)
+                                                             std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
+        const std::string& key = args[1].str;
         double min = 0, max = 0;
         try
         {
@@ -3009,7 +2958,7 @@ namespace blue
             return RespValue::error("ERR value is not a double or out of range");
         }
         int64_t count = 0;
-        auto &shard = self.getShard(key, sock);
+        auto &shard = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shard.mutex);
         auto it = shard.zset.find(key);
         if (it == shard.zset.end())
@@ -3051,20 +3000,19 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleFLUSHDB(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        if (self.isAdmin(sock))
+        if (self->isAdmin(sock))
         {
             if (args.size() < 1 || args.size() > 2)
             {
                 return RespValue::error("ERR wrong number of arguments for 'FLUSHDB'");
             }
-            for (auto &shards : self.getDBs()[sock->getClientId()])
+            for (auto &shards : self->getDBs()[sock->getClientId()])
             {
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 shards.store.clear();
@@ -3087,7 +3035,7 @@ namespace blue
             std::transform(confirm.begin(), confirm.end(), confirm.begin(), ::toupper);
             if (confirm == "CONFIRM")
             {
-                for (auto &shards : self.getDBs()[sock->getClientId()])
+                for (auto &shards : self->getDBs()[sock->getClientId()])
                 {
                     std::unique_lock<std::shared_mutex> lock(shards.mutex);
                     shards.store.clear();
@@ -3109,14 +3057,13 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleFLUSHDBALL(std::vector<RespValue> &args,
                                                        MSocket::MSocketPtr sock,
                                                        bool aof,
-                                                       ServerData<int> &self,
-                                                       CommandHandler<int> *comm)
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        if (self.isAdmin(sock))
+        if (self->isAdmin(sock))
         {
             if (args.size() < 1 || args.size() > 2)
             {
@@ -3124,7 +3071,7 @@ namespace blue
             }
             for (int db = 0; db < DB_COUNT; db++)
             {
-                for (auto &shards : self.getDBs()[db])
+                for (auto &shards : self->getDBs()[db])
                 {
                     std::unique_lock<std::shared_mutex> lock(shards.mutex);
                     shards.store.clear();
@@ -3150,7 +3097,7 @@ namespace blue
             {
                 for (int db = 0; db < DB_COUNT; db++)
                 {
-                    for (auto &shards : self.getDBs()[db])
+                    for (auto &shards : self->getDBs()[db])
                     {
                         std::unique_lock<std::shared_mutex> lock(shards.mutex);
                         shards.store.clear();
@@ -3173,15 +3120,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleDBSIZE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
         int64_t count = 0;
-        for (auto &shards : self.getDBs()[sock->getClientId()])
+        for (auto &shards : self->getDBs()[sock->getClientId()])
         {
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             count += shards.store.size() + shards.lists.size() + shards.hash.size() + shards.zset.size();
@@ -3194,8 +3140,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleEXPIRE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3214,8 +3159,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not an integer or out of range");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
@@ -3230,15 +3175,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleTTL(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
-                                                ServerData<int> &self,
-                                                CommandHandler<int> *comm)
+                                                std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         auto expire_it = shards.expire.find(key);
@@ -3268,8 +3212,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handlePEXPIRE(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3288,8 +3231,8 @@ namespace blue
         {
             return RespValue::error("ERR value is not an integer or out of range");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         if (it == shards.store.end())
@@ -3304,15 +3247,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handlePTTL(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::shared_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         auto expire_it = shards.expire.find(key);
@@ -3342,15 +3284,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handlePERSIST(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        auto &shards = self.getShard(key, sock);
+        const std::string& key = args[1].str;
+        auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
         auto it = shards.store.find(key);
         auto expire_it = shards.expire.find(key);
@@ -3367,23 +3308,22 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleRENAME(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string newkey = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& newkey = args[2].str;
 
         if (key == newkey)
         {
             return RespValue::simple_string("OK");
         }
 
-        int old_shard_idx = self.getShardIndex(key);
-        int new_shard_idx = self.getShardIndex(newkey);
+        int old_shard_idx = self->getShardIndex(key);
+        int new_shard_idx = self->getShardIndex(newkey);
 
         // 按顺序锁，避免死锁
         int first = old_shard_idx;
@@ -3392,7 +3332,7 @@ namespace blue
         {
             std::swap(first, second);
         }
-        auto &m_shards = self.getDBs()[sock->getClientId()];
+        auto &m_shards = self->getDBs()[sock->getClientId()];
         std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
         if (old_shard_idx != new_shard_idx)
@@ -3548,23 +3488,22 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleRENAMENX(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
-                                                     ServerData<int> &self,
-                                                     CommandHandler<int> *comm)
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        const std::string key = args[1].str;
-        const std::string newkey = args[2].str;
+        const std::string& key = args[1].str;
+        const std::string& newkey = args[2].str;
 
         if (key == newkey)
         {
             return RespValue::integer(1);
         }
 
-        int old_shard_idx = self.getShardIndex(key);
-        int new_shard_idx = self.getShardIndex(newkey);
+        int old_shard_idx = self->getShardIndex(key);
+        int new_shard_idx = self->getShardIndex(newkey);
 
         // 按顺序锁，避免死锁
         int first = old_shard_idx;
@@ -3573,7 +3512,7 @@ namespace blue
         {
             std::swap(first, second);
         }
-        auto &m_shards = self.getDBs()[sock->getClientId()];
+        auto &m_shards = self->getDBs()[sock->getClientId()];
         std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
         if (old_shard_idx != new_shard_idx)
@@ -3731,15 +3670,14 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleRANDOMKEY(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
-                                                      ServerData<int> &self,
-                                                      CommandHandler<int> *comm)
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
         std::vector<std::string> all_keys;
-        for (auto &shards : self.getDBs()[sock->getClientId()])
+        for (auto &shards : self->getDBs()[sock->getClientId()])
         {
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             // string
@@ -3783,8 +3721,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleINFO(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3799,38 +3736,38 @@ namespace blue
 
         // Client
         info += "# Client\r\n";
-        info += "connections:" + std::to_string(comm->getConnection()) + "\r\n";
-        info += "maxclient:" + std::to_string(self.getMaxClientCount()) + "\r\n";
-        info += "reject_connections:" + std::to_string(comm->getRejectConnection()) + "\r\n";
+        info += "connections:" + std::to_string(self->getConnection()) + "\r\n";
+        info += "maxclient:" + std::to_string(self->getMaxClientCount()) + "\r\n";
+        info += "reject_connections:" + std::to_string(self->getRejectConnection()) + "\r\n";
         info += "\r\n";
 
         // AOF
         info += "# AOF\r\n";
-        info += "aof_enabled:" + std::string(self.getAOF().getConfig_AOFEnabled() ? "1" : "0") + "\r\n";
-        info += "aof_sync:" + self.getAOF().getConfig_AOFSync() + "\r\n";
-        info += "aof_current_file:" + self.getAOF().getCurrentFileName() + "\r\n";
-        info += "aof_file_index:" + std::to_string(self.getAOF().getCurrentFileIdx()) + "\r\n";
-        info += "aof_current_size:" + std::to_string(self.getAOF().getCurrentFileSize()) + "\r\n";
-        info += "aof_max_file_size:" + std::to_string(self.getAOF().getConfig_AOFMaxFileSize()) + "\r\n";
-        info += "aof_max_files:" + std::to_string(self.getAOF().getConfig_AOFMaxFileNumber()) + "\r\n";
-        info += "aof_max_buffer_size" + std::to_string(self.getAOF().getMaxAOFBufferSize()) + "\r\n";
+        info += "aof_enabled:" + std::string(self->getAOF().getConfig_AOFEnabled() ? "1" : "0") + "\r\n";
+        info += "aof_sync:" + self->getAOF().getConfig_AOFSync() + "\r\n";
+        info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
+        info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
+        info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
+        info += "aof_max_file_size:" + std::to_string(self->getAOF().getConfig_AOFMaxFileSize()) + "\r\n";
+        info += "aof_max_files:" + std::to_string(self->getAOF().getConfig_AOFMaxFileNumber()) + "\r\n";
+        info += "aof_max_buffer_size" + std::to_string(self->getAOF().getMaxAOFBufferSize()) + "\r\n";
         info += "\r\n";
 
         // Monitor
         info += "# Monitor\r\n";
-        info += "monitor_clients:" + std::to_string(self.getMonitor().size()) + "\r\n";
+        info += "monitor_clients:" + std::to_string(self->getMonitor().size()) + "\r\n";
         info += "\r\n";
 
         // Stats
         info += "# Stats\r\n";
-        info += "total_connections_received:" + std::to_string(comm->getConnection()) + "\r\n";
-        info += "total_commands_processed:" + std::to_string(self.getCommands().load(std::memory_order_acquire)) + "\r\n";
+        info += "total_connections_received:" + std::to_string(self->getConnection()) + "\r\n";
+        info += "total_commands_processed:" + std::to_string(self->getCommands().load(std::memory_order_acquire)) + "\r\n";
         info += "\r\n";
 
         // Memory
         info += "# Memory\r\n";
         size_t total_keys = 0;
-        for (auto &shard : self.getDBs()[sock->getClientId()])
+        for (auto &shard : self->getDBs()[sock->getClientId()])
         {
             std::shared_lock lock(shard.mutex);
             total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
@@ -3843,14 +3780,13 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSAVE(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        self.saveToFile();
+        self->saveToFile();
         return RespValue::simple_string("OK");
     }
 
@@ -3858,24 +3794,32 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleBGSAVE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
-                                                   ServerData<int> &self,
-                                                   CommandHandler<int> *comm)
+                                                   std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        if (self.getBgSaveRunning())
+        if (self->getBgSaveRunning())
         {
             return RespValue::error("ERR Background save already in progress");
         }
-        self.setBgSaveRunning(true);
-        std::thread([&self]
-                    {
-            self.saveToFile();
-            self.setBgSaveRunning(false);
-            BLUE_LOG_INFO(xx::g_logger) << "BGSAVE completed"; })
-            .detach();
+        self->setBgSaveRunning(true);
+        std::weak_ptr<ServerData<int>> weak_self = self;
+            std::thread([weak_self]
+                        {
+                auto ptr = weak_self.lock();
+                if (ptr)
+                {
+                    ptr->saveToFile();
+                    ptr->setBgSaveRunning(false);
+                    BLUE_LOG_INFO(xx::g_logger) << "BGSAVE completed";
+                }
+                else
+                {
+                    BLUE_LOG_INFO(xx::g_logger) << "BGSAVE: ServerData already destroyed";
+                }
+            }).detach();
         return RespValue::simple_string("Background saving started");
     }
 
@@ -3883,28 +3827,26 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLASTSAVE(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
-                                                     ServerData<int> &self,
-                                                     CommandHandler<int> *comm)
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        return RespValue::integer(self.getLastSaveTime().load(std::memory_order_acquire));
+        return RespValue::integer(self->getLastSaveTime().load(std::memory_order_acquire));
     }
 
     template <typename T>
     RespValue CommandHandlerTable<T>::handleLASTSAVE1(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
-                                                      ServerData<int> &self,
-                                                      CommandHandler<int> *comm)
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        std::time_t beijing_t = self.getLastSaveTime() + 8 * 3600;
+        std::time_t beijing_t = self->getLastSaveTime() + 8 * 3600;
         std::tm time_local;
 #ifdef _WIN32
         gmtime_s(&time_local, &beijing_t);
@@ -3920,8 +3862,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleCOMMAND(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3974,8 +3915,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleECHO(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3988,8 +3928,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleTIME(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
-                                                 ServerData<int> &self,
-                                                 CommandHandler<int> *comm)
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4008,8 +3947,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleLOCALTIME(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
-                                                      ServerData<int> &self,
-                                                      CommandHandler<int> *comm)
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4034,14 +3972,13 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSHUTDOWN(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
-                                                     ServerData<int> &self,
-                                                     CommandHandler<int> *comm)
+                                                     std::shared_ptr<ServerData<int>> self)
     {
-        if (!self.isAdmin(sock))
+        if (!self->isAdmin(sock))
         {
             return RespValue::error("ERR permission denied");
         }
-        self.setShutdown(true);
+        self->setShutdown(true);
         return RespValue::bulk_string("OK - waiting for clients to disconnect");
     }
 
@@ -4049,8 +3986,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleWATCH(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
-                                                  ServerData<int> &self,
-                                                  CommandHandler<int> *comm)
+                                                  std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4060,8 +3996,8 @@ namespace blue
 
         for (size_t i = 1; i < args.size(); i++)
         {
-            const std::string key = args[i].str;
-            sock->addWatchKey(key, self.getKeyVersion(key, sock));
+            const std::string& key = args[i].str;
+            sock->addWatchKey(key, self->getKeyVersion(key, sock));
         }
         return RespValue::simple_string("OK");
     }
@@ -4070,8 +4006,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleUNWATCH(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4086,8 +4021,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSLOWLOG(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4098,7 +4032,7 @@ namespace blue
         if (sub_cmd == "GET")
         {
             // 同步数据
-            self.getSlowLog().syncSlowLogs();
+            self->getSlowLog().syncSlowLogs();
 
             int64_t count = 10;
             if (args.size() >= 3)
@@ -4117,18 +4051,18 @@ namespace blue
                 }
             }
 
-            std::vector<RespValue> results = self.getSlowLog().getSlowLogs(count);
+            std::vector<RespValue> results = self->getSlowLog().getSlowLogs(count);
             return RespValue::array(std::move(results));
         }
 
         else if (sub_cmd == "LEN")
         {
-            self.getSlowLog().syncSlowLogs();
-            return RespValue::integer(self.getSlowLog().len());
+            self->getSlowLog().syncSlowLogs();
+            return RespValue::integer(self->getSlowLog().len());
         }
         else if (sub_cmd == "RESET")
         {
-            self.getSlowLog().reset();
+            self->getSlowLog().reset();
             return RespValue::simple_string("OK");
         }
         else
@@ -4142,8 +4076,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleMONITOR(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4151,7 +4084,7 @@ namespace blue
         }
 
         // 添加monitor client
-        self.getMonitor().addMonitorClient(sock);
+        self->getMonitor().addMonitorClient(sock);
 
         sock->setMonitorMode(true);
 
@@ -4163,26 +4096,30 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleAOFROTATE(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
-                                                      ServerData<int> &self,
-                                                      CommandHandler<int> *comm)
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        if (!self.getAOF().getConfig_AOFEnabled())
+        if (!self->getAOF().getConfig_AOFEnabled())
         {
             return RespValue::error("ERR AOF is disabled");
         }
-        if (self.getAOF().getAOFRotating())
+        if (self->getAOF().getAOFRotating())
         {
             return RespValue::error("ERR AOF rotation already in progress");
         }
-        std::thread([&self]
-                    {
-            self.getAOF().rotateAOF();
-            BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished"; })
-            .detach();
+        std::weak_ptr<ServerData<int>> weak_self = self;
+            std::thread([weak_self]
+                        {
+                auto ptr = weak_self.lock();
+                if (ptr)
+                {
+                    ptr->getAOF().rotateAOF();
+                    BLUE_LOG_INFO(xx::g_logger) << "AOF rotation finished"; 
+                }
+                }).detach();
         return RespValue::simple_string("AOF rotation started");
     }
 
@@ -4191,8 +4128,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleREPLICAOF(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
-                                                      ServerData<int> &self,
-                                                      CommandHandler<int> *comm)
+                                                      std::shared_ptr<ServerData<int>> self)
     {
     }
 
@@ -4200,8 +4136,7 @@ namespace blue
     RespValue CommandHandlerTable<T>::handleSLAVEOF(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
-                                                    ServerData<int> &self,
-                                                    CommandHandler<int> *comm)
+                                                    std::shared_ptr<ServerData<int>> self)
     {
     }
 }

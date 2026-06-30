@@ -114,7 +114,7 @@ namespace blue
                                        const TimePoint &start);
 
     private:
-        ServerData<T> m_server;
+        std::shared_ptr<ServerData<T>> m_server;
 #ifdef COMMAND_TABLE
         CommandHandlerTable<T> m_table;
 #else
@@ -127,40 +127,42 @@ namespace blue
                                       IOManager *acceptmanager)
         : TcpServer<T>(level, option_name, option, manager, acceptmanager)
     {
+        m_server = std::make_shared<ServerData<T>>();
+        m_server->setTcpServer(this);
 #ifdef COMMAND_TABLE
         // 设置 AOF 执行器
-        m_server.getAOF().setExecutor([this](std::vector<RespValue> args,
+        m_server->getAOF().setExecutor([this](std::vector<RespValue> args,
                                              MSocket::MSocketPtr sock,
                                              bool record) -> RespValue
-                                      { return m_table.executeTable(args, sock, m_server, record, this); });
+                                      { return m_table.executeTable(args, sock, m_server, record); });
 #else
         // 设置 AOF 执行器
-        m_server.getAOF().setExecutor([this](std::vector<RespValue> args,
+        m_server->getAOF().setExecutor([this](std::vector<RespValue> args,
                                              MSocket::MSocketPtr sock,
                                              bool record) -> RespValue
-                                      { return m_ifelse.executeIfelse(args, sock, m_server, record, this); });
+                                      { return m_ifelse.executeIfelse(args, sock, m_server, record); });
 #endif
-        m_server.loadFromFile();
-        m_server.getAOF().loadAOF();
-        m_server.getAOF().initAOF(); // 初始化AOF,追加打开AOF文件,并开启AOF同步协程
-        IOManager::GetThis()->schedule(m_server.expireTime());
+        m_server->loadFromFile();
+        m_server->getAOF().loadAOF();
+        m_server->getAOF().initAOF(); // 初始化AOF,追加打开AOF文件,并开启AOF同步协程
+        IOManager::GetThis()->schedule(m_server->expireTime());
         if (s_admin_password.empty())
         {
             s_admin_password = "admin123";
         }
-        m_server.setPassword(s_admin_password);
-        m_server.getAOF().setLastAOFSync(SteadyClock::now());
+        m_server->setPassword(s_admin_password);
+        m_server->getAOF().setLastAOFSync(SteadyClock::now());
     }
 
     template <typename T>
     CommandHandler<T>::~CommandHandler()
     {
-        m_server.setShutdown(true);
-        m_server.getAOF().stop();
+        m_server->setShutdown(true);
+        m_server->getAOF().stop();
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        m_server.getAOF().stopAOFFlushThread();
-        m_server.saveToFile();
-        m_server.getAOF().closeAOFWithFlush();
+        m_server->getAOF().stopAOFFlushThread();
+        m_server->saveToFile();
+        m_server->getAOF().closeAOFWithFlush();
     }
 
     template <typename T>
@@ -174,15 +176,15 @@ namespace blue
         for (auto &args : batch_commands)
         {
 #ifdef COMMAND_TABLE
-            results.push_back(m_table.executeTable(args, sock, m_server, RecordAOF, this));
+            results.push_back(m_table.executeTable(args, sock, m_server, RecordAOF));
 #else
-            results.push_back(m_ifelse.executeIfelse(args, sock, m_server, RecordAOF, this));
+            results.push_back(m_ifelse.executeIfelse(args, sock, m_server, RecordAOF));
 #endif
         }
         return results;
     }
 
-#ifdef USE_GENERATOR
+#if ((USE_GENERATOR) == 1)
     template <typename T>
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
@@ -198,7 +200,7 @@ namespace blue
         batch_response.reserve(BATCH_SIZE);
         int cmd_count = 0;
 
-        const uint64_t timeout_ms = static_cast<uint64_t>(m_server.getTimeoutS()) * 1000ul;
+        const uint64_t timeout_ms = static_cast<uint64_t>(m_server->getTimeoutS()) * 1000ul;
 
         // 回复函数
         auto send_response = [&](std::string &data) -> Task<void>
@@ -223,7 +225,7 @@ namespace blue
 
         do
         {
-            if (m_server.getShutdown().load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
+            if (m_server->getShutdown().load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
             {
                 break;
             }
@@ -247,7 +249,7 @@ namespace blue
                 if (errno == ETIMEDOUT)
                 {
                     BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
-                                                << "] timeout (" << m_server.getTimeoutS() << "s), closing";
+                                                << "] timeout (" << m_server->getTimeoutS() << "s), closing";
                     break;
                 }
                 else if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -268,7 +270,7 @@ namespace blue
                 }
                 batch_response += RespValue::encode(response);
                 cmd_count++;
-                m_server.incrementCommands();
+                m_server->incrementCommands();
 
                 if (batch_response.size() >= BATCH_SIZE)
                 {
@@ -305,24 +307,24 @@ namespace blue
         } while (true);
 
         // 检查是否是管理员连接断开
-        auto admin = m_server.getAdminSocket().lock();
+        auto admin = m_server->getAdminSocket().lock();
         if (admin && admin.get() == sock.get())
         {
-            m_server.getAdminSocket().reset();
+            m_server->getAdminSocket().reset();
         }
 
         // 关闭前清理订阅
-        m_server.getSubscription().removeAllSubscribers(sock);
+        m_server->getSubscription().removeAllSubscribers(sock);
 
         sock->clearSubScription();
         BLUE_LOG_INFO(xx::g_logger) << "one Client exit, fd:" << sock->getSocketfd();
         sock->close();
 
         // 删除过期的monitor
-        m_server.getMonitor().removeMonitor();
+        m_server->getMonitor().removeMonitor();
 
         TcpServer<T>::subConnection();
-        if (TcpServer<T>::getConnection() == 0 && m_server.getShutdown().load(std::memory_order_acquire))
+        if (TcpServer<T>::getConnection() == 0 && m_server->getShutdown().load(std::memory_order_acquire))
         {
             bool end = co_await TcpServer<T>::stop();
             if (end)
@@ -351,7 +353,7 @@ namespace blue
         batch_response.reserve(BATCH_SIZE);
         int cmd_count = 0;
 
-        const uint64_t timeout_ms = static_cast<uint64_t>(m_server.getTimeoutS()) * 1000ul;
+        const uint64_t timeout_ms = static_cast<uint64_t>(m_server->getTimeoutS()) * 1000ul;
 
         // 回复函数
         auto send_response = [&](std::string &data) -> Task<void>
@@ -401,7 +403,7 @@ namespace blue
         };
         do
         {
-            if (m_server.getShutdown().load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
+            if (m_server->getShutdown().load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
             {
                 break;
             }
@@ -425,7 +427,7 @@ namespace blue
                 if (errno == ETIMEDOUT)
                 {
                     BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
-                                                << "] timeout (" << m_server.getTimeoutS() << "s), closing";
+                                                << "] timeout (" << m_server->getTimeoutS() << "s), closing";
                     break;
                 }
                 else if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -522,18 +524,18 @@ namespace blue
                     auto end = SteadyClock::now();
 
                     // 记录慢查询
-                    m_server.getSlowLog().pushEntry(cmd_str, sock, start, end);
+                    m_server->getSlowLog().pushEntry(cmd_str, sock, start, end);
                     
                 }
-                if (response.str != "QUEUED" && m_server.getPushMonitor().load(std::memory_order_acquire))
+                if (response.str != "QUEUED" && m_server->getPushMonitor().load(std::memory_order_acquire))
                 {
                     // 推送消息给监控客户端
-                    m_server.getMonitor().pushToMonitor(cmd_str, sock);
+                    m_server->getMonitor().pushToMonitor(cmd_str, sock);
                 }
 
                 batch_response += RespValue::encode(response);
                 cmd_count++;
-                m_server.incrementCommands();
+                m_server->incrementCommands();
 
                 if (!batch_response.empty())
                 {
@@ -571,24 +573,24 @@ namespace blue
         } while (true);
 
         // 检查是否是管理员连接断开
-        auto admin = m_server.getAdminSocket().lock();
+        auto admin = m_server->getAdminSocket().lock();
         if (admin && admin.get() == sock.get())
         {
-            m_server.getAdminSocket().reset();
+            m_server->getAdminSocket().reset();
         }
 
         // 关闭前清理订阅
-        m_server.getSubscription().removeAllSubscribers(sock);
+        m_server->getSubscription().removeAllSubscribers(sock);
 
         sock->clearSubScription();
         // BLUE_LOG_INFO(xx::g_logger) << "one Client exit, fd:" << sock->getSocketfd();
         sock->close();
 
         // 删除过期的monitor
-        m_server.getMonitor().removeMonitor();
+        m_server->getMonitor().removeMonitor();
 
         TcpServer<T>::subConnection();
-        if (TcpServer<T>::getConnection() == 0 && m_server.getShutdown().load(std::memory_order_acquire))
+        if (TcpServer<T>::getConnection() == 0 && m_server->getShutdown().load(std::memory_order_acquire))
         {
             bool end = co_await TcpServer<T>::stop();
             if (end)
@@ -619,7 +621,7 @@ namespace blue
             else
             {
                 sock->setVersionChecker([this, sock](const std::string &key) -> uint64_t
-                                        { return m_server.getKeyVersion(key, sock); });
+                                        { return m_server->getKeyVersion(key, sock); });
                 if (sock->hasKeyModified())
                 {
                     sock->clearTransaction();
@@ -632,9 +634,9 @@ namespace blue
                     for (const auto &transaction : sock->getTransaction())
                     {
 #ifdef COMMAND_TABLE
-                        auto response = m_table.executeTable(transaction, sock, m_server, true, this);
+                        auto response = m_table.executeTable(transaction, sock, m_server, true);
 #else
-                        auto response = m_ifelse.executeIfelse(transaction, sock, m_server, true, this);
+                        auto response = m_ifelse.executeIfelse(transaction, sock, m_server, true);
 #endif
                         results.push_back(response);
                     }
@@ -697,7 +699,7 @@ namespace blue
             for (const auto &channel : channels)
             {
                 // 从全局列表删除
-                m_server.getSubscription().removeSubscriber(channel, sock);
+                m_server->getSubscription().removeSubscriber(channel, sock);
 
                 // 从连接订阅列表移除
                 sock->removeSubScriptionChannel(channel);
@@ -786,7 +788,7 @@ namespace blue
                     sock->addSubScriptionChannel(channel);
 
                     // 添加到全局订阅列表
-                    m_server.getSubscription().addSubscriber(channel, sock);
+                    m_server->getSubscription().addSubscriber(channel, sock);
 
                     // 返回订阅成功消息
                     std::vector<RespValue> msg;
@@ -821,7 +823,7 @@ namespace blue
             const std::string message = args[2].str;
 
             // 获取订阅者并发送消息给所有订阅者
-            int receiver_count = m_server.getSubscription().publishMessage(channel, message);
+            int receiver_count = m_server->getSubscription().publishMessage(channel, message);
 
             return RespValue::integer(receiver_count);
         }
@@ -911,13 +913,13 @@ namespace blue
                 auto end = SteadyClock::now();
 
                 // 记录慢查询
-                m_server.getSlowLog().pushEntry(cmd_str, sock, start, end);
+                m_server->getSlowLog().pushEntry(cmd_str, sock, start, end);
                 
             }
-            if (response.str != "QUEUED" && m_server.getPushMonitor().load(std::memory_order_acquire))
+            if (response.str != "QUEUED" && m_server->getPushMonitor().load(std::memory_order_acquire))
             {
                 // 推送消息给监控客户端
-                m_server.getMonitor().pushToMonitor(cmd_str, sock);
+                m_server->getMonitor().pushToMonitor(cmd_str, sock);
             }
 
             co_yield response;

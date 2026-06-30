@@ -42,7 +42,7 @@ namespace blue
     };
 
     template <typename T>
-    class ServerData
+    class ServerData : public std::enable_shared_from_this<ServerData<T>>
     {
     public:
         using SteadyClock = std::chrono::steady_clock;
@@ -212,6 +212,26 @@ namespace blue
             }
             return s;
         }
+    
+        /**
+         * @brief 设置tcpserver
+         */
+        void setTcpServer(TcpServer<T>* tcp) { m_tcpserver = tcp; }
+
+        /**
+         * @brief 获取当前连接数量
+         * @return 当前连接数量
+         */
+        uint32_t getConnection() const noexcept { return m_tcpserver->getConnection(); }
+
+        /**
+         * @brief 获取当前拒绝连接数量
+         * @return 当前连接数量
+         */
+        uint32_t getRejectConnection() const noexcept { return m_tcpserver->getRejectConnection(); }
+
+    private:
+        TcpServer<T>* m_tcpserver = nullptr;
 
     private:
         /* REDIS SERVER CONFIG */
