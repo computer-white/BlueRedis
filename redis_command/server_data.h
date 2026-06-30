@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <optional>
 #include <list>
 #include <string>
 #include <shared_mutex>
@@ -29,9 +30,25 @@ namespace blue
     struct DataShard
     {
         using TimePoint = std::chrono::steady_clock::time_point;
+        struct StoreData
+        {
+            std::string val;
+            std::optional<TimePoint> expire;
+            StoreData() : val(""), expire(std::nullopt) {}
+            StoreData(const std::string& v, std::optional<TimePoint> e = std::nullopt) : val(v), expire(e) {}
+            bool is_expired() const 
+            {
+                if (!expire.has_value()) 
+                {
+                    return false;
+                }
+                return std::chrono::steady_clock::now() > expire.value();
+            }
+        };
         std::shared_mutex mutex;
-        std::unordered_map<std::string, std::string> store;
-        std::unordered_map<std::string, TimePoint> expire;
+        std::unordered_map<std::string, StoreData> store;
+        // std::unordered_map<std::string, std::string> store;
+        // std::unordered_map<std::string, TimePoint> expire;
         std::unordered_map<std::string, std::unordered_map<std::string, std::string>> hash;
         std::unordered_map<std::string, std::list<std::string>> lists;
         std::unordered_map<std::string, std::unordered_set<std::string>> sets;
@@ -142,12 +159,15 @@ namespace blue
          */
         DataShard &getShard(const std::string &key, MSocket::MSocketPtr sock)
         {
-            return m_dbs[sock->getClientId()][getShardIndex(key)];
+            // return m_dbs[sock->getClientId()][getShardIndex(key)];
+            return m_dbs[0][getShardIndex(key)];
+
         }
 
         const DataShard &getShard(const std::string &key, MSocket::MSocketPtr sock) const
         {
-            return m_dbs[sock->getClientId()][getShardIndex(key)];
+            // return m_dbs[sock->getClientId()][getShardIndex(key)];
+            return m_dbs[0][getShardIndex(key)];
         }
 
         bool isReadOnlyCommand(const std::string &cmd) const
@@ -187,7 +207,7 @@ namespace blue
             auto it = shard.store.find(key);
             if (it != shard.store.end())
             {
-                return std::hash<std::string>{}(it->second);
+                return std::hash<std::string>{}(it->second.val);
             }
             return 0;
         }
@@ -287,12 +307,11 @@ namespace blue
 
                 for (auto &[key, value] : shard.store)
                 {
-                    file << "DB|" << db << "|STR|" << key << "|" << value;
+                    file << "DB|" << db << "|STR|" << key << "|" << value.val;
 
-                    auto it = shard.expire.find(key);
-                    if (it != shard.expire.end())
+                    if (value.is_expired())
                     {
-                        auto expire_time = it->second.time_since_epoch().count();
+                        auto expire_time = value.expire.value().time_since_epoch().count();
                         file << "|" << expire_time;
                     }
                     file << "\n";
@@ -395,12 +414,12 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                shard.store[key] = value;
+                shard.store[key] = DataShard::StoreData(value);
 
                 if (parts.size() >= 6)
                 {
                     int64_t expire_time = std::stoll(parts[5]);
-                    shard.expire[key] = TimePoint(std::chrono::nanoseconds(expire_time));
+                    shard.store[key].expire = TimePoint(std::chrono::nanoseconds(expire_time));
                 }
             }
             else if (type == "HASH" && parts.size() >= 6)
@@ -482,13 +501,12 @@ namespace blue
                     return;
                 }
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
-                auto it = shards.expire.begin();
-                while (it != shards.expire.end() && count < 20)
+                auto it = shards.store.begin();
+                while (it != shards.store.end() && count < 20 && it->second.expire.has_value())
                 {
-                    if (it->second < now)
+                    if (it->second.expire.value() < now)
                     {
-                        shards.store.erase(it->first);
-                        it = shards.expire.erase(it);
+                        it = shards.store.erase(it);
                     }
                     else
                     {

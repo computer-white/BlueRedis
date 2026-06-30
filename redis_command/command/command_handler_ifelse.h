@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include "command_handler_base.h"
 
 namespace blue
@@ -497,7 +498,8 @@ namespace blue
             const std::string &val = args[2].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
-            shards.store[key] = val;
+            std::optional<TimePoint> timepoint;
+            // shards.store[key] = val;
             if (args.size() >= 5)
             {
                 std::string subcmd = args[3].str;
@@ -517,7 +519,7 @@ namespace blue
                     {
                         return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
                     }
-                    shards.expire[key] = SteadyClock::now() + std::chrono::seconds(seconds);
+                    timepoint = SteadyClock::now() + std::chrono::seconds(seconds);
                 }
                 else if (subcmd == "PX")
                 {
@@ -534,9 +536,10 @@ namespace blue
                     {
                         return return_with_slowlog(RespValue::error("ERR value is not a integer or out of range"));
                     }
-                    shards.expire[key] = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
+                    timepoint = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
                 }
             }
+            shards.store[key] = DataShard::StoreData(val, timepoint);
             return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "GET") // GET key
@@ -557,16 +560,14 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::null_bulk());
             }
-            auto expire_it = shards.expire.find(key);
-            if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
+            if (it->second.is_expired())
             {
                 lock.unlock();
                 std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
-                shards.expire.erase(key);
                 shards.store.erase(key);
                 return return_with_slowlog(RespValue::null_bulk());
             }
-            const std::string &val = it->second;
+            const std::string &val = it->second.val;
             return return_with_slowlog(RespValue::bulk_string(val));
         }
         else if (cmd == "MSET") // MSET key val [key val]
@@ -586,7 +587,7 @@ namespace blue
                 const std::string &val = args[i + 1].str;
                 auto &shards = self->getShard(key, sock);
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
-                shards.store[key] = val;
+                shards.store[key] = DataShard::StoreData(val);
             }
             return return_with_slowlog(RespValue::simple_string("OK"));
         }
@@ -604,26 +605,26 @@ namespace blue
 
             for (size_t i = 1; i < args.size(); i++)
             {
-                auto &shards = self->getShard(args[i].str, sock);
+                const std::string &key = args[i].str;
+                auto &shards = self->getShard(key, sock);
                 std::shared_lock<std::shared_mutex> lock(shards.mutex);
-                auto it = shards.store.find(args[i].str);
+                auto it = shards.store.find(key);
                 if (it == shards.store.end())
                 {
                     results.push_back(RespValue::null_bulk());
                 }
                 else
                 {
-                    auto expire_it = shards.expire.find(args[i].str);
-                    if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
+                    if (it->second.is_expired())
                     {
-                        shards.expire.erase(expire_it);
-                        shards.store.erase(it);
+                        lock.unlock();
+                        std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
+                        shards.store.erase(key);
                         results.push_back(RespValue::null_bulk());
                     }
                     else
                     {
-                        const std::string val = it->second;
-                        results.push_back(RespValue::bulk_string(val));
+                        results.push_back(RespValue::bulk_string(it->second.val));
                     }
                 }
             }
@@ -646,11 +647,11 @@ namespace blue
             auto it = shards.store.find(key);
             if (it == shards.store.end())
             {
-                shards.store[key] = val;
+                shards.store[key] = DataShard::StoreData(val);
                 return return_with_slowlog(RespValue::bulk_string(val));
             }
-            std::string ans = it->second;
-            it->second = val;
+            std::string ans = it->second.val;
+            it->second.val = val;
             return return_with_slowlog(RespValue::bulk_string(ans));
         }
         else if (cmd == "APPEND") // APPEND key val
@@ -670,13 +671,13 @@ namespace blue
             auto it = shards.store.find(key);
             if (it == shards.store.end())
             {
-                shards.store[key] = val;
+                shards.store[key] = DataShard::StoreData(val);
             }
             else
             {
-                it->second.append(val);
+                it->second.val.append(val);
             }
-            return return_with_slowlog(RespValue::integer(shards.store[key].size()));
+            return return_with_slowlog(RespValue::integer(shards.store[key].val.size()));
         }
         else if (cmd == "SETNX") // SETNX key val, 没有才设置
         {
@@ -695,7 +696,7 @@ namespace blue
             auto it = shards.store.find(key);
             if (it == shards.store.end())
             {
-                shards.store[key] = val;
+                shards.store[key] = DataShard::StoreData(val);
                 return return_with_slowlog(RespValue::integer(1));
             }
             return return_with_slowlog(RespValue::integer(0));
@@ -747,7 +748,6 @@ namespace blue
                 if (it != shards.store.end())
                 {
                     shards.store.erase(it);
-                    shards.expire.erase(key);
                     count++;
                 }
             }
@@ -2007,7 +2007,7 @@ namespace blue
             {
                 try
                 {
-                    val = std::stoll(it->second);
+                    val = std::stoll(it->second.val);
                 }
                 catch (...)
                 {
@@ -2015,7 +2015,7 @@ namespace blue
                 }
             }
             val++;
-            shards.store[key] = std::to_string(val);
+            shards.store[key].val = std::to_string(val);
             return return_with_slowlog(RespValue::integer(val));
         }
         else if (cmd == "INCRBY") // INCR key integer 自增或自减 integer
@@ -2046,7 +2046,7 @@ namespace blue
             {
                 try
                 {
-                    val = std::stoll(it->second);
+                    val = std::stoll(it->second.val);
                 }
                 catch (...)
                 {
@@ -2054,7 +2054,7 @@ namespace blue
                 }
             }
             val += increment;
-            shards.store[key] = std::to_string(val);
+            shards.store[key].val = std::to_string(val);
             return return_with_slowlog(RespValue::integer(val));
         }
         else if (cmd == "STRLEN") // STRLEN key, 返回key对于val的长度
@@ -2095,16 +2095,15 @@ namespace blue
 
                 return return_with_slowlog(RespValue::integer(0));
             }
-            auto expire_it = shards.expire.find(key);
-            if (expire_it != shards.expire.end() && expire_it->second < SteadyClock::now())
+            auto& data = it->second;
+            if (data.expire.has_value() && data.expire < SteadyClock::now())
             {
                 lock.unlock();
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
-                shards.expire.erase(key);
                 shards.store.erase(key);
                 return return_with_slowlog(RespValue::integer(0));
             }
-            return return_with_slowlog(RespValue::integer(it->second.size()));
+            return return_with_slowlog(RespValue::integer(it->second.val.size()));
         }
         else if (cmd == "TYPE") // TYPE key, key的类型
         {
@@ -2589,7 +2588,6 @@ namespace blue
                 {
                     std::unique_lock<std::shared_mutex> lock(shards.mutex);
                     shards.store.clear();
-                    shards.expire.clear();
                     shards.lists.clear();
                     shards.hash.clear();
                     shards.sets.clear();
@@ -2612,7 +2610,6 @@ namespace blue
                     {
                         std::unique_lock<std::shared_mutex> lock(shards.mutex);
                         shards.store.clear();
-                        shards.expire.clear();
                         shards.lists.clear();
                         shards.hash.clear();
                         shards.sets.clear();
@@ -2643,7 +2640,6 @@ namespace blue
                     {
                         std::unique_lock<std::shared_mutex> lock(shards.mutex);
                         shards.store.clear();
-                        shards.expire.clear();
                         shards.lists.clear();
                         shards.hash.clear();
                         shards.sets.clear();
@@ -2669,7 +2665,6 @@ namespace blue
                         {
                             std::unique_lock<std::shared_mutex> lock(shards.mutex);
                             shards.store.clear();
-                            shards.expire.clear();
                             shards.lists.clear();
                             shards.hash.clear();
                             shards.sets.clear();
@@ -2732,7 +2727,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::integer(0));
             }
-            shards.expire[key] = SteadyClock::now() + std::chrono::seconds(second);
+            it->second.expire = SteadyClock::now() + std::chrono::seconds(second);
             return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "TTL") // TTL key, 查看key的过期时间
@@ -2749,24 +2744,24 @@ namespace blue
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
-            auto expire_it = shards.expire.find(key);
             if (it == shards.store.end())
             {
                 return return_with_slowlog(RespValue::integer(-2));
             }
-            else if (expire_it == shards.expire.end())
+            else if (!(it->second.expire.has_value()))
             {
                 return return_with_slowlog(RespValue::integer(-1));
             }
+            auto &data = it->second;
             // 计算剩余秒数
             auto now = SteadyClock::now();
-            if (now >= expire_it->second)
+            if (now >= data.expire.value())
             {
                 return return_with_slowlog(RespValue::integer(-2));
             }
 
             auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
-                                 expire_it->second - now)
+                                 data.expire.value() - now)
                                  .count();
 
             return return_with_slowlog(RespValue::integer(remaining));
@@ -2802,7 +2797,7 @@ namespace blue
             {
                 return return_with_slowlog(RespValue::integer(0));
             }
-            shards.expire[key] = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
+            shards.store[key].expire = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
             return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "PTTL") // PTTL key
@@ -2819,24 +2814,24 @@ namespace blue
             auto &shards = self->getShard(key, sock);
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
-            auto expire_it = shards.expire.find(key);
             if (it == shards.store.end())
             {
                 return return_with_slowlog(RespValue::integer(-2));
             }
-            else if (expire_it == shards.expire.end())
+            else if (!(it->second.expire.has_value()))
             {
                 return return_with_slowlog(RespValue::integer(-1));
             }
+            auto &data = it->second;
             // 计算剩余秒数
             auto now = SteadyClock::now();
-            if (now >= expire_it->second)
+            if (now >= data.expire.value_or(TimePoint::max()))
             {
                 return return_with_slowlog(RespValue::integer(-2));
             }
 
             auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                 expire_it->second - now)
+                                 data.expire.value() - now)
                                  .count();
 
             return return_with_slowlog(RespValue::integer(remaining));
@@ -2855,13 +2850,12 @@ namespace blue
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
-            auto expire_it = shards.expire.find(key);
             // 不存在或没有过期时间
-            if (it == shards.store.end() || expire_it == shards.expire.end())
+            if (it == shards.store.end() ||  !(it->second.expire.has_value()))
             {
                 return return_with_slowlog(RespValue::integer(0));
             }
-            shards.expire.erase(expire_it);
+            it->second.expire = std::nullopt;
             return return_with_slowlog(RespValue::integer(1));
         }
         else if (cmd == "RENAME") // RENAME key newkey
@@ -2942,7 +2936,6 @@ namespace blue
             if (new_shard.store.find(newkey) != new_shard.store.end())
             {
                 new_shard.store.erase(newkey);
-                new_shard.expire.erase(newkey);
             }
             else if (new_shard.hash.find(newkey) != new_shard.hash.end())
             {
@@ -2995,13 +2988,13 @@ namespace blue
                     old_shard.zset_score.erase(key);
                 }
 
-                // 移动过期时间
-                auto expire_it = old_shard.expire.find(key);
-                if (expire_it != old_shard.expire.end())
-                {
-                    new_shard.expire[newkey] = expire_it->second;
-                    old_shard.expire.erase(expire_it);
-                }
+                // // 移动过期时间
+                // auto expire_it = old_shard.expire.find(key);
+                // if (expire_it != old_shard.expire.end())
+                // {
+                //     new_shard.expire[newkey] = expire_it->second;
+                //     old_shard.expire.erase(expire_it);
+                // }
             }
             else
             {
@@ -3034,12 +3027,12 @@ namespace blue
                     old_shard.zset_score.erase(key);
                 }
 
-                auto expire_it = old_shard.expire.find(key);
-                if (expire_it != old_shard.expire.end())
-                {
-                    new_shard.expire[newkey] = expire_it->second;
-                    old_shard.expire.erase(expire_it);
-                }
+                // auto expire_it = old_shard.expire.find(key);
+                // if (expire_it != old_shard.expire.end())
+                // {
+                //     new_shard.expire[newkey] = expire_it->second;
+                //     old_shard.expire.erase(expire_it);
+                // }
             }
             return return_with_slowlog(RespValue::simple_string("OK"));
         }
@@ -3176,13 +3169,13 @@ namespace blue
                     old_shard.zset_score.erase(key);
                 }
 
-                // 移动过期时间
-                auto expire_it = old_shard.expire.find(key);
-                if (expire_it != old_shard.expire.end())
-                {
-                    new_shard.expire[newkey] = expire_it->second;
-                    old_shard.expire.erase(expire_it);
-                }
+                // // 移动过期时间
+                // auto expire_it = old_shard.expire.find(key);
+                // if (expire_it != old_shard.expire.end())
+                // {
+                //     new_shard.expire[newkey] = expire_it->second;
+                //     old_shard.expire.erase(expire_it);
+                // }
             }
             else
             {
@@ -3215,12 +3208,12 @@ namespace blue
                     old_shard.zset_score.erase(key);
                 }
 
-                auto expire_it = old_shard.expire.find(key);
-                if (expire_it != old_shard.expire.end())
-                {
-                    new_shard.expire[newkey] = expire_it->second;
-                    old_shard.expire.erase(expire_it);
-                }
+                // auto expire_it = old_shard.expire.find(key);
+                // if (expire_it != old_shard.expire.end())
+                // {
+                //     new_shard.expire[newkey] = expire_it->second;
+                //     old_shard.expire.erase(expire_it);
+                // }
             }
             return return_with_slowlog(RespValue::integer(1));
         }

@@ -188,13 +188,14 @@ namespace blue
     template <typename T>
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
+        BLUE_LOG_INFO(xx::g_logger) << "generator";
         BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
         // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
         // BLUE_LOG_INFO(xx::g_logger) << "local address : " <<  sock->getLocalAddress()->toString();
 
         RespStreamParser parser;                            // 解析器
         const size_t MAX_COMMAND_SIZE = 1024 * 1024;        // 解析缓冲区最大大小
-        const size_t BATCH_SIZE = 8192;                     // 批量响应大小阈值
+        const size_t BATCH_SIZE = 256 * 1024;               // 批量响应大小阈值
 
         std::string batch_response;
         batch_response.reserve(BATCH_SIZE);
@@ -338,19 +339,20 @@ namespace blue
     template <typename T>
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
+        BLUE_LOG_INFO(xx::g_logger) << "batch_commands";
         BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
         // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
         // BLUE_LOG_INFO(xx::g_logger) << "local address : " <<  sock->getLocalAddress()->toString();
 
         RespStreamParser parser;                            // 解析器
         const size_t MAX_COMMAND_SIZE = 1024 * 1024;        // 解析缓冲区最大大小
-        const size_t BATCH_SIZE = 8192;                     // 批量响应大小阈值
-        const size_t EXEC_BATCH_SIZE = 64;                  // 批量执行大小阈值
+        const size_t BATCH_SIZE = 256 * 1024;               // 批量响应大小阈值
+        const size_t EXEC_BATCH_SIZE = 256;                 // 批量执行大小阈值
         std::vector<std::vector<RespValue>> batch_commands; // 批量命令数组
         batch_commands.reserve(EXEC_BATCH_SIZE);
 
         std::string batch_response;
-        batch_response.reserve(BATCH_SIZE);
+        batch_response.reserve(BATCH_SIZE * 2);
         int cmd_count = 0;
 
         const uint64_t timeout_ms = static_cast<uint64_t>(m_server->getTimeoutS()) * 1000ul;
