@@ -2,5 +2,8 @@
 bin
 lib
 thirdparty
+abseil-cpp
+folly
+fast_float
 build
 CMakeLists.txt
