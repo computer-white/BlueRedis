@@ -8,6 +8,7 @@
 #include <atomic>
 #include <unordered_map>
 #include <unordered_set>
+#include "absl/container/flat_hash_map.h"
 #include "blue/config.h"
 #include "blue/msocket.h"
 #include "blue/skiplist.h"
@@ -45,17 +46,27 @@ namespace blue
                 return std::chrono::steady_clock::now() > expire.value();
             }
         };
+        // std::shared_mutex mutex;
+        // std::unordered_map<std::string, StoreData> store;
+        // // std::unordered_map<std::string, std::string> store;
+        // // std::unordered_map<std::string, TimePoint> expire;
+        // std::unordered_map<std::string, std::unordered_map<std::string, std::string>> hash;
+        // std::unordered_map<std::string, std::list<std::string>> lists;
+        // std::unordered_map<std::string, std::unordered_set<std::string>> sets;
+        // // key -> 跳表(ZSetKey{score + member} -> member)
+        // std::unordered_map<std::string, SkipList<ZSetKey, std::string>> zset;
+        // // key -> (member-> score)
+        // std::unordered_map<std::string, std::unordered_map<std::string, double>> zset_score;
+
         std::shared_mutex mutex;
-        std::unordered_map<std::string, StoreData> store;
-        // std::unordered_map<std::string, std::string> store;
-        // std::unordered_map<std::string, TimePoint> expire;
-        std::unordered_map<std::string, std::unordered_map<std::string, std::string>> hash;
-        std::unordered_map<std::string, std::list<std::string>> lists;
-        std::unordered_map<std::string, std::unordered_set<std::string>> sets;
+        absl::flat_hash_map<std::string, StoreData> store;
+        absl::flat_hash_map<std::string, absl::flat_hash_map<std::string, std::string>> hash;
+        absl::flat_hash_map<std::string, std::list<std::string>> lists;
+        absl::flat_hash_map<std::string, std::unordered_set<std::string>> sets;
         // key -> 跳表(ZSetKey{score + member} -> member)
-        std::unordered_map<std::string, SkipList<ZSetKey, std::string>> zset;
+        absl::flat_hash_map<std::string, SkipList<ZSetKey, std::string>> zset;
         // key -> (member-> score)
-        std::unordered_map<std::string, std::unordered_map<std::string, double>> zset_score;
+        absl::flat_hash_map<std::string, std::unordered_map<std::string, double>> zset_score;
     };
 
     template <typename T>
@@ -202,7 +213,7 @@ namespace blue
         uint64_t getKeyVersion(const std::string &key, MSocket::MSocketPtr sock)
         {
             auto &shard = getShard(key, sock);
-            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            // std::shared_lock<std::shared_mutex> lock(shard.mutex);
 
             auto it = shard.store.find(key);
             if (it != shard.store.end())
@@ -414,12 +425,14 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                shard.store[key] = DataShard::StoreData(value);
+                // shard.store[key] = DataShard::StoreData(value);
+                shard.store.insert_or_assign(key, DataShard::StoreData(value));
 
                 if (parts.size() >= 6)
                 {
                     int64_t expire_time = std::stoll(parts[5]);
-                    shard.store[key].expire = TimePoint(std::chrono::nanoseconds(expire_time));
+                    // shard.store[key].expire = TimePoint(std::chrono::nanoseconds(expire_time));
+                    shard.store.insert_or_assign(key, DataShard::StoreData(value, TimePoint(std::chrono::nanoseconds(expire_time))));
                 }
             }
             else if (type == "HASH" && parts.size() >= 6)
@@ -431,7 +444,11 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                shard.hash[key][field] = value;
+                absl::flat_hash_map<std::string, std::string> internal;
+                internal.insert_or_assign(field, value);
+                shard.hash.insert_or_assign(key, std::move(internal));
+                // shard.hash[key][field] = value;
+
             }
             else if (type == "LIST" && parts.size() >= 5)
             {
@@ -441,7 +458,10 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                shard.lists[key].push_back(value);
+                // shard.lists[key].push_back(value);
+                std::list<std::string> list;
+                list.push_back(value);
+                shard.lists.insert_or_assign(key, std::move(list));
             }
             else if (type == "SET" && parts.size() >= 5)
             {
@@ -451,7 +471,10 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                shard.sets[key].insert(member);
+                // shard.sets[key].insert(member);
+                std::unordered_set<std::string> set;
+                set.insert(member);
+                shard.sets.insert_or_assign(key, std::move(set));
             }
             else if (type == "ZSET" && parts.size() >= 6)
             {
@@ -506,11 +529,13 @@ namespace blue
                 {
                     if (it->second.expire.value() < now)
                     {
-                        it = shards.store.erase(it);
+                        auto tem_it = it;
+                        ++it;
+                        shards.store.erase(tem_it);
                     }
                     else
                     {
-                        it++;
+                        ++it;
                     }
                     ++count;
                 }

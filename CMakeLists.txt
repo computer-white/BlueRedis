@@ -74,6 +74,8 @@ find_package(Boost REQUIRED COMPONENTS iostreams coroutine context)
 find_package(ZLIB REQUIRED)
 # 查找 json
 find_package(nlohmann_json REQUIRED)
+# 添加 absl
+find_package(absl REQUIRED)
 
 # 头文件
 include_directories(/usr/include) # yaml-cpp头文件
@@ -157,6 +159,7 @@ set(LIB_SRC
     redis_command/modules/slowlog.cpp
     redis_command/modules/monitor.cpp
     redis_command/modules/AOF.cpp
+    redis_command/modules/replication.cpp
     http/http.cpp
     http/httpconnection.cpp
     http/httpParser.cpp
@@ -195,7 +198,7 @@ check_http_file(httpserver)
 check_http_file(httpservlet)
 check_http_file(httpsession)
 
-# 创建共享库
+# # 创建共享库
 add_library(blue SHARED ${LIB_SRC})
 
 # 创建静态库
@@ -241,6 +244,8 @@ target_link_libraries(blue PRIVATE
     Boost::context
     ZLIB::ZLIB
     nlohmann_json::nlohmann_json
+    absl::flat_hash_map
+    absl::hash
 )
 target_link_libraries(blue_static PRIVATE
     ${OPENSSL_LIBRARIES}
@@ -249,6 +254,8 @@ target_link_libraries(blue_static PRIVATE
     Boost::context
     ZLIB::ZLIB
     nlohmann_json::nlohmann_json
+    absl::flat_hash_map
+    absl::hash
 )
 
 # 链接 IDN 库（如果找到）
@@ -268,14 +275,18 @@ if(GUMBO_FOUND)
     target_link_libraries(blue_static PRIVATE ${GUMBO_LIBRARIES})
 endif()
 
-set(LINK_LIBS blue ${YAML_CPP} ${PTHREAD_LIB} ${HIREDIS_LIB})
+set(LINK_LIBS blue_static ${YAML_CPP} ${PTHREAD_LIB} ${HIREDIS_LIB})
 
 list(APPEND LINK_LIBS 
     ${OPENSSL_LIBRARIES}
     Boost::iostreams
     Boost::coroutine
     Boost::context
-    ZLIB::ZLIB)
+    ZLIB::ZLIB
+    nlohmann_json::nlohmann_json
+    absl::flat_hash_map
+    absl::hash
+)
 
 # 链接mysql
 if (MYSQL_FOUND)
@@ -323,6 +334,12 @@ add_newblue_test(test_redis_stress_all)
 add_newblue_test(test_redis_stress_new)
 add_newblue_test(test_timeout)
 add_newblue_test(test_generator)
+
+# add_library(configinit_obj OBJECT blue/configinit.cpp)
+# add_executable(test_benchmark newtests/test_benchmark.cpp)
+# add_executable(test_httpserver newtests/test_httpserver.cpp)
+# target_link_libraries(test_benchmark PRIVATE configinit_obj ${LINK_LIBS})
+# target_link_libraries(test_httpserver PRIVATE configinit_obj ${LINK_LIBS})
 
 # 打印构建信息
 message(STATUS "========================")

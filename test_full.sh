@@ -3,12 +3,12 @@
 
 echo "=== Complete Test with Single Connection ==="
 
-./bin/your_server &
+./bin/test_commandHandler &
 SERVER_PID=$!
 sleep 2
 
 # 使用一个持久连接测试所有命令
-redis-cli -p 6666 << 'EOF'
+redis-cli -p 6666 -a client123 << 'EOF'
 PING
 SET test hello
 GET test

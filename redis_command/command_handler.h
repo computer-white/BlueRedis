@@ -803,6 +803,7 @@ namespace blue
                 return RespValue::array(std::move(results));
             }
         }
+        return RespValue::error("ERR unknown mode command");
     }
 
     template <typename T>

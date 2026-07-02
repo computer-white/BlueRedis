@@ -1,6 +1,7 @@
 #pragma once
 #include <optional>
 #include "command_handler_base.h"
+#include "redis_command/modules/replication.h"
 
 namespace blue
 {
@@ -66,19 +67,19 @@ namespace blue
                 self->getAOF().appendToAOF(aof_cmds);
             }
 
-            // 每300条命令异步保存进入rbg
-            if (self->getCommands().load(std::memory_order_acquire) % 300 == 0)
-            {
-                std::weak_ptr<ServerData<T>> weak_self = self;
-                std::thread([weak_self]()
-                            { 
-                                auto ptr = weak_self.lock();
-                                if (ptr)
-                                {
-                                    ptr->saveToFile(); 
-                                } })
-                    .detach();
-            }
+            // // 每300条命令异步保存进入rbg
+            // if (self->getCommands().load(std::memory_order_acquire) % 300 == 0)
+            // {
+            //     std::weak_ptr<ServerData<T>> weak_self = self;
+            //     std::thread([weak_self]()
+            //                 { 
+            //                     auto ptr = weak_self.lock();
+            //                     if (ptr)
+            //                     {
+            //                         ptr->saveToFile(); 
+            //                     } })
+            //         .detach();
+            // }
             return resp;
         };
 
@@ -451,7 +452,7 @@ namespace blue
                         {
                             return return_with_slowlog(RespValue::error("ERR invalid maxclients value"));
                         }
-                        if (newmax < TcpServer<T>::getConnection())
+                        if (newmax < self->getConnection())
                         {
                             return return_with_slowlog(RespValue::error("ERR maxclients can't be less than current connections"));
                         }
@@ -1640,7 +1641,7 @@ namespace blue
                 results.push_back(RespValue::bulk_string(node->val));
                 if (withscores)
                 {
-                    results.push_back(RespValue::bulk_string(format_score(node->key.score)));
+                    results.push_back(RespValue::bulk_string(self->format_score(node->key.score)));
                 }
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
@@ -1712,7 +1713,7 @@ namespace blue
             auto sit = skiplist_map.find(args[2].str);
             if (sit != skiplist_map.end())
             {
-                return return_with_slowlog(RespValue::bulk_string(format_score(sit->second)));
+                return return_with_slowlog(RespValue::bulk_string(self->format_score(sit->second)));
             }
             return return_with_slowlog(RespValue::null_bulk());
         }
@@ -1788,7 +1789,7 @@ namespace blue
                 scores_map[member] += incr;
                 skiplist.remove(old_val);
                 skiplist.insert({scores_map[member], member}, member);
-                return return_with_slowlog(RespValue::bulk_string(format_score(scores_map[member])));
+                return return_with_slowlog(RespValue::bulk_string(self->format_score(scores_map[member])));
             }
             return return_with_slowlog(RespValue::null_bulk());
         }
@@ -1833,7 +1834,7 @@ namespace blue
                 scores_map[member] += incr;
                 skiplist.remove(old_val);
                 skiplist.insert({scores_map[member], member}, member);
-                return return_with_slowlog(RespValue::bulk_string(format_score(scores_map[member])));
+                return return_with_slowlog(RespValue::bulk_string(self->format_score(scores_map[member])));
             }
             return return_with_slowlog(RespValue::null_bulk());
         }
@@ -1920,7 +1921,7 @@ namespace blue
                     results.push_back(RespValue::bulk_string(member));
                     if (withscore)
                     {
-                        results.push_back(RespValue::bulk_string((format_score(score))));
+                        results.push_back(RespValue::bulk_string((self->format_score(score))));
                     }
                 }
             }
@@ -2954,7 +2955,7 @@ namespace blue
                 new_shard.zset.erase(newkey);
                 new_shard.zset_score.erase(newkey);
             }
-            new_shard.expire.erase(newkey);
+            // new_shard.expire.erase(newkey);
 
             // 移动数据
             if (old_shard_idx == new_shard_idx)
@@ -3285,9 +3286,9 @@ namespace blue
 
             // Client
             info += "# Client\r\n";
-            info += "connections:" + std::to_string(TcpServer<T>::getConnection()) + "\r\n";
+            info += "connections:" + std::to_string(self->getConnection()) + "\r\n";
             info += "maxclient:" + std::to_string(self->getMaxClientCount()) + "\r\n";
-            info += "reject_connections:" + std::to_string(TcpServer<T>::getRejectConnection()) + "\r\n";
+            info += "reject_connections:" + std::to_string(self->getRejectConnection()) + "\r\n";
             info += "\r\n";
 
             // AOF
@@ -3309,7 +3310,7 @@ namespace blue
 
             // Stats
             info += "# Stats\r\n";
-            info += "total_connections_received:" + std::to_string(TcpServer<T>::getConnection()) + "\r\n";
+            info += "total_connections_received:" + std::to_string(self->getConnection()) + "\r\n";
             info += "total_commands_processed:" + std::to_string(self->getCommands().load(std::memory_order_acquire)) + "\r\n";
             info += "\r\n";
 

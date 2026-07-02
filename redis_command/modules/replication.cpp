@@ -101,7 +101,7 @@ namespace blue
                 auth_args.push_back(RespValue::bulk_string("AUTH"));
                 auth_args.push_back(RespValue::bulk_string(m_repl_config.master_password));
                 std::string auth_cmd = RespValue::encode(RespValue::array(std::move(auth_args)));
-                ssize_t send = co_await sock->send(sock->getSocketfd(), auth_cmd.size(),MSG_NOSIGNAL);
+                ssize_t send = co_await sock->send(auth_cmd.data(), auth_cmd.size(),MSG_NOSIGNAL);
                 if (send <= 0)
                 {
                     BLUE_LOG_DEBUGE(g_logger) << "Failed to send AUTH";

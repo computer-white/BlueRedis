@@ -829,7 +829,8 @@ namespace blue
                 timepoint = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
             }
         }
-        shards.store[key] = DataShard::StoreData(val, timepoint);
+        // shards.store[key] = DataShard::StoreData(val, timepoint);
+        shards.store.insert_or_assign(key, DataShard::StoreData(val, timepoint));
         return RespValue::simple_string("OK");
     }
 
@@ -863,7 +864,7 @@ namespace blue
             return RespValue::null_bulk();
         }
 
-        const std::string val = it->second.val;
+        const std::string &val = it->second.val;
         return RespValue::bulk_string(val);
     }
 
@@ -883,7 +884,8 @@ namespace blue
             const std::string &val = args[i + 1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
-            shards.store[key] = DataShard::StoreData(val);
+            // shards.store[key] = DataShard::StoreData(val);
+            shards.store.insert_or_assign(key, DataShard::StoreData(val));
         }
         return RespValue::simple_string("OK");
     }
@@ -945,11 +947,12 @@ namespace blue
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
-            shards.store[key] = DataShard::StoreData(val);
+            // shards.store[key] = DataShard::StoreData(val);
+            shards.store.insert_or_assign(key, DataShard::StoreData(val));
             return RespValue::bulk_string(val);
         }
         std::string ans = it->second.val;
-        it->second.val = val;
+        shards.store.insert_or_assign(key, DataShard::StoreData(val, it->second.expire));
         return RespValue::bulk_string(ans);
     }
 
@@ -970,11 +973,13 @@ namespace blue
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
-            shards.store[key] = DataShard::StoreData(val);
+            // shards.store[key] = DataShard::StoreData(val);
+            shards.store.insert_or_assign(key, DataShard::StoreData(val));
         }
         else
         {
-            it->second.val.append(val);
+            std::string new_val = it->second.val + val;
+            shards.store.insert_or_assign(key, DataShard::StoreData(new_val, it->second.expire));
         }
         return RespValue::integer(shards.store[key].val.size());
     }
@@ -996,7 +1001,8 @@ namespace blue
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
-            shards.store[key] = DataShard::StoreData(val);
+            // shards.store[key] = DataShard::StoreData(val);
+            shards.store.insert_or_assign(key, DataShard::StoreData(val));
             return RespValue::integer(1);
         }
         return RespValue::integer(0);
@@ -1086,12 +1092,14 @@ namespace blue
                 return RespValue::error("ERR value is not a integer or out of range");
             }
             val++;
-            it->second.val = std::to_string(val);
+            // it->second.val = std::to_string(val);
+            shards.store.insert_or_assign(key, DataShard::StoreData(std::to_string(val), it->second.expire));
         }
         else
         {
             val++;
-            shards.store[key] = DataShard::StoreData(std::to_string(val));
+            // shards.store[key] = DataShard::StoreData(std::to_string(val));
+            shards.store.insert_or_assign(key, DataShard::StoreData(std::to_string(val)));
         }
         return RespValue::integer(val);
     }
@@ -1131,12 +1139,14 @@ namespace blue
                 return RespValue::error("ERR value is not a integer or out of range");
             }
             val += increment;
-            it->second.val = std::to_string(val);
+            // it->second.val = std::to_string(val);
+            shards.store.insert_or_assign(key, DataShard::StoreData(std::to_string(val), it->second.expire));
         }
         else
         {
             val += increment;
-            shards.store[key] = DataShard::StoreData(std::to_string(val));
+            // shards.store[key] = DataShard::StoreData(std::to_string(val));
+            shards.store.insert_or_assign(key, DataShard::StoreData(std::to_string(val)));
         }
         return RespValue::integer(val);
     }
@@ -1181,7 +1191,7 @@ namespace blue
         }
         if (it->second.is_expired())
         {
-            lock.unlock();
+            // lock.unlock();
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             shards.store.erase(key);
             return RespValue::integer(0);
@@ -1343,11 +1353,24 @@ namespace blue
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto &field = args[i].str;
             auto &value = args[i + 1].str; // size 是偶数所以不会出界
-            if (shards.hash[key].find(field) == shards.hash[key].end())
+            auto it = shards.hash.find(key);
+            if (it != shards.hash.end())
             {
-                ++count; // 新字段
+                auto &inner_map = const_cast<absl::flat_hash_map<std::string, std::string> &>(it->second);
+                if (inner_map.find(field) == inner_map.end())
+                {
+                    count++;
+                }
+                inner_map.insert_or_assign(field, value);
             }
-            shards.hash[key][field] = value;
+            else
+            {
+                // key 不存在，创建新 map
+                absl::flat_hash_map<std::string, std::string> new_map;
+                new_map.insert_or_assign(field, value);
+                shards.hash.insert_or_assign(key, std::move(new_map));
+                count++;
+            }
         }
         return RespValue::integer(count);
     }
@@ -1380,7 +1403,7 @@ namespace blue
         {
             return RespValue::null_bulk();
         }
-        const std::string val = fit->second;
+        const std::string &val = fit->second;
         return RespValue::bulk_string(val);
     }
 
@@ -1403,7 +1426,7 @@ namespace blue
         {
             return RespValue::array(std::move(result));
         }
-        for (auto &[field, value] : it->second)
+        for (const auto &[field, value] : it->second)
         {
             result.push_back(RespValue::bulk_string(field));
             result.push_back(RespValue::bulk_string(value));
@@ -1430,13 +1453,14 @@ namespace blue
         {
             return RespValue::integer(count);
         }
+        auto &inner_map = const_cast<absl::flat_hash_map<std::string, std::string> &>(it->second);
         for (size_t i = 2; i < args.size(); i++)
         {
-            count += it->second.erase(args[i].str);
+            count += inner_map.erase(args[i].str);
         }
-        if (it->second.empty())
+        if (inner_map.empty())
         {
-            shards.hash.erase(it);
+            shards.hash.erase(key);
         }
         return RespValue::integer(count);
     }
@@ -1566,7 +1590,7 @@ namespace blue
 
             return RespValue::array(std::move(results));
         }
-        for (auto &[field, _] : it->second)
+        for (const auto &[field, _] : it->second)
         {
             results.push_back(RespValue::bulk_string(field));
         }
@@ -1612,7 +1636,7 @@ namespace blue
 
             return RespValue::array(std::move(results));
         }
-        for (auto &[_, val] : it->second)
+        for (const auto &[_, val] : it->second)
         {
             results.push_back(RespValue::bulk_string(val));
         }
@@ -1637,12 +1661,23 @@ namespace blue
         const std::string &key = args[1].str;
         auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
-        auto &lhs = shards.lists[key];
+        auto it = shards.lists.find(key);
+        if (it == shards.lists.end())
+        {
+            std::list<std::string> new_list;
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                new_list.push_front(args[i].str);
+            }
+            shards.lists.insert_or_assign(key, std::move(new_list));
+            return RespValue::integer(args.size() - 2);
+        }
+        auto &list = const_cast<std::list<std::string> &>(it->second);
         for (size_t i = 2; i < args.size(); i++)
         {
-            lhs.push_front(args[i].str);
+            list.push_front(args[i].str);
         }
-        return RespValue::integer(lhs.size());
+        return RespValue::integer(list.size());
     }
 
     template <typename T>
@@ -1658,7 +1693,18 @@ namespace blue
         const std::string &key = args[1].str;
         auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
-        auto &lhs = shards.lists[key];
+        auto it = shards.lists.find(key);
+        if (it == shards.lists.end())
+        {
+            std::list<std::string> new_list;
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                new_list.push_back(args[i].str);
+            }
+            shards.lists.insert_or_assign(key, std::move(new_list));
+            return RespValue::integer(args.size() - 2);
+        }
+        auto &lhs = const_cast<std::list<std::string> &>(it->second);
         for (size_t i = 2; i < args.size(); i++)
         {
             lhs.push_back(args[i].str);
@@ -1702,10 +1748,11 @@ namespace blue
             return RespValue::null_bulk();
         }
         std::vector<RespValue> results;
+        auto &list = const_cast<std::list<std::string> &>(it->second);
         for (int i = 0; i < count && !it->second.empty(); i++)
         {
             results.push_back(RespValue::bulk_string(it->second.front()));
-            it->second.pop_front();
+            list.pop_front();
         }
         if (it->second.empty())
         {
@@ -1750,10 +1797,11 @@ namespace blue
             return RespValue::null_bulk();
         }
         std::vector<RespValue> results;
+        auto &list = const_cast<std::list<std::string> &>(it->second);
         for (int i = 0; i < count && !it->second.empty(); i++)
         {
             results.push_back(RespValue::bulk_string(it->second.back()));
-            it->second.pop_back();
+            list.pop_back();
         }
         if (it->second.empty())
         {
@@ -1809,7 +1857,7 @@ namespace blue
         {
             return RespValue::null_bulk();
         }
-        std::list<std::string> &lists = it->second;
+        std::list<std::string> &lists = const_cast<std::list<std::string> &>(it->second);
         auto list_it = lists.begin();
         for (; list_it != lists.end(); list_it++)
         {
@@ -1867,7 +1915,8 @@ namespace blue
         {
             idx = 0;
         }
-        auto list_it = it->second.begin();
+        auto &list = const_cast<std::list<std::string> &>(it->second);
+        auto list_it = list.begin();
         while (idx--)
         {
             list_it++;
@@ -1912,7 +1961,8 @@ namespace blue
         {
             idx = 0;
         }
-        auto list_it = it->second.begin();
+        auto &list = const_cast<std::list<std::string> &>(it->second);
+        auto list_it = list.begin();
         while (idx--)
         {
             list_it++;
@@ -1960,12 +2010,15 @@ namespace blue
         auto dest_it = dest_shard.lists.find(dest_key);
         if (dest_it == dest_shard.lists.end())
         {
-            dest_shard.lists[dest_key] = std::list<std::string>();
+            // dest_shard.lists[dest_key] = std::list<std::string>();
+            dest_shard.lists.insert_or_assign(dest_key, std::list<std::string>());
             dest_it = dest_shard.lists.find(dest_key);
         }
-        const std::string tem = src_it->second.back();
-        src_it->second.pop_back();
-        dest_it->second.push_front(tem);
+        const std::string &tem = src_it->second.back();
+        auto &src = const_cast<std::list<std::string> &>(src_it->second);
+        auto &dest = const_cast<std::list<std::string> &>(dest_it->second);
+        src.pop_back();
+        dest.push_front(tem);
         return RespValue::integer(1);
     }
 
@@ -2008,12 +2061,15 @@ namespace blue
         auto dest_it = dest_shard.lists.find(dest_key);
         if (dest_it == dest_shard.lists.end())
         {
-            dest_shard.lists[dest_key] = std::list<std::string>();
+            // dest_shard.lists[dest_key] = std::list<std::string>();
+            dest_shard.lists.insert_or_assign(dest_key, std::list<std::string>());
             dest_it = dest_shard.lists.find(dest_key);
         }
-        const std::string tem = src_it->second.front();
-        src_it->second.pop_front();
-        dest_it->second.push_back(tem);
+        const std::string &tem = src_it->second.front();
+        auto &src = const_cast<std::list<std::string> &>(src_it->second);
+        auto &dest = const_cast<std::list<std::string> &>(dest_it->second);
+        src.pop_front();
+        dest.push_back(tem);
         return RespValue::integer(1);
     }
 
@@ -2067,9 +2123,10 @@ namespace blue
             return RespValue::array({});
         }
         std::vector<RespValue> result;
-        auto iter = it->second.begin();
+        auto &list = const_cast<std::list<std::string> &>(it->second);
+        auto iter = list.begin();
         std::advance(iter, start);
-        for (int i = start; i <= stop && iter != it->second.end(); i++, iter++)
+        for (int i = start; i <= stop && iter != list.end(); i++, iter++)
         {
             result.push_back(RespValue::bulk_string(*iter));
         }
@@ -2095,16 +2152,19 @@ namespace blue
         int32_t count = 0;
         auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
+        std::unordered_set<std::string> new_set;
         for (size_t i = 2; i < args.size(); i++)
         {
-            const std::string member = args[i].str;
-            if (shards.sets[key].find(member) == shards.sets[key].end())
+            const std::string &member = args[i].str;
+            auto it = shards.sets.find(key);
+            if (it == shards.sets.end())
             {
-                auto [_, res] = shards.sets[key].insert(member);
+                auto [_, res] = new_set.insert(member);
                 if (res)
                 {
                     count++;
                 }
+                shards.sets.insert_or_assign(key, std::move(new_set));
             }
         }
         return RespValue::integer(count);
@@ -2129,7 +2189,7 @@ namespace blue
         {
             return RespValue::array(std::move(results));
         }
-        for (auto &member : it->second)
+        for (const auto &member : it->second)
         {
             results.push_back(RespValue::bulk_string(member));
         }
@@ -2155,11 +2215,12 @@ namespace blue
         {
             return RespValue::integer(0);
         }
+        auto &set = const_cast<std::unordered_set<std::string> &>(it->second);
         for (size_t i = 2; i < args.size(); i++)
         {
-            count += it->second.erase(args[i].str);
+            count += set.erase(args[i].str);
         }
-        if (it->second.empty())
+        if (set.empty())
         {
             shards.sets.erase(it);
         }
@@ -2313,7 +2374,7 @@ namespace blue
                 return RespValue::array({});
             }
         }
-        auto &set = it->second;
+        auto &set = const_cast<std::unordered_set<std::string> &>(it->second);
         std::vector<std::string> members(set.begin(), set.end());
         std::vector<RespValue> results;
         if (count == 0)
@@ -2366,16 +2427,26 @@ namespace blue
         const std::string &key = args[1].str;
         auto &shard = self->getShard(key, sock);
         std::vector<RespValue> results;
+        auto it = shard.sets.find(key);
+        if (it == shard.sets.end())
+        {
+            return RespValue::array({});
+        }
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
-        for (const auto &member : shard.sets[key])
+        for (const auto &member : it->second)
         {
             bool ok = true;
             for (size_t i = 2; i < args.size(); i++)
             {
                 const std::string tem_key = args[i].str;
                 auto &tem_shard = self->getShard(tem_key, sock);
+                auto tem_it = tem_shard.sets.find(tem_key);
+                if (tem_it == tem_shard.sets.end())
+                {
+                    continue;
+                }
                 std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
-                auto &tem_members = tem_shard.sets[tem_key];
+                auto &tem_members = tem_it->second;
                 if (tem_members.contains(member))
                 {
                     ok = false;
@@ -2403,16 +2474,26 @@ namespace blue
         const std::string &key = args[1].str;
         auto &shard = self->getShard(key, sock);
         std::vector<RespValue> results;
+        auto it = shard.sets.find(key);
+        if (it == shard.sets.end())
+        {
+            return RespValue::array({});
+        }
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
-        for (const auto &member : shard.sets[key])
+        for (const auto &member : it->second)
         {
             bool ok = true;
             for (size_t i = 2; i < args.size(); i++)
             {
                 const std::string tem_key = args[i].str;
                 auto &tem_shard = self->getShard(tem_key, sock);
+                auto tem_it = tem_shard.sets.find(tem_key);
+                if (tem_it == tem_shard.sets.end())
+                {
+                    return RespValue::array({});
+                }
                 std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
-                auto &tem_members = tem_shard.sets[tem_key];
+                auto &tem_members = tem_it->second;
                 if (!tem_members.contains(member))
                 {
                     ok = false;
@@ -2440,8 +2521,13 @@ namespace blue
         const std::string &key = args[1].str;
         auto &shard = self->getShard(key, sock);
         std::unordered_set<std::string> results_set;
+        auto it = shard.sets.find(key);
+        if (it == shard.sets.end())
+        {
+            return RespValue::array({});
+        }
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
-        for (const auto &member : shard.sets[key])
+        for (const auto &member : it->second)
         {
             results_set.insert(member);
         }
@@ -2449,14 +2535,19 @@ namespace blue
         {
             const std::string tem_key = args[i].str;
             auto &tem_shard = self->getShard(tem_key, sock);
+            auto tem_it = tem_shard.sets.find(tem_key);
+            if (tem_it == tem_shard.sets.end())
+            {
+                continue;
+            }
             std::shared_lock<std::shared_mutex> tem_lock(tem_shard.mutex);
-            auto &tem_members = tem_shard.sets[tem_key];
+            auto &tem_members = tem_it->second;
             for (const auto &tem_member : tem_members)
             {
                 results_set.insert(tem_member);
             }
         }
-        lock.unlock();
+        // lock.unlock();
         std::vector<RespValue> results;
         for (const auto &member : results_set)
         {
@@ -2507,7 +2598,8 @@ namespace blue
         auto dest_it = dest_shard.sets.find(destination_key);
         if (dest_it == dest_shard.sets.end())
         {
-            dest_shard.sets[destination_key] = std::unordered_set<std::string>();
+            // dest_shard.sets[destination_key] = std::unordered_set<std::string>();
+            dest_shard.sets.insert_or_assign(destination_key, std::unordered_set<std::string>());
             dest_it = dest_shard.sets.find(destination_key);
         }
         // 检查member是否在源集合中
@@ -2515,9 +2607,11 @@ namespace blue
         {
             return RespValue::integer(0);
         }
-        src_it->second.erase(member);
-        dest_it->second.insert(member);
-        if (src_it->second.empty())
+        auto &src = const_cast<std::unordered_set<std::string> &>(src_it->second);
+        auto &dest = const_cast<std::unordered_set<std::string> &>(dest_it->second);
+        src.erase(member);
+        dest.insert(member);
+        if (src.empty())
         {
             src_shard.sets.erase(src_it);
         }
@@ -2560,7 +2654,7 @@ namespace blue
             {
                 return RespValue::error("ERR value is not a double or out of range");
             }
-            std::string member = args[i + 1].str;
+            const std::string &member = args[i + 1].str;
 
             auto it = score_map.find(member);
             if (it != score_map.end())
@@ -2675,7 +2769,7 @@ namespace blue
 
             for (size_t i = 2; i < args.size(); i++)
             {
-                const std::string member = args[i].str;
+                const std::string &member = args[i].str;
                 auto member_score = scores.find(member);
                 if (member_score != scores.end())
                 {
@@ -3167,7 +3261,7 @@ namespace blue
         {
             return RespValue::integer(0);
         }
-        it->second.expire = SteadyClock::now() + std::chrono::seconds(second);
+        shards.store.insert_or_assign(key, DataShard::StoreData(it->second.val, SteadyClock::now() + std::chrono::seconds(second)));
         return RespValue::integer(1);
     }
 
@@ -3239,7 +3333,7 @@ namespace blue
         {
             return RespValue::integer(0);
         }
-        shards.store[key].expire = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
+        shards.store.insert_or_assign(key, DataShard::StoreData(it->second.val, SteadyClock::now() + std::chrono::milliseconds(milliseconds)));
         return RespValue::integer(1);
     }
 
@@ -3299,7 +3393,7 @@ namespace blue
         {
             return RespValue::integer(0);
         }
-        it->second.expire = std::nullopt;
+        shards.store.insert_or_assign(key, DataShard::StoreData(it->second.val, std::nullopt));
         return RespValue::integer(1);
     }
 
@@ -3332,6 +3426,7 @@ namespace blue
             std::swap(first, second);
         }
         auto &m_shards = self->getDBs()[sock->getClientId()];
+        // 锁住zset
         std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
         if (old_shard_idx != new_shard_idx)
@@ -3344,7 +3439,7 @@ namespace blue
 
         // 检查 key 是否存在
         bool exists = false;
-        int type = -1; // 0:string, 1:hash, 2:list, 3:set, 4:zset
+        int type = -1;
 
         if (old_shard.store.find(key) != old_shard.store.end())
         {
@@ -3401,83 +3496,73 @@ namespace blue
         }
 
         // 移动数据
-        if (old_shard_idx == new_shard_idx)
+        if (type == 0)
         {
-            // 同分片：直接移动
-            if (type == 0)
+            auto it = old_shard.store.find(key);
+            if (it != old_shard.store.end())
             {
-                new_shard.store[newkey] = std::move(old_shard.store[key]);
+                new_shard.store.insert_or_assign(newkey, it->second);
                 old_shard.store.erase(key);
             }
-            else if (type == 1)
+        }
+        else if (type == 1)
+        {
+            auto it = old_shard.hash.find(key);
+            if (it != old_shard.hash.end())
             {
-                new_shard.hash[newkey] = std::move(old_shard.hash[key]);
+                absl::flat_hash_map<std::string, std::string> new_hash;
+                for (auto &[field, value] : it->second)
+                {
+                    new_hash.insert_or_assign(field, value);
+                }
+                new_shard.hash.insert_or_assign(newkey, std::move(new_hash));
                 old_shard.hash.erase(key);
             }
-            else if (type == 2)
+        }
+        else if (type == 2)
+        {
+            auto it = old_shard.lists.find(key);
+            if (it != old_shard.lists.end())
             {
-                new_shard.lists[newkey] = std::move(old_shard.lists[key]);
+                new_shard.lists.insert_or_assign(newkey, std::move(it->second));
                 old_shard.lists.erase(key);
             }
-            else if (type == 3)
+        }
+        else if (type == 3)
+        {
+            auto it = old_shard.sets.find(key);
+            if (it != old_shard.sets.end())
             {
-                new_shard.sets[newkey] = std::move(old_shard.sets[key]);
+                new_shard.sets.insert_or_assign(newkey, std::move(it->second));
                 old_shard.sets.erase(key);
             }
-            else if (type == 4)
+        }
+        else if (type == 4)
+        {
+            if (old_shard_idx == new_shard_idx)
             {
                 new_shard.zset[newkey] = std::move(old_shard.zset[key]);
                 new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
                 old_shard.zset.erase(key);
                 old_shard.zset_score.erase(key);
             }
-
-            // // 移动过期时间
-            // auto expire_it = old_shard.expire.find(key);
-            // if (expire_it != old_shard.expire.end())
-            // {
-            //     new_shard.expire[newkey] = expire_it->second;
-            //     old_shard.expire.erase(expire_it);
-            // }
+            else
+            {
+                auto it = old_shard.zset.find(key);
+                if (it != old_shard.zset.end())
+                {
+                    new_shard.zset.emplace(newkey, std::move(it->second));
+                    old_shard.zset.erase(key);
+                }
+                auto score_it = old_shard.zset_score.find(key);
+                if (score_it != old_shard.zset_score.end())
+                {
+                    new_shard.zset_score.emplace(newkey, std::move(score_it->second));
+                    old_shard.zset_score.erase(key);
+                }
+            }
         }
-        else
-        {
-            // 跨分片：复制到新分片，删除旧分片
-            if (type == 0)
-            {
-                new_shard.store[newkey] = old_shard.store[key];
-                old_shard.store.erase(key);
-            }
-            else if (type == 1)
-            {
-                new_shard.hash[newkey] = old_shard.hash[key];
-                old_shard.hash.erase(key);
-            }
-            else if (type == 2)
-            {
-                new_shard.lists[newkey] = old_shard.lists[key];
-                old_shard.lists.erase(key);
-            }
-            else if (type == 3)
-            {
-                new_shard.sets[newkey] = old_shard.sets[key];
-                old_shard.sets.erase(key);
-            }
-            else if (type == 4)
-            {
-                new_shard.zset[newkey] = std::move(old_shard.zset[key]);
-                new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
-                old_shard.zset.erase(key);
-                old_shard.zset_score.erase(key);
-            }
 
-            // auto expire_it = old_shard.expire.find(key);
-            // if (expire_it != old_shard.expire.end())
-            // {
-            //     new_shard.expire[newkey] = expire_it->second;
-            //     old_shard.expire.erase(expire_it);
-            // }
-        }
         return RespValue::simple_string("OK");
     }
 
@@ -3510,6 +3595,7 @@ namespace blue
             std::swap(first, second);
         }
         auto &m_shards = self->getDBs()[sock->getClientId()];
+        // 锁住zset
         std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
         if (old_shard_idx != new_shard_idx)
@@ -3522,7 +3608,7 @@ namespace blue
 
         // 检查 key 是否存在
         bool exists = false;
-        int type = -1; // 0:string, 1:hash, 2:list, 3:set, 4:zset
+        int type = -1;
 
         if (old_shard.store.find(key) != old_shard.store.end())
         {
@@ -3555,7 +3641,7 @@ namespace blue
             return RespValue::error("ERR no such key");
         }
 
-        // 查看newkey是否存在
+        // 查看 newkey 是否存在
         bool newkey_exists = false;
         if (new_shard.store.find(newkey) != new_shard.store.end())
         {
@@ -3577,89 +3663,80 @@ namespace blue
         {
             newkey_exists = true;
         }
+
         if (newkey_exists)
         {
             return RespValue::integer(0);
         }
 
         // 移动数据
-        if (old_shard_idx == new_shard_idx)
+        if (type == 0)
         {
-            // 同分片：直接移动
-            if (type == 0)
+            auto it = old_shard.store.find(key);
+            if (it != old_shard.store.end())
             {
-                new_shard.store[newkey] = std::move(old_shard.store[key]);
+                new_shard.store.insert_or_assign(newkey, it->second);
                 old_shard.store.erase(key);
             }
-            else if (type == 1)
+        }
+        else if (type == 1)
+        {
+            auto it = old_shard.hash.find(key);
+            if (it != old_shard.hash.end())
             {
-                new_shard.hash[newkey] = std::move(old_shard.hash[key]);
+                absl::flat_hash_map<std::string, std::string> new_hash;
+                for (auto &[field, value] : it->second)
+                {
+                    new_hash.insert_or_assign(field, value);
+                }
+                new_shard.hash.insert_or_assign(newkey, std::move(new_hash));
                 old_shard.hash.erase(key);
             }
-            else if (type == 2)
+        }
+        else if (type == 2)
+        {
+            auto it = old_shard.lists.find(key);
+            if (it != old_shard.lists.end())
             {
-                new_shard.lists[newkey] = std::move(old_shard.lists[key]);
+                new_shard.lists.insert_or_assign(newkey, std::move(it->second));
                 old_shard.lists.erase(key);
             }
-            else if (type == 3)
+        }
+        else if (type == 3)
+        {
+            auto it = old_shard.sets.find(key);
+            if (it != old_shard.sets.end())
             {
-                new_shard.sets[newkey] = std::move(old_shard.sets[key]);
+                new_shard.sets.insert_or_assign(newkey, std::move(it->second));
                 old_shard.sets.erase(key);
             }
-            else if (type == 4)
+        }
+        else if (type == 4)
+        {
+            if (old_shard_idx == new_shard_idx)
             {
                 new_shard.zset[newkey] = std::move(old_shard.zset[key]);
                 new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
                 old_shard.zset.erase(key);
                 old_shard.zset_score.erase(key);
             }
-
-            // // 移动过期时间
-            // auto expire_it = old_shard.expire.find(key);
-            // if (expire_it != old_shard.expire.end())
-            // {
-            //     new_shard.expire[newkey] = expire_it->second;
-            //     old_shard.expire.erase(expire_it);
-            // }
+            else
+            {
+                auto it = old_shard.zset.find(key);
+                if (it != old_shard.zset.end())
+                {
+                    new_shard.zset.emplace(newkey, std::move(it->second));
+                    old_shard.zset.erase(key);
+                }
+                auto score_it = old_shard.zset_score.find(key);
+                if (score_it != old_shard.zset_score.end())
+                {
+                    new_shard.zset_score.emplace(newkey, std::move(score_it->second));
+                    old_shard.zset_score.erase(key);
+                }
+            }
         }
-        else
-        {
-            // 跨分片：复制到新分片，删除旧分片
-            if (type == 0)
-            {
-                new_shard.store[newkey] = old_shard.store[key];
-                old_shard.store.erase(key);
-            }
-            else if (type == 1)
-            {
-                new_shard.hash[newkey] = old_shard.hash[key];
-                old_shard.hash.erase(key);
-            }
-            else if (type == 2)
-            {
-                new_shard.lists[newkey] = old_shard.lists[key];
-                old_shard.lists.erase(key);
-            }
-            else if (type == 3)
-            {
-                new_shard.sets[newkey] = old_shard.sets[key];
-                old_shard.sets.erase(key);
-            }
-            else if (type == 4)
-            {
-                new_shard.zset[newkey] = std::move(old_shard.zset[key]);
-                new_shard.zset_score[newkey] = std::move(old_shard.zset_score[key]);
-                old_shard.zset.erase(key);
-                old_shard.zset_score.erase(key);
-            }
 
-            // auto expire_it = old_shard.expire.find(key);
-            // if (expire_it != old_shard.expire.end())
-            // {
-            //     new_shard.expire[newkey] = expire_it->second;
-            //     old_shard.expire.erase(expire_it);
-            // }
-        }
         return RespValue::integer(1);
     }
 
@@ -3766,7 +3843,7 @@ namespace blue
         size_t total_keys = 0;
         for (auto &shard : self->getDBs()[sock->getClientId()])
         {
-            std::shared_lock lock(shard.mutex);
+            // std::shared_lock lock(shard.mutex);
             total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
         }
         info += "total_keys:" + std::to_string(total_keys) + "\r\n";
