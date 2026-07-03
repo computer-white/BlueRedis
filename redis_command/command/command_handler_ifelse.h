@@ -65,9 +65,15 @@ namespace blue
             {
                 std::string aof_cmds = self->getAOF().formatCommand(args);
                 self->getAOF().appendToAOF(aof_cmds);
+
+                // 如果是主节点，广播给从节点
+                if (self->getReplication().getisMaster() && !self->getReplication().slavesEmpty()) 
+                {
+                    self->getReplication().broadcastToSlaves(aof_cmds);
+                }
             }
 
-            // // 每300条命令异步保存进入rbg
+            // // 每300条命令异步保存进入rbg(测试时注释掉)
             // if (self->getCommands().load(std::memory_order_acquire) % 300 == 0)
             // {
             //     std::weak_ptr<ServerData<T>> weak_self = self;
@@ -3303,6 +3309,12 @@ namespace blue
             info += "aof_max_buffer_size" + std::to_string(self->getAOF().getMaxAOFBufferSize()) + "\r\n";
             info += "\r\n";
 
+            // Replication
+            info += "# Replication\r\n";
+            info += "master:" + self->getReplication().getMasterHost() + ":" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
+            info += "slaves:" + self->getReplication().slavesToString() + "\r\n";
+            info += "\r\n";
+
             // Monitor
             info += "# Monitor\r\n";
             info += "monitor_clients:" + std::to_string(self->getMonitor().size()) + "\r\n";
@@ -3446,7 +3458,9 @@ namespace blue
                 // 慢查询
                 "SLOWLOG",
                 // 监控模式
-                "MONITOR"};
+                "MONITOR",
+                // 主从复制
+                "REPLICAOF", "SLAVEOF", "SYNC"};
 
             for (const auto &name : cmd_list)
             {
@@ -3704,6 +3718,46 @@ namespace blue
             // 启动复制
             self->getReplication().startReplication();
 
+            return return_with_slowlog(RespValue::simple_string("OK"));
+        }
+        else if (cmd == "SYNC") // SYNC 主节点处理
+        {
+            if (sock->getClientId() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+
+            // 只有主节点接收SYNC命令
+            if (!(self->getReplication().getisMaster()))
+            {
+                return return_with_slowlog(RespValue::error("ERR not master"));
+            }
+
+            BLUE_LOG_INFO(xx::g_logger) << "SYNC request from slave, fd=" << sock->getSocketfd();
+
+            // 主节点保存从节点连接
+            self->getReplication().addSlaves(sock);
+
+            // 生成 RDB 数据并发送
+            std::string rdb_data = self->generateRDB(); // 拷贝一份
+
+            // 发送 RDB 格式: $<length>\r\n<data>
+            const std::string &response = "$" + std::to_string(rdb_data.size()) + "\r\n" + rdb_data;
+
+            // 非阻塞同步发送(在tcpServer中的startAccept中对sock fd设置了非阻塞)
+            ssize_t sent = ::send(sock->getSocketfd(), response.data(), response.size(), MSG_NOSIGNAL);
+            if (sent <= 0)
+            {
+                BLUE_LOG_ERROR(xx::g_logger) << "Failed to send RDB to slave";
+
+                // 从从节点列表中删除从节点
+                self->getReplication().remove(sock);
+
+                // 返回失败给从节点
+                return return_with_slowlog(RespValue::error("ERR failed to send RDB"));
+            }
+
+            BLUE_LOG_INFO(xx::g_logger) << "SYNC: RDB sent to slave, " << rdb_data.size() << " bytes";
             return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "SHUTDOWN") // SHUTDOWN 关闭服务器,如果连接数为0

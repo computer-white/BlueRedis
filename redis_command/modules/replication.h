@@ -4,6 +4,7 @@
 #include <string>
 #include <shared_mutex>
 #include <mutex>
+#include <queue>
 #include "blue/msocket.h"
 
 namespace blue
@@ -11,6 +12,27 @@ namespace blue
     class ReplicationModule
     {
     public:
+        using ExecuteFunc = std::function<RespValue(std::vector<RespValue>, MSocket::MSocketPtr, bool)>;
+        ReplicationModule() = default;
+        ~ReplicationModule() { this->stopReplication(); }
+        ReplicationModule(const ReplicationModule& ) = delete;
+        ReplicationModule& operator=(const ReplicationModule& ) = delete;
+    public:
+        /**
+         * @brief 设置回调execute
+         */
+        void setExecutor(ExecuteFunc func) { m_executor = func; }    
+
+        /**
+         * @brief 设置服务器停止标识
+         */
+        void setStop() { m_server_stop.store(true, std::memory_order_release); }
+
+        /**
+         * @brief 队列消费者协程
+         */
+        Task<void> processReplQueue();
+
         /**
          * @brief 停止复制
          */
@@ -62,9 +84,25 @@ namespace blue
         void addSlaves(MSocket::MSocketPtr sock);
 
         /**
+         * @brief 从节点列表是否为空
+         */
+        bool slavesEmpty() const noexcept { return m_slaves.empty(); }
+
+        /**
+         * @brief 输出slaves信息
+         */
+        std::string slavesToString() const noexcept;
+
+        /**
+         * @brief 删除主节点无法成功发送RDB消息给从节点的从节点
+         * @param sock 发送sync给主节点的客户端sock
+         */
+        void remove(MSocket::MSocketPtr sock);
+
+        /**
          * @brief 从节点复制循环
          */
-        Task<void> replicationLoop();
+        void replicationLoop();
 
         /**
          * @brief 写命令广播给从节点
@@ -72,9 +110,9 @@ namespace blue
         void broadcastToSlaves(const std::string& cmd);
 
         /**
-         * @brief 生成RDB消息
+         * @brief 从内存加载 RDB 数据
          */
-        void generateRDB();
+        bool loadRDBFromMemory(const std::string& data);
 
     private:
         struct ReplicationConfig
@@ -104,7 +142,25 @@ namespace blue
         std::thread m_relp_thread;
 
         // 从节点列表
-        std::shared_mutex m_slaves_mutex;
+        mutable std::shared_mutex m_slaves_mutex;
         std::vector<MSocket::MSocketWPtr> m_slaves;
+    private:
+        // 服务器停止
+        std::atomic<bool> m_server_stop{false};
+
+        // 复制命令队列
+        struct ReplCommand
+        {
+            std::vector<RespValue> args;
+        };
+
+        std::mutex m_repl_queue_mutex;
+        std::queue<ReplCommand> m_repl_queue;
+        std::condition_variable m_repl_queue_cv;
+        std::atomic<bool> m_repl_queue_stop{false};
+
+        // 回调
+        ExecuteFunc m_executor;
+
     };
 }

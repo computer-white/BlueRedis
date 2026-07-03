@@ -36,10 +36,10 @@ namespace blue
             std::string val;
             std::optional<TimePoint> expire;
             StoreData() : val(""), expire(std::nullopt) {}
-            StoreData(const std::string& v, std::optional<TimePoint> e = std::nullopt) : val(v), expire(e) {}
-            bool is_expired() const 
+            StoreData(const std::string &v, std::optional<TimePoint> e = std::nullopt) : val(v), expire(e) {}
+            bool is_expired() const
             {
-                if (!expire.has_value()) 
+                if (!expire.has_value())
                 {
                     return false;
                 }
@@ -77,14 +77,14 @@ namespace blue
         using TimePoint = SteadyClock::time_point;
         ServerData() = default;
         ~ServerData() = default;
-        ServerData(const ServerData& ) = delete;
-        ServerData& operator=(const ServerData& ) = delete;
+        ServerData(const ServerData &) = delete;
+        ServerData &operator=(const ServerData &) = delete;
 
     public:
         /**
          * @brief 获取数据库
          */
-         std::array<std::array<DataShard, SHARD_COUNT>, DB_COUNT> &getDBs() { return m_dbs; }
+        std::array<std::array<DataShard, SHARD_COUNT>, DB_COUNT> &getDBs() { return m_dbs; }
 
         /**
          * @brief 获取最大支持客户端数量
@@ -108,25 +108,34 @@ namespace blue
 
         // ========== 统计 ==========
         std::atomic<uint32_t> &getCommands() { return m_commands; }
+
         uint32_t getCommandsCount() const { return m_commands.load(std::memory_order_acquire); }
+
         void incrementCommands() { m_commands.fetch_add(1, std::memory_order_acq_rel); }
 
         // ========== 状态 ==========
         std::atomic<bool> &getShutdown() { return m_shutdown; }
+
         bool isShutdown() const { return m_shutdown.load(std::memory_order_acquire); }
+
         void setShutdown(bool val) { m_shutdown.store(val, std::memory_order_release); }
 
         // ========== 持久化 ==========
         std::atomic<time_t> &getLastSaveTime() { return m_last_time; }
+
         time_t getLastSaveTime() const { return m_last_time.load(std::memory_order_acquire); }
+
         void setLastSaveTime(time_t t) { m_last_time.store(t, std::memory_order_release); }
 
         std::atomic<bool> &getBgSaveRunning() { return m_bgsave_running; }
+
         bool isBgSaveRunning() const { return m_bgsave_running.load(std::memory_order_acquire); }
+
         void setBgSaveRunning(bool val) { m_bgsave_running.store(val, std::memory_order_release); }
 
         // ========== 管理员 ==========
         MSocket::MSocketWPtr &getAdminSocket() { return m_admin_sock; }
+
         void setAdminSocket(MSocket::MSocketWPtr sock) { m_admin_sock = sock; }
         /**
          * @brief 是否是管理员
@@ -139,19 +148,26 @@ namespace blue
         }
 
         // ========== 密码 ==========
-        const std::string& getPassword() const noexcept { return m_password; }
+        const std::string &getPassword() const noexcept { return m_password; }
+
         void setPassword(const std::string &val) noexcept { m_password = val; }
 
         // ========== 模块访问 ==========
         SubscriptionModule &getSubscription() { return m_subscription; }
+
         SlowLogModule &getSlowLog() { return m_slowLog; }
+
         MonitorModule &getMonitor() { return m_monitor; }
+
         AOFModule &getAOF() { return m_aof; }
+
         ReplicationModule &getReplication() { return m_replication; }
 
         // ========== Monitor 推送 ==========
         std::atomic<bool> &getPushMonitor() { return m_push_monitor; }
+
         bool isPushMonitor() const { return m_push_monitor.load(std::memory_order_acquire); }
+
         void setPushMonitor(bool val) { m_push_monitor.store(val, std::memory_order_release); }
 
         /**
@@ -170,15 +186,12 @@ namespace blue
          */
         DataShard &getShard(const std::string &key, MSocket::MSocketPtr sock)
         {
-            // return m_dbs[sock->getClientId()][getShardIndex(key)];
-            return m_dbs[0][getShardIndex(key)];
-
+            return m_dbs[sock->getClientId()][getShardIndex(key)];
         }
 
         const DataShard &getShard(const std::string &key, MSocket::MSocketPtr sock) const
         {
-            // return m_dbs[sock->getClientId()][getShardIndex(key)];
-            return m_dbs[0][getShardIndex(key)];
+            return m_dbs[sock->getClientId()][getShardIndex(key)];
         }
 
         bool isReadOnlyCommand(const std::string &cmd) const
@@ -189,7 +202,8 @@ namespace blue
                 "LLEN", "LINDEX", "LRANGE",
                 "SCARD", "SISMEMBER", "SMEMBERS", "SRANDMEMBER",
                 "SDIFF", "SUNION", "SINTER"
-                "ZSCORE", "ZRANK", "ZCOUNT", "ZRANGE", "ZRANGEBYSCORE",
+                                   "ZSCORE",
+                "ZRANK", "ZCOUNT", "ZRANGE", "ZRANGEBYSCORE",
                 "KEYS", "DBSIZE", "INFO", "TIME", "LOCALTIME", "LASTSAVE"};
             return read_only.count(cmd) > 0;
         }
@@ -244,11 +258,11 @@ namespace blue
             }
             return s;
         }
-    
+
         /**
          * @brief 设置tcpserver
          */
-        void setTcpServer(TcpServer<T>* tcp) { m_tcpserver = tcp; }
+        void setTcpServer(TcpServer<T> *tcp) { m_tcpserver = tcp; }
 
         /**
          * @brief 获取当前连接数量
@@ -262,8 +276,13 @@ namespace blue
          */
         uint32_t getRejectConnection() const noexcept { return m_tcpserver->getRejectConnection(); }
 
+        /**
+         * @brief 生产RDB 消息供 replication 使用
+         */
+        std::string generateRDB();
+
     private:
-        TcpServer<T>* m_tcpserver = nullptr;
+        TcpServer<T> *m_tcpserver = nullptr;
 
     private:
         /* REDIS SERVER CONFIG */
@@ -448,7 +467,6 @@ namespace blue
                 internal.insert_or_assign(field, value);
                 shard.hash.insert_or_assign(key, std::move(internal));
                 // shard.hash[key][field] = value;
-
             }
             else if (type == "LIST" && parts.size() >= 5)
             {
@@ -542,4 +560,95 @@ namespace blue
             }
         }
     }
-}
+
+    template <typename T>
+    std::string ServerData<T>::generateRDB()
+    {
+        std::string result;
+        for (int db = 0; db < DB_COUNT; db++)
+        {
+            bool has_data = false;
+            for (auto &shard : m_dbs[db])
+            {
+                if (!shard.store.empty() || !shard.hash.empty() ||
+                    !shard.lists.empty() || !shard.sets.empty() ||
+                    !shard.zset.empty())
+                {
+                    has_data = true;
+                    break;
+                }
+            }
+            if (!has_data)
+            {
+                continue;
+            }
+
+            // SELECT db
+            result += "*2\r\n$6\r\nSELECT\r\n$" + std::to_string(std::to_string(db).size()) +
+                      "\r\n" + std::to_string(db) + "\r\n";
+
+            for (auto &shard : m_dbs[db])
+            {
+                std::shared_lock<std::shared_mutex> lock(shard.mutex);
+
+                // String
+                for (const auto &[key, value] : shard.store)
+                {
+                    // 简单处理
+                    result += "*3\r\n$3\r\nSET\r\n$" + std::to_string(key.size()) +
+                            "\r\n" + key + "\r\n$" + std::to_string(value.val.size()) +
+                            "\r\n" + value.val + "\r\n";
+                    // TODO 过期时间
+                }
+
+                // Hash
+                for (const auto &[key, fields] : shard.hash)
+                {
+                    for (auto &[field, value] : fields)
+                    {
+                        result += "*4\r\n$4\r\nHSET\r\n$" + std::to_string(key.size()) +
+                                  "\r\n" + key + "\r\n$" + std::to_string(field.size()) +
+                                  "\r\n" + field + "\r\n$" + std::to_string(value.size()) +
+                                  "\r\n" + value + "\r\n";
+                    }
+                }
+
+                // Lists
+                for (const auto &[key, list] : shard.lists)
+                {
+                    for (auto &value : list)
+                    {
+                        result += "*3\r\n$5\r\nLPUSH\r\n$" + std::to_string(key.size()) + 
+                                    "\r\n" + key + "\r\n$" + std::to_string(value.size()) + 
+                                    "\r\n" + value + "\r\n";
+                    }
+                }
+
+                // Set
+                for (const auto &[key, set] : shard.sets)
+                {
+                    for (const auto& member : set)
+                    {
+                        result += "*3\r\n$4\r\nSADD\r\n$" + std::to_string(key.size()) + 
+                                    "\r\n" + key + "\r\n$" + std::to_string(member.size()) + 
+                                    "\r\n" + member + "\r\n";
+                    }
+                }
+
+                // Zset
+                for (const auto &[key, score_map] : shard.zset_score)
+                {
+                    for (const auto &[member, score] : score_map)
+                    {
+                        result += "*4\r\n$4\r\nZADD\r\n$" + std::to_string(key.size()) +
+                                    "\r\n" + key + "\r\n:" + std::to_string(score) + 
+                                    "\r\n$" + std::to_string(member.size()) + "\r\n" + 
+                                    member + "\r\n";
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+} // namespace blue

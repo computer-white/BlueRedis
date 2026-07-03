@@ -7,12 +7,11 @@
 #include "msocket.h"
 #include "asyncio.h"
 
-static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
-
 // socket 模块
 namespace blue
 {
-
+    static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
+    
     std::shared_ptr<MSocket> MSocket::CreateTcp(std::shared_ptr<Address> address)
     {
         std::shared_ptr<MSocket> tcpsock = std::make_shared<MSocket>(address->getFamily(), TCP, 0);
@@ -275,7 +274,7 @@ namespace blue
         }
         if (timeout == UINT32_MAX)
         {
-            bool conn = co_await Connect(m_sockfd, address->getAddr(), address->getAddrLen());
+            ssize_t conn = co_await Connect(m_sockfd, address->getAddr(), address->getAddrLen());
             if (conn)
             {
                 BLUE_LOG_ERROR(g_logger) << "::connect error,addr : "
@@ -288,7 +287,7 @@ namespace blue
         else
         {
 
-            bool conn = co_await ConnectT(m_sockfd, address->getAddr(), address->getAddrLen(), timeout);
+            ssize_t conn = co_await ConnectT(m_sockfd, address->getAddr(), address->getAddrLen(), timeout);
             if (conn)
             {
                 BLUE_LOG_ERROR(g_logger) << "::connect error,addr : "
@@ -456,6 +455,11 @@ namespace blue
         int connfd = co_await AcceptT(m_sockfd, nullptr, nullptr, ms);
         if (connfd == -1)
         {
+            // 超时不显示
+            if (errno == ETIMEDOUT)
+            {
+                co_return nullptr;
+            }
             BLUE_LOG_ERROR(g_logger) << "::accpet(" << m_sockfd
                                     << "),errno : " << errno << ",strerrno : "
                                     << strerror(errno);
@@ -745,6 +749,19 @@ namespace blue
     bool MSocket::cancelAll()
     {
         return blue::IOManager::GetThis()->cancelAll(m_sockfd);
+    }
+
+    bool MSocket::setVaildFd()
+    {
+        if (!isVaild())
+        {
+            _newSocket();
+            if (BLUE_LIKELY(!isVaild()))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     void MSocket::_initSocket()

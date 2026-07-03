@@ -130,7 +130,12 @@ namespace blue
                     m_isStop.store(true, std::memory_order_release);
                     break;
                 }
-                
+                // 超时不显示
+                if (errno == ETIMEDOUT)
+                {
+                    co_await sleepFor(1);
+                    continue;
+                }
                 BLUE_LOG_ERROR(g_logger) << "tcp accept failed error : " << errno
                                         << " strerror : " << strerror(errno);
 

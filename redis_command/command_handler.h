@@ -20,7 +20,7 @@
 #else
 #endif
 
-#define USE_GENERATOR 0  // 1: Generator, 0: Batch
+#define USE_GENERATOR 0 // 1: Generator, 0: Batch
 
 namespace blue
 {
@@ -59,10 +59,10 @@ namespace blue
     public:
         /**
          * @brief 搭配generator流式处理命令
-         * @param sock 
+         * @param sock
          */
-        Generator<RespValue> commandFlow(MSocket::MSocketPtr sock, RespStreamParser& parser, 
-            const char* data, size_t size, bool& should_done);
+        Generator<RespValue> commandFlow(MSocket::MSocketPtr sock, RespStreamParser &parser,
+                                         const char *data, size_t size, bool &should_done);
 
         /**
          * @brief 批量处理命令
@@ -132,15 +132,15 @@ namespace blue
 #ifdef COMMAND_TABLE
         // 设置 AOF 执行器
         m_server->getAOF().setExecutor([this](std::vector<RespValue> args,
-                                             MSocket::MSocketPtr sock,
-                                             bool record) -> RespValue
-                                      { return m_table.executeTable(args, sock, m_server, record); });
+                                              MSocket::MSocketPtr sock,
+                                              bool record) -> RespValue
+                                       { return m_table.executeTable(args, sock, m_server, record); });
 #else
         // 设置 AOF 执行器
         m_server->getAOF().setExecutor([this](std::vector<RespValue> args,
-                                             MSocket::MSocketPtr sock,
-                                             bool record) -> RespValue
-                                      { return m_ifelse.executeIfelse(args, sock, m_server, record); });
+                                              MSocket::MSocketPtr sock,
+                                              bool record) -> RespValue
+                                       { return m_ifelse.executeIfelse(args, sock, m_server, record); });
 #endif
         m_server->loadFromFile();
         m_server->getAOF().loadAOF();
@@ -157,12 +157,13 @@ namespace blue
     template <typename T>
     CommandHandler<T>::~CommandHandler()
     {
-        m_server->setShutdown(true);
-        m_server->getAOF().stop();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        m_server->getAOF().stopAOFFlushThread();
-        m_server->saveToFile();
-        m_server->getAOF().closeAOFWithFlush();
+        m_server->setShutdown(true);                                  // 设置服务器停止标识
+        m_server->getReplication().setStop();                         // 停止replicationLoop和processReplQueue
+        m_server->getAOF().stop();                                    // 停止aofSyncLoop
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // 等待结束
+        m_server->getAOF().stopAOFFlushThread();                      // 停止stopAOFFlushThread
+        m_server->saveToFile();                                       // 保存进入rdb
+        m_server->getAOF().closeAOFWithFlush();                       // 刷新并关闭AOF写入文件流
     }
 
     template <typename T>
@@ -193,9 +194,9 @@ namespace blue
         // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
         // BLUE_LOG_INFO(xx::g_logger) << "local address : " <<  sock->getLocalAddress()->toString();
 
-        RespStreamParser parser;                            // 解析器
-        const size_t MAX_COMMAND_SIZE = 1024 * 1024;        // 解析缓冲区最大大小
-        const size_t BATCH_SIZE = 256 * 1024;               // 批量响应大小阈值
+        RespStreamParser parser;                     // 解析器
+        const size_t MAX_COMMAND_SIZE = 1024 * 1024; // 解析缓冲区最大大小
+        const size_t BATCH_SIZE = 256 * 1024;        // 批量响应大小阈值
 
         std::string batch_response;
         batch_response.reserve(BATCH_SIZE);
@@ -263,7 +264,7 @@ namespace blue
             }
 
             bool should_done = false;
-            for (const auto& response : commandFlow(sock, parser, tmp, ret, should_done))
+            for (const auto &response : commandFlow(sock, parser, tmp, ret, should_done))
             {
                 if (should_done)
                 {
@@ -527,7 +528,6 @@ namespace blue
 
                     // 记录慢查询
                     m_server->getSlowLog().pushEntry(cmd_str, sock, start, end);
-                    
                 }
                 if (response.str != "QUEUED" && m_server->getPushMonitor().load(std::memory_order_acquire))
                 {
@@ -833,14 +833,14 @@ namespace blue
     }
 
     template <typename T>
-    Generator<RespValue> CommandHandler<T>::commandFlow(MSocket::MSocketPtr sock, 
-        RespStreamParser& parser, const char* data, size_t size, bool& should_done)
+    Generator<RespValue> CommandHandler<T>::commandFlow(MSocket::MSocketPtr sock,
+                                                        RespStreamParser &parser, const char *data, size_t size, bool &should_done)
     {
 
         if (!parser.feed({data, size}))
         {
             BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
-                                            << "] 缓冲区溢出，关闭连接";
+                                         << "] 缓冲区溢出，关闭连接";
             should_done = true;
             co_return;
         }
@@ -917,7 +917,6 @@ namespace blue
 
                 // 记录慢查询
                 m_server->getSlowLog().pushEntry(cmd_str, sock, start, end);
-                
             }
             if (response.str != "QUEUED" && m_server->getPushMonitor().load(std::memory_order_acquire))
             {

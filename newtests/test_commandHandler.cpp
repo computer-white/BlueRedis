@@ -16,13 +16,12 @@ void signalHandler(int signum) {
     g_running.store(false);
 }
 
-Task<void> test()
+Task<void> test(const std::string host)
 {
     // // 注册信号处理
     // signal(SIGINT, signalHandler);
     // signal(SIGTERM, signalHandler);
-    
-    auto address = Address::LookupAnyIpAddress("0.0.0.0:6666");
+    auto address = Address::LookupAnyIpAddress(host);
     if (!address)
     {
         BLUE_LOG_ERROR(g_logger) << "address is empty";
@@ -48,12 +47,25 @@ Task<void> test()
     co_return;
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+    if (argc != 3)
+    {
+        BLUE_LOG_INFO(g_logger) << "need host and port";
+        return -1;
+    }
+    const char* host = argv[1];
+    const char* port = argv[2];
+    BLUE_LOG_INFO(g_logger) << host << ":" << port;
+    std::string host_with_port;
+    host_with_port.append(host, strlen(host));
+    host_with_port += ":";
+    host_with_port.append(port, strlen(port));
+
     BLUE_LOG_INFO(g_logger) << "main begin";
     
     IOManager iom(2);
-    iom.schedule(test());
+    iom.schedule(test(host_with_port));
     
     BLUE_LOG_INFO(g_logger) << "calling wait_all()";
     iom.wait_all();

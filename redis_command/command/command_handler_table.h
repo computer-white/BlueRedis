@@ -184,6 +184,7 @@ namespace blue
         // replication
         REGISTER_COMMAND_T(REPLICAOF, handleREPLICAOF);
         REGISTER_COMMAND_T(SLAVEOF, handleSLAVEOF);
+        REGISTER_COMMAND_T(SYNC, handleSYNC);
 
         // 插入所有命令
         static consteval auto buildCommandTable()
@@ -292,6 +293,7 @@ namespace blue
             // replication
             CMD_ENTRY_T(REPLICAOF, handleREPLICAOF, false, ONLY_THREE);
             CMD_ENTRY_T(SLAVEOF, handleSLAVEOF, false, ONLY_THREE);
+            CMD_ENTRY_T(SYNC, handleSYNC, false, ONLY_ONE);
 
             return builder.build();
         }
@@ -358,6 +360,12 @@ namespace blue
         {
             std::string aof_cmds = self->getAOF().formatCommand(args);
             self->getAOF().appendToAOF(aof_cmds);
+
+            // 如果是主节点，广播给从节点
+            if (self->getReplication().getisMaster() && !self->getReplication().slavesEmpty()) 
+            {
+                self->getReplication().broadcastToSlaves(aof_cmds);
+            }
         }
 
         // 执行命令
@@ -3827,6 +3835,12 @@ namespace blue
         info += "aof_max_buffer_size" + std::to_string(self->getAOF().getMaxAOFBufferSize()) + "\r\n";
         info += "\r\n";
 
+        // Replication
+        info += "# Replication\r\n";
+        info += "master:" + self->getReplication().getMasterHost() + ":" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
+        info += "slaves:" + self->getReplication().slavesToString() + "\r\n";
+        info += "\r\n";
+
         // Monitor
         info += "# Monitor\r\n";
         info += "monitor_clients:" + std::to_string(self->getMonitor().size()) + "\r\n";
@@ -3975,7 +3989,9 @@ namespace blue
             // 慢查询
             "SLOWLOG",
             // 监控模式
-            "MONITOR"};
+            "MONITOR",
+            // 主从复制
+            "REPLICAOF", "SLAVEOF", "SYNC"};
 
         for (const auto &name : cmd_list)
         {
@@ -4204,6 +4220,67 @@ namespace blue
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
     {
+        if (!self->isAdmin(sock))
+        {
+            return RespValue::error("ERR permission denied");
+        }
+        if (args.size() != 3)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'REPLICAOF'");
+        }
+        const std::string &host = args[1].str;
+        const std::string &port_str = args[2].str;
+
+        // REPLICAOF NO ONE 取消复制
+        if (host == "NO" && port_str == "ONE")
+        {
+            if (!self->getReplication().getisMaster())
+            {
+                self->getReplication().stopReplication();
+                self->getReplication().setisMaster(true);
+                BLUE_LOG_INFO(xx::g_logger) << "Replication stopped, now master";
+            }
+            return RespValue::simple_string("OK");
+        }
+
+        int32_t port;
+        try
+        {
+            port = std::stoi(port_str);
+            if (port < 0 || port > UINT16_MAX)
+            {
+                return RespValue::error("ERR value is invalid");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not an integer or out of range");
+        }
+
+        // 如果已经是从节点且连接到同一个主节点，忽略
+        if (!self->getReplication().getisMaster() &&
+            self->getReplication().getMasterHost() == host &&
+            self->getReplication().getMasterPort() == port)
+        {
+            return RespValue::simple_string("OK");
+        }
+
+        // 停止旧的复制
+        if (!self->getReplication().getisMaster())
+        {
+            self->getReplication().stopReplication();
+        }
+
+        // 设置新的配置
+        self->getReplication().setisMaster(false);
+        self->getReplication().setMasterHost(host);
+        self->getReplication().setMasterPort(static_cast<uint16_t>(port));
+        self->getReplication().setReplOffset(0);
+
+        // 启动复制
+        self->getReplication().startReplication();
+
+        return RespValue::simple_string("OK");
     }
 
     template <typename T>
@@ -4212,6 +4289,112 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
     {
+        if (!self->isAdmin(sock))
+        {
+            return RespValue::error("ERR permission denied");
+        }
+        if (args.size() != 3)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'REPLICAOF'");
+        }
+        const std::string &host = args[1].str;
+        const std::string &port_str = args[2].str;
+
+        // REPLICAOF NO ONE 取消复制
+        if (host == "NO" && port_str == "ONE")
+        {
+            if (!self->getReplication().getisMaster())
+            {
+                self->getReplication().stopReplication();
+                self->getReplication().setisMaster(true);
+                BLUE_LOG_INFO(xx::g_logger) << "Replication stopped, now master";
+            }
+            return RespValue::simple_string("OK");
+        }
+
+        int32_t port;
+        try
+        {
+            port = std::stoi(port_str);
+            if (port < 0 || port > UINT16_MAX)
+            {
+                return RespValue::error("ERR value is invalid");
+            }
+        }
+        catch (...)
+        {
+            return RespValue::error("ERR value is not an integer or out of range");
+        }
+
+        // 如果已经是从节点且连接到同一个主节点，忽略
+        if (!self->getReplication().getisMaster() &&
+            self->getReplication().getMasterHost() == host &&
+            self->getReplication().getMasterPort() == port)
+        {
+            return RespValue::simple_string("OK");
+        }
+
+        // 停止旧的复制
+        if (!self->getReplication().getisMaster())
+        {
+            self->getReplication().stopReplication();
+        }
+
+        // 设置新的配置
+        self->getReplication().setisMaster(false);
+        self->getReplication().setMasterHost(host);
+        self->getReplication().setMasterPort(static_cast<uint16_t>(port));
+        self->getReplication().setReplOffset(0);
+
+        // 启动复制
+        self->getReplication().startReplication();
+
+        return RespValue::simple_string("OK");
+    }
+
+    template <typename T>
+    RespValue CommandHandlerTable<T>::handleSYNC(std::vector<RespValue> &args,
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
+    {
+        if (sock->getClientId() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+
+        // 只有主节点接收SYNC命令
+        if (!(self->getReplication().getisMaster()))
+        {
+            return RespValue::error("ERR not master");
+        }
+
+        BLUE_LOG_INFO(xx::g_logger) << "SYNC request from slave, fd=" << sock->getSocketfd();
+
+        // 主节点保存从节点连接
+        self->getReplication().addSlaves(sock);
+
+        // 生成 RDB 数据并发送
+        std::string rdb_data = self->generateRDB(); // 拷贝一份
+
+        // 发送 RDB 格式: $<length>\r\n<data>
+        const std::string &response = "$" + std::to_string(rdb_data.size()) + "\r\n" + rdb_data;
+
+        // 非阻塞同步发送(在tcpServer中的startAccept中对sock fd设置了非阻塞)
+        ssize_t sent = ::send(sock->getSocketfd(), response.data(), response.size(), MSG_NOSIGNAL);
+        if (sent <= 0)
+        {
+            BLUE_LOG_ERROR(xx::g_logger) << "Failed to send RDB to slave";
+
+            // 从从节点列表中删除从节点
+            self->getReplication().remove(sock);
+
+            // 返回失败给从节点
+            return RespValue::error("ERR failed to send RDB");
+        }
+
+        BLUE_LOG_INFO(xx::g_logger) << "SYNC: RDB sent to slave, " << rdb_data.size() << " bytes";
+        return RespValue::simple_string("OK");
     }
 }
 #else

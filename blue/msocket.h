@@ -481,6 +481,16 @@ namespace blue
         bool cancelAll();
 
         /**
+         * @brief 设置有效的fd
+         */
+        bool setVaildFd();
+
+        /**
+         * @brief 设置为连接成功，并设置远端和本端地址
+         */
+        void setConnection() { m_isConnected = true; getRemoteAddress(); getLocalAddress(); }
+
+        /**
          * @brief 获取客户端密码
          */
         const std::string &getClientPassword() const noexcept { return m_client_password; }
