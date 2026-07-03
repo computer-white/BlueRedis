@@ -618,7 +618,7 @@ namespace blue
                 {
                     for (auto &value : list)
                     {
-                        result += "*3\r\n$5\r\nLPUSH\r\n$" + std::to_string(key.size()) + 
+                        result += "*3\r\n$5\r\nRPUSH\r\n$" + std::to_string(key.size()) + 
                                     "\r\n" + key + "\r\n$" + std::to_string(value.size()) + 
                                     "\r\n" + value + "\r\n";
                     }
@@ -640,10 +640,11 @@ namespace blue
                 {
                     for (const auto &[member, score] : score_map)
                     {
+                        std::string score_str = std::to_string(score);
                         result += "*4\r\n$4\r\nZADD\r\n$" + std::to_string(key.size()) +
-                                    "\r\n" + key + "\r\n:" + std::to_string(score) + 
-                                    "\r\n$" + std::to_string(member.size()) + "\r\n" + 
-                                    member + "\r\n";
+                                "\r\n" + key + "\r\n$" + std::to_string(score_str.size()) +
+                                "\r\n" + score_str + "\r\n$" + std::to_string(member.size()) + 
+                                "\r\n" + member + "\r\n";
                     }
                 }
             }

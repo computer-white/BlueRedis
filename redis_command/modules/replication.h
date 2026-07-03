@@ -12,9 +12,13 @@ namespace blue
     class ReplicationModule
     {
     public:
+        // (执行回调)函数
         using ExecuteFunc = std::function<RespValue(std::vector<RespValue>, MSocket::MSocketPtr, bool)>;
+        // 默认构造
         ReplicationModule() = default;
         ~ReplicationModule() { this->stopReplication(); }
+
+        // 禁止拷贝
         ReplicationModule(const ReplicationModule& ) = delete;
         ReplicationModule& operator=(const ReplicationModule& ) = delete;
     public:
@@ -86,12 +90,32 @@ namespace blue
         /**
          * @brief 从节点列表是否为空
          */
-        bool slavesEmpty() const noexcept { return m_slaves.empty(); }
+        bool slavesEmpty() const noexcept { std::shared_lock<std::shared_mutex> lock(m_slaves_mutex); return m_slaves.empty(); }
 
         /**
          * @brief 输出slaves信息
          */
         std::string slavesToString() const noexcept;
+
+        /**
+         * @brief 获取从节点个数
+         */
+        size_t slavesCount() const;
+
+        /**
+         * @brief 获取当前复制状态
+         */
+        uint8_t getReplState() const noexcept { return m_repl_state.load(std::memory_order_acquire); }
+
+        /**
+         * @brief 获取当前复制偏移量
+         */
+        int64_t getReplOffset() const noexcept { return m_repl_config.repl_offset; }
+
+        /**
+         * @brief 返回在线状态
+         */
+        uint8_t getOnline() const noexcept { return RelpState::REPL_STATE_ONLINE; }
 
         /**
          * @brief 删除主节点无法成功发送RDB消息给从节点的从节点
@@ -117,14 +141,14 @@ namespace blue
     private:
         struct ReplicationConfig
         {
-            bool is_master = false;      // 是否是主节点
-            std::string master_host;     // 主节点地址
-            uint16_t master_port = 6666; // 主节点端口
-            std::string master_password; // 主节点密码
-            int64_t repl_offset;         // 复制偏移量
-            std::string repl_id;         // 复制id
+            bool is_master = true;          // 是否是主节点
+            std::string master_host;        // 主节点地址
+            uint16_t master_port;           // 主节点端口
+            std::string master_password;    // 主节点密码
+            int64_t repl_offset;            // 复制偏移量
+            std::string repl_id;            // 复制id
         };
-        enum RelpState
+        enum RelpState : uint8_t
         {
             REPL_STATE_NONE = 0,    // 未开始
             REPL_STATE_CONNECTING,  // 连接中
@@ -158,9 +182,11 @@ namespace blue
         std::queue<ReplCommand> m_repl_queue;
         std::condition_variable m_repl_queue_cv;
         std::atomic<bool> m_repl_queue_stop{false};
+        std::atomic<bool> m_consumer_started{false};
 
         // 回调
         ExecuteFunc m_executor;
+        
 
     };
 }

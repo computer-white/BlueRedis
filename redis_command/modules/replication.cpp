@@ -29,14 +29,24 @@ namespace blue
                                     { this->replicationLoop(); });
 
         // 启动消费者协程
-        static bool consumer_started = false;
-        if (!consumer_started)
+        // static bool consumer_started = false;
+        if (!m_consumer_started.exchange(true, std::memory_order_acq_rel))
         {
-            consumer_started = true;
-            blue::IOManager::GetThis()->schedule([this]() -> Task<void>
-                                                 {
-                co_await this->processReplQueue();
-                co_return; });
+            // consumer_started = true;
+            BLUE_LOG_INFO(g_logger) << "Scheduling replication queue consumer";
+            auto *iom = blue::IOManager::GetThis();
+            if (!iom)
+            {
+                BLUE_LOG_ERROR(g_logger) << "IOManager is null!";
+                return;
+            }
+            BLUE_LOG_INFO(g_logger) << "IOManager found: " << iom;
+            iom->schedule(this->processReplQueue());
+            BLUE_LOG_INFO(g_logger) << "Replication queue consumer scheduled";
+            // blue::IOManager::GetThis()->schedule([this]() -> Task<void>
+            //                                      {
+            //     co_await this->processReplQueue();
+            //     co_return; });
         }
     }
 
@@ -46,6 +56,7 @@ namespace blue
 
         m_repl_state.store(REPL_STATE_NONE, std::memory_order_release);
         m_repl_queue_stop.store(true, std::memory_order_release);
+        m_consumer_started.store(false, std::memory_order_release);
         m_repl_queue_cv.notify_all();
 
         if (m_repl_sock)
@@ -122,16 +133,18 @@ namespace blue
                 continue;
             }
             BLUE_LOG_INFO(g_logger) << "sock vaild successful";
-            // 同步非阻塞连接
+            sock->setBlocking();
+            // 同步阻塞连接
             ssize_t conn = ::connect(sock->getSocketfd(), addr->getAddr(), addr->getAddrLen());
             if (conn != 0)
             {
-                BLUE_LOG_ERROR(g_logger) << "connect failed: errno=" << errno 
-                             << " (" << strerror(errno) << ")";
+                BLUE_LOG_ERROR(g_logger) << "connect failed: errno=" << errno
+                                         << " (" << strerror(errno) << ")";
                 std::this_thread::sleep_for(std::chrono::seconds(5));
                 continue;
             }
             BLUE_LOG_INFO(g_logger) << "connection successful";
+            sock->setNoBlocking();
             sock->setConnection(); // 会标记sock fd为已经连接上，并拿到本端和远端地址
             BLUE_LOG_INFO(g_logger) << "Connected to master, fd=" << sock->getSocketfd();
             m_repl_sock = sock;
@@ -155,7 +168,7 @@ namespace blue
                 }
 
                 char buf[128];
-                ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf),0);
+                ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf), 0);
                 if (ret <= 0)
                 {
                     BLUE_LOG_DEBUGE(g_logger) << "Failed to recv AUTH response";
@@ -173,9 +186,9 @@ namespace blue
                 BLUE_LOG_INFO(g_logger) << "AUTH successful";
             }
 
-            // 发送SYNC命令
-            const char *sync_cmd = "*1\r\n$4\r\nSYNC\r\n";
-            ssize_t send = ::send(sock->getSocketfd(), sync_cmd, sizeof(sync_cmd), MSG_NOSIGNAL);
+            // 发送SYNC命令（需要携带密码发送）
+            const char *sync_cmd = "*2\r\n$4\r\nAUTH\r\n$9\r\nclient123\r\n*1\r\n$4\r\nSYNC\r\n";
+            ssize_t send = ::send(sock->getSocketfd(), sync_cmd, strlen(sync_cmd), MSG_NOSIGNAL);
             if (send <= 0)
             {
                 BLUE_LOG_DEBUGE(g_logger) << "Failed to send SYNC";
@@ -207,6 +220,7 @@ namespace blue
                     }
                     else if (errno == EAGAIN || errno == EWOULDBLOCK)
                     {
+                        // BLUE_LOG_DEBUGE(g_logger) << "errno = EAGIN";
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                         continue;
                     }
@@ -220,6 +234,7 @@ namespace blue
 
                 buf[ret] = '\0';
                 std::string data(buf, ret);
+                // BLUE_LOG_INFO(g_logger) << "data: " << data;
 
                 if (reading_length)
                 {
@@ -328,6 +343,7 @@ namespace blue
 
                 // 解析
                 buffer.append(buf, ret);
+                // BLUE_LOG_INFO(g_logger) << "buffer: " << buffer;
 
                 RespStreamParser temp_parser;
                 if (temp_parser.feed(buffer))
@@ -335,12 +351,15 @@ namespace blue
                     RespValue cmd;
                     while (temp_parser.next(cmd))
                     {
+                        // BLUE_LOG_INFO(g_logger) << "next successful";
                         if (cmd.type == RespValue::Type::ARRAY && !cmd.arr.empty())
                         {
                             {
+                                // BLUE_LOG_INFO(g_logger) << "push to repl_queue";
                                 std::lock_guard<std::mutex> lock(m_repl_queue_mutex);
                                 m_repl_queue.push(ReplCommand{std::move(cmd.arr)});
                             }
+                            // BLUE_LOG_INFO(g_logger) << "notify one";
                             m_repl_queue_cv.notify_one();
 
                             m_repl_config.repl_offset++;
@@ -354,6 +373,7 @@ namespace blue
                         BLUE_LOG_ERROR(g_logger) << "Buffer too large, protocol error";
                         break;
                     }
+                    BLUE_LOG_ERROR(g_logger) << "will break, feed error";
                     break;
                 }
             }
@@ -369,10 +389,12 @@ namespace blue
 
     void ReplicationModule::broadcastToSlaves(const std::string &cmd)
     {
+        BLUE_LOG_INFO(g_logger) << "broadcast" << cmd << "to slaves";
         std::shared_lock<std::shared_mutex> lock(m_slaves_mutex);
 
         if (m_slaves.empty())
         {
+            BLUE_LOG_INFO(g_logger) << "slaves is empty";
             return;
         }
 
@@ -387,11 +409,21 @@ namespace blue
             }
 
             // 非阻塞同步发送
+            slave->setNoBlocking();
             ssize_t sent = ::send(slave->getSocketfd(), cmd.data(), cmd.size(), MSG_NOSIGNAL);
             if (sent <= 0)
             {
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                {
+                    BLUE_LOG_WARN(g_logger) << "Send buffer full, will retry";
+                    ++it;
+                    continue;
+                }
                 BLUE_LOG_WARN(g_logger) << "Failed to send command to slave";
-                it = m_slaves.erase(it);
+                lock.unlock();
+                remove(slave);
+                lock.lock();
+                it = m_slaves.begin(); // 重新开始
                 continue;
             }
             ++it;
@@ -433,11 +465,13 @@ namespace blue
             if (has_cmd)
             {
                 // 执行命令（不记录 AOF, 不推送Monitor）
+                // BLUE_LOG_INFO(g_logger) << "has_cmd, m_executor: " << (m_executor ? "exists" : "null");
+
                 m_executor(std::move(cmd.args), temp_sock, false);
             }
 
             // 挂起,让出cpu
-            co_await std::suspend_always{};
+            // co_await std::suspend_always{};  // 不能挂起，因为没人会再去恢复它
         }
 
         BLUE_LOG_INFO(g_logger) << "Replication queue consumer stopped";
@@ -512,13 +546,27 @@ namespace blue
             auto ptr = it->lock();
             if (ptr)
             {
-                result += std::to_string(idx++) + "remote address: " + ptr->getRemoteAddress()->toString() + "local address: " \
-                            + ptr->getLocalAddress()->toString() + "\r\n";
-                ++it;
-                continue;
+                // 格式: slave0:addr=127.0.0.1:6666state=online
+                result += "slave" + std::to_string(idx++) + ":";
+                result += "addr=" + ptr->getRemoteAddress()->toString();
+                result += "state=online\r\n";
             }
             ++it;
         }
         return result;
+    }
+
+    size_t ReplicationModule::slavesCount() const
+    {
+        std::shared_lock<std::shared_mutex> lock(m_slaves_mutex);
+        size_t count = 0;
+        for (const auto &weak : m_slaves)
+        {
+            if (!weak.expired())
+            {
+                count++;
+            }
+        }
+        return count;
     }
 }

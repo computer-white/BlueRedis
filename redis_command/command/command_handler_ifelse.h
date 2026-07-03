@@ -3311,8 +3311,30 @@ namespace blue
 
             // Replication
             info += "# Replication\r\n";
-            info += "master:" + self->getReplication().getMasterHost() + ":" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
-            info += "slaves:" + self->getReplication().slavesToString() + "\r\n";
+            
+            if (self->getReplication().getisMaster()) 
+            {
+                info += "role:master\r\n";
+                info += "connected_slaves:" + std::to_string(self->getReplication().slavesCount()) + "\r\n";
+                
+                // 列出所有从节点
+                auto slaves_info = self->getReplication().slavesToString();
+                if (!slaves_info.empty()) 
+                {
+                    info += slaves_info;
+                }
+            } 
+            else 
+            {
+                info += "role:slave\r\n";
+                info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
+                info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
+                info += "master_link_status:" + std::string(
+                    self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down"
+                ) + "\r\n";
+                info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
+            }
+
             info += "\r\n";
 
             // Monitor
@@ -3658,7 +3680,7 @@ namespace blue
         }
         else if (cmd == "REPLICAOF" || cmd == "SLAVEOF")
         {
-            if (!self->isAdmin(sock))
+            if (sock->getClientlevel() < 1)
             {
                 return return_with_slowlog(RespValue::error("ERR permission denied"));
             }
@@ -3722,7 +3744,7 @@ namespace blue
         }
         else if (cmd == "SYNC") // SYNC 主节点处理
         {
-            if (sock->getClientId() < 1)
+            if (sock->getClientlevel() < 1)
             {
                 return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
@@ -3742,7 +3764,7 @@ namespace blue
             std::string rdb_data = self->generateRDB(); // 拷贝一份
 
             // 发送 RDB 格式: $<length>\r\n<data>
-            const std::string &response = "$" + std::to_string(rdb_data.size()) + "\r\n" + rdb_data;
+            std::string response = "$" + std::to_string(rdb_data.size()) + "\r\n" + rdb_data;
 
             // 非阻塞同步发送(在tcpServer中的startAccept中对sock fd设置了非阻塞)
             ssize_t sent = ::send(sock->getSocketfd(), response.data(), response.size(), MSG_NOSIGNAL);

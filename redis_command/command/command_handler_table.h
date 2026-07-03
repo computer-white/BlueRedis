@@ -333,6 +333,11 @@ namespace blue
         {                                                              \
             std::string aof_cmds = self->getAOF().formatCommand(args); \
             self->getAOF().appendToAOF(aof_cmds);                      \
+            if (self->getReplication().getisMaster() &&                \
+                !self->getReplication().slavesEmpty())                 \
+            {                                                          \
+                self->getReplication().broadcastToSlaves(aof_cmds);    \
+            }                                                          \
         }                                                              \
         return handle##name(args, sock, RecordAOF, self);              \
     }
@@ -362,7 +367,7 @@ namespace blue
             self->getAOF().appendToAOF(aof_cmds);
 
             // 如果是主节点，广播给从节点
-            if (self->getReplication().getisMaster() && !self->getReplication().slavesEmpty()) 
+            if (self->getReplication().getisMaster() && !(self->getReplication().slavesEmpty())) 
             {
                 self->getReplication().broadcastToSlaves(aof_cmds);
             }
@@ -2160,19 +2165,16 @@ namespace blue
         int32_t count = 0;
         auto &shards = self->getShard(key, sock);
         std::unique_lock<std::shared_mutex> lock(shards.mutex);
-        std::unordered_set<std::string> new_set;
         for (size_t i = 2; i < args.size(); i++)
         {
             const std::string &member = args[i].str;
-            auto it = shards.sets.find(key);
-            if (it == shards.sets.end())
+            if (shards.sets[key].find(member) == shards.sets[key].end())
             {
-                auto [_, res] = new_set.insert(member);
+                auto [_, res] = shards.sets[key].insert(member);
                 if (res)
                 {
                     count++;
                 }
-                shards.sets.insert_or_assign(key, std::move(new_set));
             }
         }
         return RespValue::integer(count);
@@ -2223,12 +2225,11 @@ namespace blue
         {
             return RespValue::integer(0);
         }
-        auto &set = const_cast<std::unordered_set<std::string> &>(it->second);
         for (size_t i = 2; i < args.size(); i++)
         {
-            count += set.erase(args[i].str);
+            count += it->second.erase(args[i].str);
         }
-        if (set.empty())
+        if (it->second.empty())
         {
             shards.sets.erase(it);
         }
@@ -3837,8 +3838,30 @@ namespace blue
 
         // Replication
         info += "# Replication\r\n";
-        info += "master:" + self->getReplication().getMasterHost() + ":" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
-        info += "slaves:" + self->getReplication().slavesToString() + "\r\n";
+
+        if (self->getReplication().getisMaster()) 
+        {
+            info += "role:master\r\n";
+            info += "connected_slaves:" + std::to_string(self->getReplication().slavesCount()) + "\r\n";
+            
+            // 列出所有从节点
+            auto slaves_info = self->getReplication().slavesToString();
+            if (!slaves_info.empty()) 
+            {
+                info += slaves_info;
+            }
+        } 
+        else 
+        {
+            info += "role:slave\r\n";
+            info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
+            info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
+            info += "master_link_status:" + std::string(
+                self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down"
+            ) + "\r\n";
+            info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
+        }
+        
         info += "\r\n";
 
         // Monitor
@@ -4220,9 +4243,9 @@ namespace blue
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
     {
-        if (!self->isAdmin(sock))
+        if (sock->getClientlevel() < 1)
         {
-            return RespValue::error("ERR permission denied");
+            return RespValue::error("ERR authentication required");
         }
         if (args.size() != 3)
         {
@@ -4289,9 +4312,9 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
     {
-        if (!self->isAdmin(sock))
+        if (sock->getClientlevel() < 1)
         {
-            return RespValue::error("ERR permission denied");
+            return RespValue::error("ERR authentication required");
         }
         if (args.size() != 3)
         {
@@ -4358,7 +4381,7 @@ namespace blue
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
     {
-        if (sock->getClientId() < 1)
+        if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -4378,7 +4401,7 @@ namespace blue
         std::string rdb_data = self->generateRDB(); // 拷贝一份
 
         // 发送 RDB 格式: $<length>\r\n<data>
-        const std::string &response = "$" + std::to_string(rdb_data.size()) + "\r\n" + rdb_data;
+        std::string response = "$" + std::to_string(rdb_data.size()) + "\r\n" + rdb_data;
 
         // 非阻塞同步发送(在tcpServer中的startAccept中对sock fd设置了非阻塞)
         ssize_t sent = ::send(sock->getSocketfd(), response.data(), response.size(), MSG_NOSIGNAL);

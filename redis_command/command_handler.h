@@ -130,12 +130,22 @@ namespace blue
         m_server = std::make_shared<ServerData<T>>();
         m_server->setTcpServer(this);
 #ifdef COMMAND_TABLE
+        // 设置 Replication 执行器
+        m_server->getReplication().setExecutor([this](std::vector<RespValue> args,
+                                                      MSocket::MSocketPtr sock,
+                                                      bool record) -> RespValue
+                                               { return m_table.executeTable(args, sock, m_server, record); });
         // 设置 AOF 执行器
         m_server->getAOF().setExecutor([this](std::vector<RespValue> args,
                                               MSocket::MSocketPtr sock,
                                               bool record) -> RespValue
                                        { return m_table.executeTable(args, sock, m_server, record); });
 #else
+        // 设置 Replication 执行器
+        m_server->getReplication().setExecutor([this](std::vector<RespValue> args,
+                                                      MSocket::MSocketPtr sock,
+                                                      bool record) -> RespValue
+                                               { return m_ifelse.executeIfelse(args, sock, m_server, record); });
         // 设置 AOF 执行器
         m_server->getAOF().setExecutor([this](std::vector<RespValue> args,
                                               MSocket::MSocketPtr sock,
