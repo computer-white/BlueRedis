@@ -1,3 +1,11 @@
+/**
+ * @file mthread.h
+ * @brief 基于c++11/14对于线程的封装，为了替换sylar的pthread封装而不想大改其他文件的线程使用方法
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.24
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_MTHREAD_H
 #define BLUE_MTHREAD_H
 #include <mutex>
