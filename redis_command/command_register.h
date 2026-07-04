@@ -1,3 +1,11 @@
+ /**
+ * @file command_register.h
+ * @brief 宏定义redis命令处理函数和插入命令表
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.17
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #ifdef COMMAND_TABLE
 #include "command_table.h"

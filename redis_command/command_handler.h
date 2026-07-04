@@ -1,3 +1,11 @@
+ /**
+ * @file command_handler.h
+ * @brief redis server
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.17
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <array>
 #include <memory>

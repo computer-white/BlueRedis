@@ -1,3 +1,11 @@
+ /**
+ * @file command_table.h
+ * @brief 编译期插入命令，排序，构建命令表
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.17
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #ifdef COMMAND_TABLE
 #include <array>

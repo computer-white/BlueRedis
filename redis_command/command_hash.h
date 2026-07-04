@@ -1,3 +1,11 @@
+ /**
+ * @file command_hash.h
+ * @brief 编译期构建redis命令表哈希模块
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.17
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #ifdef COMMAND_TABLE
 #include <cstdint>
