@@ -1,3 +1,11 @@
+/**
+ * @file ssl_asynicio.h
+ * @brief ssl上io操作异步实现
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.14
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <openssl/ssl.h>
 #include <openssl/err.h>
