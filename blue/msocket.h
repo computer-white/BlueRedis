@@ -1,3 +1,11 @@
+/**
+ * @file msocket.h
+ * @brief 对于sockfd 以及一些在sockfd上读写api的封装（基于asyncio.h）
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.15
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_MSOCKET_H
 #define BLUE_MSOCKET_H
 #include <memory>
