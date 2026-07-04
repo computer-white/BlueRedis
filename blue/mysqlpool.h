@@ -1,3 +1,11 @@
+/**
+ * @file mysqlpool.h
+ * @brief mysql连接池模块
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.15
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_MYSQLPOOL_H
 #define BLUE_MYSQLPOOL_H
 #include <mysql/mysql.h>
