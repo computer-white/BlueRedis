@@ -1,3 +1,11 @@
+/**
+ * @file io_manager.h
+ * @brief io操作管理,使用epoll检测fd上的事件,然后提交给scheduler,目前主要提交协程或基于协程封装的回调函数
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.1
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
