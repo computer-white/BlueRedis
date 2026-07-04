@@ -1,3 +1,11 @@
+/**
+ * @file singleton.h
+ * @brief 单例模式
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.4.11
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_SINGLETON_H
 #define BLUE_SINGLETON_H
 #include <memory>
