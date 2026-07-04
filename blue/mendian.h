@@ -1,3 +1,11 @@
+/**
+ * @file mendian.h
+ * @brief 字节序转换
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.2
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_ENDIAN_H
 #define BLUE_ENDIAN_H
 
