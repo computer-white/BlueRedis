@@ -1,3 +1,11 @@
+/**
+ * @file msocketstream.h
+ * @brief sock流操作的封装
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.30
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_MSOCKETSTREAM_H
 #define BLUE_MSOCKETSTREAM_H
 #include "msocket.h"
