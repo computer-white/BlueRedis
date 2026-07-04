@@ -1,3 +1,11 @@
+/**
+ * @file skiplist.h
+ * @brief 跳表数据结构的实现
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.5
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <vector>
 #include <random>
