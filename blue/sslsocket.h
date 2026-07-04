@@ -1,3 +1,11 @@
+/**
+ * @file sslsocket.h
+ * @brief ssl socket 模块，ssl读写，握手
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.1
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_SSLSOCKET_H
 #define BLUE_SSLSOCKET_H
 #include <openssl/ssl.h>
