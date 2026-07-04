@@ -1,3 +1,11 @@
+/**
+ * @file async_logger.h
+ * @brief 异步日志器
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.24
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include "spscqueue.h"
 #include "logentry.h"
