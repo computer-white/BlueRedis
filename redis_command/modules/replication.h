@@ -1,3 +1,11 @@
+ /**
+ * @file replication.h
+ * @brief redis server 主从复制模块
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.7.3
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <atomic>
 #include <thread>

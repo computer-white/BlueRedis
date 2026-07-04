@@ -1,3 +1,11 @@
+ /**
+ * @file subscription.h
+ * @brief redis server 订阅模式模块
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.26
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <memory>
 #include <unordered_map>

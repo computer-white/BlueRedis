@@ -1,3 +1,11 @@
+ /**
+ * @file slowlog.h
+ * @brief redis server 慢查询模块
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.26
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <string>
 #include <memory>
