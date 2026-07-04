@@ -1,3 +1,11 @@
+/**
+ * @file address.h
+ * @brief 网络地址的封装(IPv4,IPv6,Unix)
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.4.1
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_ADDRESS_H
 #define BLUE_ADDRESS_H
 #include <memory>
