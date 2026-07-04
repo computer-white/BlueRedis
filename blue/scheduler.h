@@ -1,3 +1,11 @@
+/**
+ * @file shceduler.h
+ * @brief 调度器模块(重新实现了调度器模块为了配合c++20协程)
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.1
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <deque>
 #include <vector>
