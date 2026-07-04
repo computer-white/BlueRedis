@@ -1,10 +1,10 @@
 /**
  * @file macro.h
  * @brief 自定义宏模块
- * @author syalr, blue
+ * @author blue
  * @email homeheyang@outlook.com
  * @date 2026.4.15
- * @copyright Copyright (c) 2026年 sylar, blue
+ * @copyright Copyright (c) 2026年 blue
  */
 #ifndef __BLUE_MACRO_H__
 #define __BLUE_MACRO_H__

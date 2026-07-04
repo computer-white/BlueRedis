@@ -1,10 +1,10 @@
 /**
  * @file fdmanager.h
  * @brief 文件描述符fd管理
- * @authors sylar, blue
+ * @authors blue
  * @email homeheyang@outlook.com
  * @date 2026.5.1
- * @copyright Copyright (c) 2026年 sylar, blue
+ * @copyright Copyright (c) 2026年 blue
  */
 #ifndef BLUE_FDMANAGER_H
 #define BLUE_FDMANAGER_h

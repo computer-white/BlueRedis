@@ -1,10 +1,10 @@
 /**
  * @file log.h
  * @brief 日志系统，几乎完全按照sylar版本写的，但在内部实现细节上，比如一些日志的输出采用无锁是自己写的
- * @author sylar, blue
+ * @author blue
  * @email homeheyang@outlook.com
  * @date 2026.3.24
- * @copyright Copyright (c) 2026年 sylar, blue
+ * @copyright Copyright (c) 2026年 blue
  */
 #ifndef BLUE_LOG_H
 #define BLUE_LOG_H

@@ -1,7 +1,7 @@
 /**
  * @file bytearray.h
  * @brief 字节流的封装
- * @authors sylar,blue
+ * @authors blue
  * @email homeheyang@outlook.com
  * @date 2026.4.5
  * @copyright Copyright (c) 2026年 blue
