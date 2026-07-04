@@ -1,3 +1,11 @@
+/**
+ * @file rate_limiter.h
+ * @brief redis限流模块,用于httpserver.cpp中对同一客户端进行限流操作
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.19
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <unordered_set>
 #include "blue/redismanager.h"

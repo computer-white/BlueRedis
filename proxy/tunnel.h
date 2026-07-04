@@ -1,3 +1,11 @@
+/**
+ * @file tunnel.h
+ * @brief 管道模块,用于httpserver中隧道连接和websocket
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.19
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include "blue/msocket.h"
 #include "blue/task.h"

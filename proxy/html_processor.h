@@ -1,3 +1,11 @@
+ /**
+ * @file html_processor.h
+ * @brief html重写模块
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.19
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <gumbo.h>
 #include "url_rewriter.h"
