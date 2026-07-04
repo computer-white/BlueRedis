@@ -1,3 +1,11 @@
+/**
+ * @file redismanager.h
+ * @brief redis 管理,对redis客户端管理器的实现
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.15
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_REDISMANAGER_H
 #define BLUE_REDISMANAGER_H
 #include <hiredis/hiredis.h>
