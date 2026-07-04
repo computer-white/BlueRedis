@@ -1,3 +1,11 @@
+/**
+ * @file logentry.h
+ * @brief 日志信息条目，搭配async_logger使用
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.24
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <string>
 #include <chrono>
