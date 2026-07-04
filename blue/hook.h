@@ -1,3 +1,11 @@
+/**
+ * @file hook.h
+ * @brief 对于一些api的hook封装,之前跟随b站sylar写的，目前已经用不上了
+ * @authors sylar, blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.1
+ * @copyright Copyright (c) 2026年 sylar, blue
+ */
 #ifndef BLUE_HOOK_H
 #define BLUE_HOOK_H
 #include <unistd.h>
