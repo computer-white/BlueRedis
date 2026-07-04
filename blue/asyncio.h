@@ -1,3 +1,11 @@
+/**
+ * @file asyncio.h
+ * @brief 基于协程对io操作的封装
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.2
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <string.h>
 #include <sys/types.h>
