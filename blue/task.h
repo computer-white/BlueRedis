@@ -1,3 +1,11 @@
+/**
+ * @file task.h
+ * @brief 核心模块，对于协程任务的实现，协程之间采用对称转移
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.1
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <coroutine>
 #include <exception>
@@ -216,6 +224,10 @@ namespace blue
         //     }
         // }
 
+
+        /**
+         * @brief 保存父协程，并对子协程对称转移
+         */
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> call) const noexcept
         {
             if (handle && !handle.done())
