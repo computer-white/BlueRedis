@@ -1,3 +1,11 @@
+/**
+ * @file memory_pool.h
+ * @brief 内存池（无锁，单生产者单消费者）
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.26
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <memory>
 #include <atomic>
