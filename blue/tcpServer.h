@@ -1,3 +1,12 @@
+/**
+ * @file tcpServer.h
+ * @brief tcp服务模块，设置超时api现在已然没用，是我跟写sylar时的产物，对于handleClient已改为协程，意味着任何基于TcpServer的子类重写
+ * handleClient必须使用协程
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.1
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_TCPSERVER_H
 #define BLUE_TCPSERVER_H
 #include <memory>
