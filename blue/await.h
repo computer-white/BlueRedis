@@ -1,3 +1,11 @@
+/**
+ * @file await.h
+ * @brief 基于协程和调度器的对于sleep的改写
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.2
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <coroutine>
 #include <stdint.h>
