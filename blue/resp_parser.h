@@ -1,3 +1,11 @@
+/**
+ * @file resp_parser.h
+ * @brief 对于RESP协议命令的格式化处理和解析
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.25
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <string>
 #include <unordered_map>
