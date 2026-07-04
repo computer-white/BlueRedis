@@ -1,3 +1,11 @@
+/**
+ * @file dbmanager.h
+ * @brief 数据库管理器，封装 MySQL 连接池操作
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.10
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_DBMANAGER_H
 #define BLUE_DBMANAGER_H
 #include <mysql/mysql.h>
