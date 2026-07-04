@@ -1,3 +1,11 @@
+/**
+ * @file spscqueue.h
+ * @brief 单生产单消费者队列
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.5
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <memory>
 #include <atomic>
