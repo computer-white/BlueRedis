@@ -1,3 +1,11 @@
+/**
+ * @file mstream.h
+ * @brief 读写操作的流式处理基类
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.21
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_MSTREAM_H
 #define BLUE_MSTREAM_H
 #include <memory>
