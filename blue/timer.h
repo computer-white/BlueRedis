@@ -1,3 +1,11 @@
+/**
+ * @file timer.h
+ * @brief 定时器模块,基本结构还是跟sylar的一样，只是内部处理细节上有些差异，还有一些api我认为不合理或夯杂的就没再采用
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.1
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <set>
 #include <functional>
