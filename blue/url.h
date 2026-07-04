@@ -1,3 +1,11 @@
+/**
+ * @file url.h
+ * @brief url解析模块
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.17
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_URL_H
 #define BLUE_URL_H
 #include <array>

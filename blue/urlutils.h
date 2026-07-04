@@ -1,3 +1,11 @@
+/**
+ * @file urlutils.h
+ * @brief url解码和编码模块
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.17
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_URILUTILS_H
 #define BLUE_URILUTILS_H
 #define HAVE_LIBIDN2 1
