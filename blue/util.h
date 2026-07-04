@@ -1,3 +1,11 @@
+/**
+ * @file util.h
+ * @brief 一系列辅助函数, 关于获取协程id api,已然没用默认返回0，因为我们采用了c++20协程
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.4.3
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_UTIL_H
 #define BLUE_UTIL_H
 #include <unistd.h>
