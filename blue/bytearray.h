@@ -1,3 +1,11 @@
+/**
+ * @file bytearray.h
+ * @brief 字节流的封装
+ * @authors sylar,blue
+ * @email homeheyang@outlook.com
+ * @date 2026.4.5
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_BYTEARRAY_H
 #define BLUE_BYTEARRAY_H
 #include <memory>
