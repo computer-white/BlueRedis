@@ -1,3 +1,11 @@
+/**
+ * @file httpsession.h
+ * @brief http session模块,用于发送响应和解析请求
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.14
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_HTTP_HTTPSESSION_H
 #define BLUE_HTTP_HTTPSESSION_H
 #include <string>

@@ -1,3 +1,11 @@
+/**
+ * @file httpservlet.h
+ * @brief http servlet模块,用于url路由，根据不同url返回不同响应
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.14
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_HTTP_HTTPSERVLET_H
 #define BLUE_HttP_HTTPSERVLET_H
 #include <functional>

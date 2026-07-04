@@ -1,3 +1,11 @@
+/**
+ * @file httpconnection.h
+ * @brief http connection模块,用于发送请求和解析响应
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.14
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_HTTP_HTTPCONNECTION_H
 #define BLUE_HTTP_HTTPCONNECTION_H
 #include <list>

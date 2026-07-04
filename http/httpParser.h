@@ -1,3 +1,12 @@
+/**
+ * @file httpParser.h
+ * @brief http解析模块,使用第三方库llhttp实现的解析，采用桥接模式，用户可以绑定回调拿到特定解析结果，适当使用可以支持流式解析效果
+ * 具体使用可以看httpconnection.cpp 中recvResponse()的实现以及test_httpconnection.cpp
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.15
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_HTTP_PARSER_H
 #define BLUE_HTTP_PARSER_H
 #include <memory>

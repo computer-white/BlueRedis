@@ -1,3 +1,11 @@
+/**
+ * @file httpserver.h
+ * @brief http server模块,继承TcpServer,作为http服务器,支持wbsocket, 代理等等
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.17
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_HTTP_HTTPSERVER_H
 #define BLUE_HTTP_HTTPSERVER_H
 #define USE_GUMBO

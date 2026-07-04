@@ -1,3 +1,11 @@
+/**
+ * @file http.h
+ * @brief http模块,httpRequest和httpResponse的实现
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.14
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_HTTP_H
 #define BLUE_HTTP_H
 #include <memory>
