@@ -1,3 +1,11 @@
+/**
+ * @file config.h
+ * @brief 配置文件(yml, json)
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.10
+ * @copyright Copyright (c) 2026年 blue
+ */
 #ifndef BLUE_CONFIG_H
 #define BLUE_CONFIG_H
 #include <memory>
