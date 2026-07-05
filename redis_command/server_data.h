@@ -1,3 +1,11 @@
+/**
+ * @file server_data.h
+ * @brief redis server 的各模块数据以及相关操作
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.28
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <chrono>
 #include <optional>

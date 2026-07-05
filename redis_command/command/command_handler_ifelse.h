@@ -1,3 +1,11 @@
+/**
+ * @file command_handler_ifelse.h
+ * @brief redis server 响应客户端命令的派生类，以if else 嵌套实现（难以维护）
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.6.28
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <optional>
 #include "command_handler_base.h"
