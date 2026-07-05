@@ -186,6 +186,7 @@ iom.wait_all();
 # test_httpserver 可以测试一些服务器相关的，运行后在浏览器输入路径为[localhost:8082/admin](http://localhost:8082/admin),可以看到
 # 相关的网页,你可以添加路由即ds->addServlet，来对于不同的url返回不同的响应,也可以输入http://localhost:8082/blue/https://www.baidu.com，
 # 查看是否可以输出百度的页面，我这边好像被百度限流了，页面显示Rate limit exceeded，这段时间一直给百度发请求...
+# 其实是自己写的redis限流把自己限流了...呵呵
 
 代码有90%以上ai完成或提供思路,测试代码几乎你看到的有注释的就是ai写的, test_httpconnection,test_httpserver这两不是
 

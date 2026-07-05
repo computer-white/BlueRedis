@@ -334,6 +334,8 @@ add_newblue_test(test_redis_stress_all)
 add_newblue_test(test_redis_stress_new)
 add_newblue_test(test_timeout)
 add_newblue_test(test_generator)
+add_newblue_test(test_generator_game)
+add_newblue_test(test_url)
 
 # add_library(configinit_obj OBJECT blue/configinit.cpp)
 # add_executable(test_benchmark newtests/test_benchmark.cpp)
