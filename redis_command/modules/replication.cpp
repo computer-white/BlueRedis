@@ -91,6 +91,7 @@ namespace blue
     {
         BLUE_LOG_INFO(g_logger) << "Replication Loop start";
         RespStreamParser parser;
+        int retry_count = 0;
         while (m_repl_state.load(std::memory_order_acquire) != REPL_STATE_NONE && !m_server_stop.load(std::memory_order_acquire))
         {
             if (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_ONLINE)
@@ -103,6 +104,14 @@ namespace blue
             {
                 break;
             }
+            
+            // 重试10次后直接退出
+            if (retry_count == 10)
+            {
+                stopReplication();
+                break;
+            }
+            retry_count++;
 
             // 连接主节点
             BLUE_LOG_INFO(g_logger) << "Connecting to master "
