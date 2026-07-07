@@ -19,7 +19,7 @@ namespace blue
     template <size_t N> class CommandTable;
 
     using ArgValidator = bool(*)(size_t argc);
-    using CommandHandlerFunc = blue::RespValue (*)(std::vector<RespValue> &,
+    using CommandHandlerFunc = blue::AutoRespValue (*)(std::vector<RespValue> &,
                                               MSocket::MSocketPtr,
                                               bool,
                                               std::shared_ptr<ServerData<int>> self);

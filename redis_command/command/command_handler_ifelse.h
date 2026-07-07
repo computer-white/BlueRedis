@@ -48,7 +48,7 @@ namespace blue
     {
         auto start = SteadyClock::now();
 
-        auto return_with_slowlog = [&](RespValue resp) -> RespValue
+        auto return_with_slowlog = [&](AutoRespValue resp) -> RespValue
         {
             auto end = std::chrono::steady_clock::now();
             std::string cmd_str;
@@ -65,7 +65,7 @@ namespace blue
             // 写命令记录进入AOF(异步)
             if (args.empty())
             {
-                return resp;
+                return *resp;
             }
             std::string cmd = args[0].str;
             std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
@@ -94,7 +94,7 @@ namespace blue
             //                     } })
             //         .detach();
             // }
-            return resp;
+            return *resp;
         };
 
         // 不记录AOF模式,设置推送给monitor为false,即不推送
@@ -160,7 +160,7 @@ namespace blue
                 sock->setClientlevel(2);
                 return return_with_slowlog(RespValue::simple_string("OK"));
             }
-            return RespValue::error("ERR invalid password");
+            return return_with_slowlog(RespValue::error("ERR invalid password"));
         }
         else if (cmd == "SELECT") // SELECT [count]
         {
@@ -257,58 +257,58 @@ namespace blue
 
                 if (pattern == "*" || pattern == "clientpass")
                 {
-                    result.push_back(RespValue::bulk_string("clientpass"));
-                    result.push_back(RespValue::bulk_string(sock->getClientPassword()));
+                    result.push_back(*RespValue::bulk_string("clientpass"));
+                    result.push_back(*RespValue::bulk_string(sock->getClientPassword()));
                 }
                 if (pattern == "*" || pattern == "maxclients")
                 {
-                    result.push_back(RespValue::bulk_string("maxclients"));
-                    result.push_back(RespValue::bulk_string(std::to_string(self->getMaxClientCount())));
+                    result.push_back(*RespValue::bulk_string("maxclients"));
+                    result.push_back(*RespValue::bulk_string(std::to_string(self->getMaxClientCount())));
                 }
                 if (pattern == "*" || pattern == "timeout")
                 {
-                    result.push_back(RespValue::bulk_string("timeout"));
-                    result.push_back(RespValue::bulk_string(std::to_string(self->getTimeoutS())));
+                    result.push_back(*RespValue::bulk_string("timeout"));
+                    result.push_back(*RespValue::bulk_string(std::to_string(self->getTimeoutS())));
                 }
                 if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*")
                 {
-                    result.push_back(RespValue::bulk_string("slowlog-log-slower-than"));
-                    result.push_back(RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowLogThan())));
+                    result.push_back(*RespValue::bulk_string("slowlog-log-slower-than"));
+                    result.push_back(*RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowLogThan())));
                 }
                 if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*")
                 {
-                    result.push_back(RespValue::bulk_string("slowlog-max-len"));
-                    result.push_back(RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowMaxLen())));
+                    result.push_back(*RespValue::bulk_string("slowlog-max-len"));
+                    result.push_back(*RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowMaxLen())));
                 }
                 if (pattern == "*" || pattern == "aof-enabled" || pattern == "aof-*")
                 {
-                    result.push_back(RespValue::bulk_string("aof-enabled"));
-                    result.push_back(RespValue::bulk_string(self->getAOF().getConfig_AOFEnabled() ? "yes" : "no"));
+                    result.push_back(*RespValue::bulk_string("aof-enabled"));
+                    result.push_back(*RespValue::bulk_string(self->getAOF().getConfig_AOFEnabled() ? "yes" : "no"));
                 }
                 if (pattern == "*" || pattern == "aof-filename" || pattern == "aof-*")
                 {
-                    result.push_back(RespValue::bulk_string("aof-filename"));
-                    result.push_back(RespValue::bulk_string(self->getAOF().getConfig_AOFFilename()));
+                    result.push_back(*RespValue::bulk_string("aof-filename"));
+                    result.push_back(*RespValue::bulk_string(self->getAOF().getConfig_AOFFilename()));
                 }
                 if (pattern == "*" || pattern == "aof-sync" || pattern == "aof-*")
                 {
-                    result.push_back(RespValue::bulk_string("aof-sync"));
-                    result.push_back(RespValue::bulk_string(self->getAOF().getConfig_AOFSync()));
+                    result.push_back(*RespValue::bulk_string("aof-sync"));
+                    result.push_back(*RespValue::bulk_string(self->getAOF().getConfig_AOFSync()));
                 }
                 if (pattern == "*" || pattern == "aof-max_file_size" || pattern == "aof-*")
                 {
-                    result.push_back(RespValue::bulk_string("aof-max_file_size"));
-                    result.push_back(RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileSize())));
+                    result.push_back(*RespValue::bulk_string("aof-max_file_size"));
+                    result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileSize())));
                 }
                 if (pattern == "*" || pattern == "aof-max_file_number" || pattern == "aof-*")
                 {
-                    result.push_back(RespValue::bulk_string("aof-max_file_number"));
-                    result.push_back(RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileNumber())));
+                    result.push_back(*RespValue::bulk_string("aof-max_file_number"));
+                    result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileNumber())));
                 }
                 if (pattern == "*" || pattern == "aof-max_buffer_size" || pattern == "aof-*")
                 {
-                    result.push_back(RespValue::bulk_string("aof-max_buffer_size"));
-                    result.push_back(RespValue::bulk_string(std::to_string(self->getAOF().getMaxAOFBufferSize())));
+                    result.push_back(*RespValue::bulk_string("aof-max_buffer_size"));
+                    result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getMaxAOFBufferSize())));
                 }
                 return return_with_slowlog(RespValue::array(std::move(result)));
             }
@@ -485,7 +485,7 @@ namespace blue
                         int timeout = std::stoi(value);
                         if (timeout < 0)
                         {
-                            return RespValue::error("ERR invalid timeout value");
+                            return return_with_slowlog(RespValue::error("ERR invalid timeout value"));
                         }
                         self->setTimeoutS(timeout);
                         return return_with_slowlog(RespValue::simple_string("OK"));
@@ -626,7 +626,7 @@ namespace blue
                 auto it = shards.store.find(key);
                 if (it == shards.store.end())
                 {
-                    results.push_back(RespValue::null_bulk());
+                    results.push_back(*RespValue::null_bulk());
                 }
                 else
                 {
@@ -635,11 +635,11 @@ namespace blue
                         lock.unlock();
                         std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
                         shards.store.erase(key);
-                        results.push_back(RespValue::null_bulk());
+                        results.push_back(*RespValue::null_bulk());
                     }
                     else
                     {
-                        results.push_back(RespValue::bulk_string(it->second.val));
+                        results.push_back(*RespValue::bulk_string(it->second.val));
                     }
                 }
             }
@@ -842,8 +842,8 @@ namespace blue
             }
             for (auto &[field, value] : it->second)
             {
-                result.push_back(RespValue::bulk_string(field));
-                result.push_back(RespValue::bulk_string(value));
+                result.push_back(*RespValue::bulk_string(field));
+                result.push_back(*RespValue::bulk_string(value));
             }
             return return_with_slowlog(RespValue::array(std::move(result)));
         }
@@ -1001,7 +1001,7 @@ namespace blue
             }
             for (auto &[field, _] : it->second)
             {
-                results.push_back(RespValue::bulk_string(field));
+                results.push_back(*RespValue::bulk_string(field));
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
         }
@@ -1046,7 +1046,7 @@ namespace blue
             }
             for (auto &[_, val] : it->second)
             {
-                results.push_back(RespValue::bulk_string(val));
+                results.push_back(*RespValue::bulk_string(val));
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
         }
@@ -1105,7 +1105,7 @@ namespace blue
                 {
                     if (std::regex_match(key, re))
                     {
-                        result.push_back(RespValue::bulk_string(key));
+                        result.push_back(*RespValue::bulk_string(key));
                     }
                 }
                 // Hash 类型的 key
@@ -1113,7 +1113,7 @@ namespace blue
                 {
                     if (std::regex_match(key, re))
                     {
-                        result.push_back(RespValue::bulk_string(key));
+                        result.push_back(*RespValue::bulk_string(key));
                     }
                 }
                 // List 类型的 key
@@ -1121,7 +1121,7 @@ namespace blue
                 {
                     if (std::regex_match(key, re))
                     {
-                        result.push_back(RespValue::bulk_string(key));
+                        result.push_back(*RespValue::bulk_string(key));
                     }
                 }
                 // Set 类型的 key
@@ -1129,7 +1129,7 @@ namespace blue
                 {
                     if (std::regex_match(key, re))
                     {
-                        result.push_back(RespValue::bulk_string(key));
+                        result.push_back(*RespValue::bulk_string(key));
                     }
                 }
                 // ZSet 类型的 key
@@ -1137,7 +1137,7 @@ namespace blue
                 {
                     if (std::regex_match(key, re))
                     {
-                        result.push_back(RespValue::bulk_string(key));
+                        result.push_back(*RespValue::bulk_string(key));
                     }
                 }
             }
@@ -1218,7 +1218,7 @@ namespace blue
             std::vector<RespValue> results;
             for (int i = 0; i < count && !it->second.empty(); i++)
             {
-                results.push_back(RespValue::bulk_string(it->second.front()));
+                results.push_back(*RespValue::bulk_string(it->second.front()));
                 it->second.pop_front();
             }
             if (it->second.empty())
@@ -1265,7 +1265,7 @@ namespace blue
             std::vector<RespValue> results;
             for (int i = 0; i < count && !it->second.empty(); i++)
             {
-                results.push_back(RespValue::bulk_string(it->second.back()));
+                results.push_back(*RespValue::bulk_string(it->second.back()));
                 it->second.pop_back();
             }
             if (it->second.empty())
@@ -1539,7 +1539,7 @@ namespace blue
             std::advance(iter, start);
             for (int i = start; i <= stop && iter != it->second.end(); i++, iter++)
             {
-                result.push_back(RespValue::bulk_string(*iter));
+                result.push_back(*RespValue::bulk_string(*iter));
             }
             return return_with_slowlog(RespValue::array(std::move(result)));
         } // 有序集合操作
@@ -1652,10 +1652,10 @@ namespace blue
                 {
                     break;
                 }
-                results.push_back(RespValue::bulk_string(node->val));
+                results.push_back(*RespValue::bulk_string(node->val));
                 if (withscores)
                 {
-                    results.push_back(RespValue::bulk_string(self->format_score(node->key.score)));
+                    results.push_back(*RespValue::bulk_string(self->format_score(node->key.score)));
                 }
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
@@ -1932,10 +1932,10 @@ namespace blue
             {
                 if (score >= min && score <= max)
                 {
-                    results.push_back(RespValue::bulk_string(member));
+                    results.push_back(*RespValue::bulk_string(member));
                     if (withscore)
                     {
-                        results.push_back(RespValue::bulk_string((self->format_score(score))));
+                        results.push_back(*RespValue::bulk_string((self->format_score(score))));
                     }
                 }
             }
@@ -2204,7 +2204,7 @@ namespace blue
             }
             for (auto &member : it->second)
             {
-                results.push_back(RespValue::bulk_string(member));
+                results.push_back(*RespValue::bulk_string(member));
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
         }
@@ -2328,7 +2328,7 @@ namespace blue
                 std::shuffle(members.begin(), members.end(), std::mt19937(std::random_device()()));
                 for (int i = 0; i < num; i++)
                 {
-                    results.push_back(RespValue::bulk_string(members[i]));
+                    results.push_back(*RespValue::bulk_string(members[i]));
                 }
             }
             else
@@ -2338,7 +2338,7 @@ namespace blue
                 for (int i = 0; i < num; i++)
                 {
                     int idx = rand() % members.size();
-                    results.push_back(RespValue::bulk_string(members[idx]));
+                    results.push_back(*RespValue::bulk_string(members[idx]));
                 }
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
@@ -2386,11 +2386,11 @@ namespace blue
             std::vector<RespValue> results;
             if (count == 0)
             {
-                return RespValue::array({});
+                return return_with_slowlog(RespValue::array({}));
             }
             if (members.empty())
             {
-                return RespValue::null_bulk();
+                return return_with_slowlog(RespValue::null_bulk());
             }
             if (args.size() == 2)
             {
@@ -2411,7 +2411,7 @@ namespace blue
                 for (int i = 0; i < num; i++)
                 {
                     set.erase(members[i]);
-                    results.push_back(RespValue::bulk_string(members[i]));
+                    results.push_back(*RespValue::bulk_string(members[i]));
                 }
                 if (set.empty())
                 {
@@ -2451,7 +2451,7 @@ namespace blue
                 }
                 if (ok)
                 {
-                    results.push_back(RespValue::bulk_string(member));
+                    results.push_back(*RespValue::bulk_string(member));
                 }
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
@@ -2487,7 +2487,7 @@ namespace blue
                 }
                 if (ok)
                 {
-                    results.push_back(RespValue::bulk_string(member));
+                    results.push_back(*RespValue::bulk_string(member));
                 }
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
@@ -2525,7 +2525,7 @@ namespace blue
             std::vector<RespValue> results;
             for (const auto &member : results_set)
             {
-                results.push_back(RespValue::bulk_string(member));
+                results.push_back(*RespValue::bulk_string(member));
             }
             return return_with_slowlog(RespValue::array(std::move(results)));
         }
@@ -3494,7 +3494,7 @@ namespace blue
 
             for (const auto &name : cmd_list)
             {
-                commands.push_back(RespValue::bulk_string(name));
+                commands.push_back(*RespValue::bulk_string(name));
             }
 
             return return_with_slowlog(RespValue::array(std::move(commands)));
@@ -3525,8 +3525,8 @@ namespace blue
             auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
             auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() % 1000000;
             std::vector<RespValue> results;
-            results.push_back(RespValue::bulk_string(std::to_string(seconds)));
-            results.push_back(RespValue::bulk_string(std::to_string(microseconds)));
+            results.push_back(*RespValue::bulk_string(std::to_string(seconds)));
+            results.push_back(*RespValue::bulk_string(std::to_string(microseconds)));
             return return_with_slowlog(RespValue::array(std::move(results)));
         }
         else if (cmd == "LOCALTIME") // LOCALTIME, 返回当前北京时间

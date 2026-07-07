@@ -14,7 +14,7 @@ namespace blue
 {
     // 注册自定义检测的宏
     #define REGISTER_COMMAND_T(Name, Handler) \
-        static RespValue Handler(std::vector<RespValue>& args, \
+        static AutoRespValue Handler(std::vector<RespValue>& args, \
                                 MSocket::MSocketPtr sock, \
                                 bool aof, \
                                 std::shared_ptr<ServerData<int>> self);

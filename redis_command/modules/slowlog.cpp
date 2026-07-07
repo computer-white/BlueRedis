@@ -47,24 +47,24 @@ namespace blue
             std::vector<RespValue> log_entry;
 
             // ID
-            log_entry.push_back(RespValue::integer(entry.id));
+            log_entry.push_back(*RespValue::integer(entry.id));
 
             // 时间戳微秒
             auto ts = std::chrono::duration_cast<std::chrono::microseconds>(
                             entry.timestamp.time_since_epoch())
                             .count();
-            log_entry.push_back(RespValue::integer(ts));
+            log_entry.push_back(*RespValue::integer(ts));
 
             // 执行时间(微秒)
-            log_entry.push_back(RespValue::integer(entry.duration.count()));
+            log_entry.push_back(*RespValue::integer(entry.duration.count()));
 
             // 命令
-            log_entry.push_back(RespValue::bulk_string(entry.command));
+            log_entry.push_back(*RespValue::bulk_string(entry.command));
 
             // 客户端ip
-            log_entry.push_back(RespValue::bulk_string(entry.client_ip));
+            log_entry.push_back(*RespValue::bulk_string(entry.client_ip));
 
-            results.push_back(RespValue::array(std::move(log_entry)));
+            results.push_back(*RespValue::array(std::move(log_entry)));
         }
         return results;
     }

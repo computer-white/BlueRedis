@@ -155,9 +155,9 @@ namespace blue
             {
                 // 构造消息
                 std::vector<RespValue> auth_args;
-                auth_args.push_back(RespValue::bulk_string("AUTH"));
-                auth_args.push_back(RespValue::bulk_string(m_repl_config.master_password));
-                std::string auth_cmd = RespValue::encode(RespValue::array(std::move(auth_args)));
+                auth_args.push_back(*RespValue::bulk_string("AUTH"));
+                auth_args.push_back(*RespValue::bulk_string(m_repl_config.master_password));
+                std::string auth_cmd = RespValue::encode(*RespValue::array(std::move(auth_args)));
 
                 ssize_t send = ::send(sock->getSocketfd(), auth_cmd.data(), auth_cmd.size(), MSG_NOSIGNAL);
                 if (send <= 0)

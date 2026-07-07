@@ -65,10 +65,10 @@ namespace blue
 
         // 构造 RESP 消息
         std::vector<RespValue> msg;
-        msg.push_back(RespValue::bulk_string("message"));
-        msg.push_back(RespValue::bulk_string(channel));
-        msg.push_back(RespValue::bulk_string(message));
-        std::string data = RespValue::encode(RespValue::array(std::move(msg)));
+        msg.push_back(*RespValue::bulk_string("message"));
+        msg.push_back(*RespValue::bulk_string(channel));
+        msg.push_back(*RespValue::bulk_string(message));
+        std::string data = RespValue::encode(*RespValue::array(std::move(msg)));
 
         int receiver_count = 0;
         for (auto &weak : it->second)

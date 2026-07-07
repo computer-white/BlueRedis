@@ -85,7 +85,7 @@ namespace blue
         { return argc >= 3; };
 
     public:
-        using CommandHandlerFunc = blue::RespValue (*)(std::vector<RespValue> &,
+        using CommandHandlerFunc = blue::AutoRespValue (*)(std::vector<RespValue> &,
                                                        MSocket::MSocketPtr,
                                                        bool,
                                                        std::shared_ptr<ServerData<int>>);
@@ -316,10 +316,11 @@ namespace blue
                                                           std::shared_ptr<ServerData<T>> self,
                                                           bool RecordAOF)
     {
+        RespValue result;
         auto start = SteadyClock::now();
         if (args.empty())
         {
-            return RespValue::error("ERR empty command");
+            return *RespValue::error("ERR empty command");
         }
         std::string cmd = args[0].str;
         std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
@@ -347,7 +348,20 @@ namespace blue
                 self->getReplication().broadcastToSlaves(aof_cmds);    \
             }                                                          \
         }                                                              \
-        return handle##name(args, sock, RecordAOF, self);              \
+        result = *handle##name(args, sock, RecordAOF, self);                      \
+        /* 慢查询记录*/                                                \
+        auto end = SteadyClock::now();                                 \
+        std::string cmd_str;                                           \
+        for (size_t i = 0; i < args.size(); ++i)                       \
+        {                                                              \
+            if (i > 0)                                                 \
+            {                                                          \
+                cmd_str += " ";                                        \
+            }                                                          \
+            cmd_str += args[i].str;                                    \
+        }                                                              \
+        self->getSlowLog().pushEntry(cmd_str, sock, start, end);       \
+        return result;                                                 \
     }
 
         // 高频命令不走命令表
@@ -360,13 +374,13 @@ namespace blue
         auto *entry = table.find_lowerbound(fnv1a_hash(cmd.c_str()));
         if (!entry)
         {
-            return RespValue::error("ERR unknown command");
+            return *RespValue::error("ERR unknown command");
         }
 
         // 参数验证
         if (entry->argV && !entry->argV(args.size()))
         {
-            return RespValue::error("ERR wrong number of arguments for '" + cmd + "'");
+            return *RespValue::error("ERR wrong number of arguments for '" + cmd + "'");
         }
 
         if (RecordAOF && entry->is_write)
@@ -375,7 +389,7 @@ namespace blue
             self->getAOF().appendToAOF(aof_cmds);
 
             // 如果是主节点，广播给从节点
-            if (self->getReplication().getisMaster() && !(self->getReplication().slavesEmpty())) 
+            if (self->getReplication().getisMaster() && !(self->getReplication().slavesEmpty()))
             {
                 self->getReplication().broadcastToSlaves(aof_cmds);
             }
@@ -383,7 +397,7 @@ namespace blue
 
         // 执行命令
         auto handler = entry->handler;
-        RespValue result = handler(args, sock, RecordAOF, self);
+        result = *handler(args, sock, RecordAOF, self);
 
         // 慢查询记录
         auto end = SteadyClock::now();
@@ -403,7 +417,7 @@ namespace blue
 
     // ========== 连接命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handlePING(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handlePING(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -420,7 +434,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleAUTH(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleAUTH(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -452,7 +466,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSELECT(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSELECT(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -479,7 +493,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleCLIENT(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleCLIENT(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -529,7 +543,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleCONFIG(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleCONFIG(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -548,58 +562,58 @@ namespace blue
 
             if (pattern == "*" || pattern == "clientpass")
             {
-                result.push_back(RespValue::bulk_string("clientpass"));
-                result.push_back(RespValue::bulk_string(sock->getClientPassword()));
+                result.push_back(*RespValue::bulk_string("clientpass"));
+                result.push_back(*RespValue::bulk_string(sock->getClientPassword()));
             }
             if (pattern == "*" || pattern == "maxclients")
             {
-                result.push_back(RespValue::bulk_string("maxclients"));
-                result.push_back(RespValue::bulk_string(std::to_string(self->getMaxClientCount())));
+                result.push_back(*RespValue::bulk_string("maxclients"));
+                result.push_back(*RespValue::bulk_string(std::to_string(self->getMaxClientCount())));
             }
             if (pattern == "*" || pattern == "timeout")
             {
-                result.push_back(RespValue::bulk_string("timeout"));
-                result.push_back(RespValue::bulk_string(std::to_string(self->getTimeoutS())));
+                result.push_back(*RespValue::bulk_string("timeout"));
+                result.push_back(*RespValue::bulk_string(std::to_string(self->getTimeoutS())));
             }
             if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*")
             {
-                result.push_back(RespValue::bulk_string("slowlog-log-slower-than"));
-                result.push_back(RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowLogThan())));
+                result.push_back(*RespValue::bulk_string("slowlog-log-slower-than"));
+                result.push_back(*RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowLogThan())));
             }
             if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*")
             {
-                result.push_back(RespValue::bulk_string("slowlog-max-len"));
-                result.push_back(RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowMaxLen())));
+                result.push_back(*RespValue::bulk_string("slowlog-max-len"));
+                result.push_back(*RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowMaxLen())));
             }
             if (pattern == "*" || pattern == "aof-enabled" || pattern == "aof-*")
             {
-                result.push_back(RespValue::bulk_string("aof-enabled"));
-                result.push_back(RespValue::bulk_string(self->getAOF().getConfig_AOFEnabled() ? "yes" : "no"));
+                result.push_back(*RespValue::bulk_string("aof-enabled"));
+                result.push_back(*RespValue::bulk_string(self->getAOF().getConfig_AOFEnabled() ? "yes" : "no"));
             }
             if (pattern == "*" || pattern == "aof-filename" || pattern == "aof-*")
             {
-                result.push_back(RespValue::bulk_string("aof-filename"));
-                result.push_back(RespValue::bulk_string(self->getAOF().getConfig_AOFFilename()));
+                result.push_back(*RespValue::bulk_string("aof-filename"));
+                result.push_back(*RespValue::bulk_string(self->getAOF().getConfig_AOFFilename()));
             }
             if (pattern == "*" || pattern == "aof-sync" || pattern == "aof-*")
             {
-                result.push_back(RespValue::bulk_string("aof-sync"));
-                result.push_back(RespValue::bulk_string(self->getAOF().getConfig_AOFSync()));
+                result.push_back(*RespValue::bulk_string("aof-sync"));
+                result.push_back(*RespValue::bulk_string(self->getAOF().getConfig_AOFSync()));
             }
             if (pattern == "*" || pattern == "aof-max_file_size" || pattern == "aof-*")
             {
-                result.push_back(RespValue::bulk_string("aof-max_file_size"));
-                result.push_back(RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileSize())));
+                result.push_back(*RespValue::bulk_string("aof-max_file_size"));
+                result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileSize())));
             }
             if (pattern == "*" || pattern == "aof-max_file_number" || pattern == "aof-*")
             {
-                result.push_back(RespValue::bulk_string("aof-max_file_number"));
-                result.push_back(RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileNumber())));
+                result.push_back(*RespValue::bulk_string("aof-max_file_number"));
+                result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileNumber())));
             }
             if (pattern == "*" || pattern == "aof-max_buffer_size" || pattern == "aof-*")
             {
-                result.push_back(RespValue::bulk_string("aof-max_buffer_size"));
-                result.push_back(RespValue::bulk_string(std::to_string(self->getAOF().getMaxAOFBufferSize())));
+                result.push_back(*RespValue::bulk_string("aof-max_buffer_size"));
+                result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getMaxAOFBufferSize())));
             }
             return RespValue::array(std::move(result));
         }
@@ -793,7 +807,7 @@ namespace blue
 
     // ========== String 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSET(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSET(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
                                                 std::shared_ptr<ServerData<int>> self)
@@ -856,7 +870,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleGET(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleGET(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
                                                 std::shared_ptr<ServerData<int>> self)
@@ -890,7 +904,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleMSET(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleMSET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -912,7 +926,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleMGET(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleMGET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -931,7 +945,7 @@ namespace blue
             auto it = shards.store.find(key);
             if (it == shards.store.end())
             {
-                results.push_back(RespValue::null_bulk());
+                results.push_back(*RespValue::null_bulk());
             }
             else
             {
@@ -940,11 +954,11 @@ namespace blue
                     lock.unlock();
                     std::unique_lock<std::shared_mutex> wrlock(shards.mutex);
                     shards.store.erase(key);
-                    results.push_back(RespValue::null_bulk());
+                    results.push_back(*RespValue::null_bulk());
                 }
                 else
                 {
-                    results.push_back(RespValue::bulk_string(it->second.val));
+                    results.push_back(*RespValue::bulk_string(it->second.val));
                 }
             }
         }
@@ -952,7 +966,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleGETSET(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleGETSET(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -978,7 +992,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleAPPEND(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleAPPEND(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -1006,7 +1020,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSETNX(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSETNX(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1030,7 +1044,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleEXISTS(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleEXISTS(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -1058,7 +1072,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleDEL(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleDEL(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
                                                 std::shared_ptr<ServerData<int>> self)
@@ -1088,7 +1102,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleINCR(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleINCR(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1126,7 +1140,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleINCRBY(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleINCRBY(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -1173,7 +1187,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSTRLEN(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSTRLEN(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -1221,7 +1235,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleTYPE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleTYPE(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1257,7 +1271,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleKEYS(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleKEYS(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1311,7 +1325,7 @@ namespace blue
             {
                 if (std::regex_match(key, re))
                 {
-                    result.push_back(RespValue::bulk_string(key));
+                    result.push_back(*RespValue::bulk_string(key));
                 }
             }
             // Hash 类型的 key
@@ -1319,7 +1333,7 @@ namespace blue
             {
                 if (std::regex_match(key, re))
                 {
-                    result.push_back(RespValue::bulk_string(key));
+                    result.push_back(*RespValue::bulk_string(key));
                 }
             }
             // List 类型的 key
@@ -1327,7 +1341,7 @@ namespace blue
             {
                 if (std::regex_match(key, re))
                 {
-                    result.push_back(RespValue::bulk_string(key));
+                    result.push_back(*RespValue::bulk_string(key));
                 }
             }
             // Set 类型的 key
@@ -1335,7 +1349,7 @@ namespace blue
             {
                 if (std::regex_match(key, re))
                 {
-                    result.push_back(RespValue::bulk_string(key));
+                    result.push_back(*RespValue::bulk_string(key));
                 }
             }
             // ZSet 类型的 key
@@ -1343,7 +1357,7 @@ namespace blue
             {
                 if (std::regex_match(key, re))
                 {
-                    result.push_back(RespValue::bulk_string(key));
+                    result.push_back(*RespValue::bulk_string(key));
                 }
             }
         }
@@ -1353,7 +1367,7 @@ namespace blue
 
     // ========== Hash 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHSET(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleHSET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1397,7 +1411,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHGET(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleHGET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1429,7 +1443,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHGETALL(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleHGETALL(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -1449,14 +1463,14 @@ namespace blue
         }
         for (const auto &[field, value] : it->second)
         {
-            result.push_back(RespValue::bulk_string(field));
-            result.push_back(RespValue::bulk_string(value));
+            result.push_back(*RespValue::bulk_string(field));
+            result.push_back(*RespValue::bulk_string(value));
         }
         return RespValue::array(std::move(result));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHDEL(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleHDEL(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1487,7 +1501,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHLEN(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleHLEN(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1527,7 +1541,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHEXISTS(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleHEXISTS(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -1573,7 +1587,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHKEYS(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleHKEYS(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1613,13 +1627,13 @@ namespace blue
         }
         for (const auto &[field, _] : it->second)
         {
-            results.push_back(RespValue::bulk_string(field));
+            results.push_back(*RespValue::bulk_string(field));
         }
         return RespValue::array(std::move(results));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleHVALS(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleHVALS(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1659,14 +1673,14 @@ namespace blue
         }
         for (const auto &[_, val] : it->second)
         {
-            results.push_back(RespValue::bulk_string(val));
+            results.push_back(*RespValue::bulk_string(val));
         }
         return RespValue::array(std::move(results));
     }
 
     // ========== List 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLPUSH(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLPUSH(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1702,7 +1716,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRPUSH(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleRPUSH(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -1734,7 +1748,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLPOP(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLPOP(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1772,7 +1786,7 @@ namespace blue
         auto &list = const_cast<std::list<std::string> &>(it->second);
         for (int i = 0; i < count && !it->second.empty(); i++)
         {
-            results.push_back(RespValue::bulk_string(it->second.front()));
+            results.push_back(*RespValue::bulk_string(it->second.front()));
             list.pop_front();
         }
         if (it->second.empty())
@@ -1787,7 +1801,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRPOP(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleRPOP(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1821,7 +1835,7 @@ namespace blue
         auto &list = const_cast<std::list<std::string> &>(it->second);
         for (int i = 0; i < count && !it->second.empty(); i++)
         {
-            results.push_back(RespValue::bulk_string(it->second.back()));
+            results.push_back(*RespValue::bulk_string(it->second.back()));
             list.pop_back();
         }
         if (it->second.empty())
@@ -1836,7 +1850,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLLEN(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLLEN(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1857,7 +1871,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLINSERT(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLINSERT(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -1901,7 +1915,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLINDEX(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLINDEX(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -1946,7 +1960,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLSET(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLSET(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -1993,7 +2007,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRPOPLPUSH(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleRPOPLPUSH(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -2044,7 +2058,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLPOPRPUSH(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLPOPRPUSH(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -2095,7 +2109,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLRANGE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLRANGE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2149,14 +2163,14 @@ namespace blue
         std::advance(iter, start);
         for (int i = start; i <= stop && iter != list.end(); i++, iter++)
         {
-            result.push_back(RespValue::bulk_string(*iter));
+            result.push_back(*RespValue::bulk_string(*iter));
         }
         return RespValue::array(std::move(result));
     }
 
     // ========== Set 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSADD(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSADD(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2189,7 +2203,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSMEMBERS(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSMEMBERS(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
                                                      std::shared_ptr<ServerData<int>> self)
@@ -2209,13 +2223,13 @@ namespace blue
         }
         for (const auto &member : it->second)
         {
-            results.push_back(RespValue::bulk_string(member));
+            results.push_back(*RespValue::bulk_string(member));
         }
         return RespValue::array(std::move(results));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSREM(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSREM(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2245,7 +2259,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSISMEMBER(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSISMEMBER(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -2267,7 +2281,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSCARD(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSCARD(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -2288,7 +2302,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSRANDMEMBER(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSRANDMEMBER(std::vector<RespValue> &args,
                                                         MSocket::MSocketPtr sock,
                                                         bool aof,
                                                         std::shared_ptr<ServerData<int>> self)
@@ -2337,7 +2351,7 @@ namespace blue
             std::shuffle(members.begin(), members.end(), std::mt19937(std::random_device()()));
             for (int i = 0; i < num; i++)
             {
-                results.push_back(RespValue::bulk_string(members[i]));
+                results.push_back(*RespValue::bulk_string(members[i]));
             }
         }
         else
@@ -2347,14 +2361,14 @@ namespace blue
             for (int i = 0; i < num; i++)
             {
                 int idx = rand() % members.size();
-                results.push_back(RespValue::bulk_string(members[idx]));
+                results.push_back(*RespValue::bulk_string(members[idx]));
             }
         }
         return RespValue::array(std::move(results));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSPOP(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSPOP(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2421,7 +2435,7 @@ namespace blue
             for (int i = 0; i < num; i++)
             {
                 set.erase(members[i]);
-                results.push_back(RespValue::bulk_string(members[i]));
+                results.push_back(*RespValue::bulk_string(members[i]));
             }
             if (set.empty())
             {
@@ -2432,7 +2446,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSDIFF(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSDIFF(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -2472,14 +2486,14 @@ namespace blue
             }
             if (ok)
             {
-                results.push_back(RespValue::bulk_string(member));
+                results.push_back(*RespValue::bulk_string(member));
             }
         }
         return RespValue::array(std::move(results));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSINTER(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSINTER(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2519,14 +2533,14 @@ namespace blue
             }
             if (ok)
             {
-                results.push_back(RespValue::bulk_string(member));
+                results.push_back(*RespValue::bulk_string(member));
             }
         }
         return RespValue::array(std::move(results));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSUNION(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSUNION(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2568,13 +2582,13 @@ namespace blue
         std::vector<RespValue> results;
         for (const auto &member : results_set)
         {
-            results.push_back(RespValue::bulk_string(member));
+            results.push_back(*RespValue::bulk_string(member));
         }
         return RespValue::array(std::move(results));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSMOVE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSMOVE(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -2637,7 +2651,7 @@ namespace blue
 
     // ========== ZSet 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZADD(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZADD(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2692,7 +2706,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZRANGE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZRANGE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2750,17 +2764,17 @@ namespace blue
             {
                 break;
             }
-            results.push_back(RespValue::bulk_string(node->val));
+            results.push_back(*RespValue::bulk_string(node->val));
             if (withscores)
             {
-                results.push_back(RespValue::bulk_string(self->format_score(node->key.score)));
+                results.push_back(*RespValue::bulk_string(self->format_score(node->key.score)));
             }
         }
         return RespValue::array(std::move(results));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZREM(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZREM(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -2806,7 +2820,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZSCORE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZSCORE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -2833,7 +2847,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZRANK(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZRANK(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -2865,7 +2879,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZINCRBY(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZINCRBY(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -2911,7 +2925,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZINCRBYFLOAT(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZINCRBYFLOAT(std::vector<RespValue> &args,
                                                          MSocket::MSocketPtr sock,
                                                          bool aof,
                                                          std::shared_ptr<ServerData<int>> self)
@@ -2957,7 +2971,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZCOUNT(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZCOUNT(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -3000,7 +3014,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZRANGEBYSCORE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZRANGEBYSCORE(std::vector<RespValue> &args,
                                                           MSocket::MSocketPtr sock,
                                                           bool aof,
                                                           std::shared_ptr<ServerData<int>> self)
@@ -3037,10 +3051,10 @@ namespace blue
         {
             if (score >= min && score <= max)
             {
-                results.push_back(RespValue::bulk_string(member));
+                results.push_back(*RespValue::bulk_string(member));
                 if (withscore)
                 {
-                    results.push_back(RespValue::bulk_string((self->format_score(score))));
+                    results.push_back(*RespValue::bulk_string((self->format_score(score))));
                 }
             }
         }
@@ -3048,7 +3062,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleZREMRANGEBYSCORE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleZREMRANGEBYSCORE(std::vector<RespValue> &args,
                                                              MSocket::MSocketPtr sock,
                                                              bool aof,
                                                              std::shared_ptr<ServerData<int>> self)
@@ -3112,7 +3126,7 @@ namespace blue
 
     // ========== DB 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleFLUSHDB(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleFLUSHDB(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -3167,7 +3181,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleFLUSHDBALL(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleFLUSHDBALL(std::vector<RespValue> &args,
                                                        MSocket::MSocketPtr sock,
                                                        bool aof,
                                                        std::shared_ptr<ServerData<int>> self)
@@ -3228,7 +3242,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleDBSIZE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleDBSIZE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -3248,7 +3262,7 @@ namespace blue
 
     // ========== Key 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleEXPIRE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleEXPIRE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -3283,7 +3297,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleTTL(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleTTL(std::vector<RespValue> &args,
                                                 MSocket::MSocketPtr sock,
                                                 bool aof,
                                                 std::shared_ptr<ServerData<int>> self)
@@ -3320,7 +3334,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handlePEXPIRE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handlePEXPIRE(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -3355,7 +3369,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handlePTTL(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handlePTTL(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -3392,7 +3406,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handlePERSIST(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handlePERSIST(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -3415,7 +3429,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRENAME(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleRENAME(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -3584,7 +3598,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRENAMENX(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleRENAMENX(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
                                                      std::shared_ptr<ServerData<int>> self)
@@ -3758,7 +3772,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleRANDOMKEY(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleRANDOMKEY(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -3809,7 +3823,7 @@ namespace blue
 
     // ========== Server 命令 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleINFO(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleINFO(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -3847,29 +3861,27 @@ namespace blue
         // Replication
         info += "# Replication\r\n";
 
-        if (self->getReplication().getisMaster()) 
+        if (self->getReplication().getisMaster())
         {
             info += "role:master\r\n";
             info += "connected_slaves:" + std::to_string(self->getReplication().slavesCount()) + "\r\n";
-            
+
             // 列出所有从节点
             auto slaves_info = self->getReplication().slavesToString();
-            if (!slaves_info.empty()) 
+            if (!slaves_info.empty())
             {
                 info += slaves_info;
             }
-        } 
-        else 
+        }
+        else
         {
             info += "role:slave\r\n";
             info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
             info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
-            info += "master_link_status:" + std::string(
-                self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down"
-            ) + "\r\n";
+            info += "master_link_status:" + std::string(self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down") + "\r\n";
             info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
         }
-        
+
         info += "\r\n";
 
         // Monitor
@@ -3896,7 +3908,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSAVE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSAVE(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -3910,7 +3922,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleBGSAVE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleBGSAVE(std::vector<RespValue> &args,
                                                    MSocket::MSocketPtr sock,
                                                    bool aof,
                                                    std::shared_ptr<ServerData<int>> self)
@@ -3943,7 +3955,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLASTSAVE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLASTSAVE(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
                                                      std::shared_ptr<ServerData<int>> self)
@@ -3956,7 +3968,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLASTSAVE1(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLASTSAVE1(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -3978,7 +3990,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleCOMMAND(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleCOMMAND(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -4026,14 +4038,14 @@ namespace blue
 
         for (const auto &name : cmd_list)
         {
-            commands.push_back(RespValue::bulk_string(name));
+            commands.push_back(*RespValue::bulk_string(name));
         }
 
         return RespValue::array(std::move(commands));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleECHO(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleECHO(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -4046,7 +4058,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleTIME(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleTIME(std::vector<RespValue> &args,
                                                  MSocket::MSocketPtr sock,
                                                  bool aof,
                                                  std::shared_ptr<ServerData<int>> self)
@@ -4059,13 +4071,13 @@ namespace blue
         auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
         auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() % 1000000;
         std::vector<RespValue> results;
-        results.push_back(RespValue::bulk_string(std::to_string(seconds)));
-        results.push_back(RespValue::bulk_string(std::to_string(microseconds)));
+        results.push_back(*RespValue::bulk_string(std::to_string(seconds)));
+        results.push_back(*RespValue::bulk_string(std::to_string(microseconds)));
         return RespValue::array(std::move(results));
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleLOCALTIME(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleLOCALTIME(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -4090,7 +4102,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSHUTDOWN(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSHUTDOWN(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
                                                      bool aof,
                                                      std::shared_ptr<ServerData<int>> self)
@@ -4104,7 +4116,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleWATCH(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleWATCH(std::vector<RespValue> &args,
                                                   MSocket::MSocketPtr sock,
                                                   bool aof,
                                                   std::shared_ptr<ServerData<int>> self)
@@ -4124,7 +4136,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleUNWATCH(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleUNWATCH(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -4139,7 +4151,7 @@ namespace blue
 
     // ========== 慢查询 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSLOWLOG(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSLOWLOG(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -4194,7 +4206,7 @@ namespace blue
 
     // ========== 监控 ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleMONITOR(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleMONITOR(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -4214,7 +4226,7 @@ namespace blue
 
     // ========== AOF ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleAOFROTATE(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleAOFROTATE(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -4246,7 +4258,7 @@ namespace blue
 
     // ========== Replication ==========
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleREPLICAOF(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleREPLICAOF(std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       bool aof,
                                                       std::shared_ptr<ServerData<int>> self)
@@ -4315,7 +4327,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSLAVEOF(std::vector<RespValue> &args,
+    AutoRespValue CommandHandlerTable<T>::handleSLAVEOF(std::vector<RespValue> &args,
                                                     MSocket::MSocketPtr sock,
                                                     bool aof,
                                                     std::shared_ptr<ServerData<int>> self)
@@ -4384,10 +4396,10 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandlerTable<T>::handleSYNC(std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool aof,
-                                                      std::shared_ptr<ServerData<int>> self)
+    AutoRespValue CommandHandlerTable<T>::handleSYNC(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {

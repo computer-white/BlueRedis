@@ -92,7 +92,7 @@ namespace blue
         /**
          * @brief 处理事务模式
          */
-        RespValue handleTransactionCommand(const std::string &cmd,
+        AutoRespValue handleTransactionCommand(const std::string &cmd,
                                            std::vector<RespValue> &args,
                                            MSocket::MSocketPtr sock,
                                            const TimePoint &start);
@@ -100,7 +100,7 @@ namespace blue
         /**
          * @brief 处理订阅模式
          */
-        RespValue handleSubscriptionCommand(const std::string &cmd,
+        AutoRespValue handleSubscriptionCommand(const std::string &cmd,
                                             std::vector<RespValue> &args,
                                             MSocket::MSocketPtr sock,
                                             const TimePoint &start);
@@ -108,7 +108,7 @@ namespace blue
         /**
          * @brief 处理进入事务或订阅模式
          */
-        RespValue handleModeSwitchCommand(const std::string &cmd,
+        AutoRespValue handleModeSwitchCommand(const std::string &cmd,
                                           std::vector<RespValue> &args,
                                           MSocket::MSocketPtr sock,
                                           const TimePoint &start);
@@ -116,7 +116,7 @@ namespace blue
         /**
          * @brief 处理发布订阅
          */
-        RespValue handlePublishCommand(const std::string &cmd,
+        AutoRespValue handlePublishCommand(const std::string &cmd,
                                        std::vector<RespValue> &args,
                                        MSocket::MSocketPtr sock,
                                        const TimePoint &start);
@@ -288,7 +288,8 @@ namespace blue
                 {
                     break;
                 }
-                batch_response += RespValue::encode(response);
+                // batch_response += RespValue::encode(response);
+                response->encodeTo(batch_response);
                 cmd_count++;
                 m_server->incrementCommands();
 
@@ -375,6 +376,8 @@ namespace blue
         int cmd_count = 0;
 
         const uint64_t timeout_ms = static_cast<uint64_t>(m_server->getTimeoutS()) * 1000ul;
+
+        blue::AutoRespValue response;
 
         // 回复函数
         auto send_response = [&](std::string &data) -> Task<void>
@@ -484,7 +487,8 @@ namespace blue
                     BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
                                                 << "] 命令数组过大: " << copy_arr.size();
                     auto error_resp = RespValue::error("ERR command too large");
-                    batch_response += RespValue::encode(error_resp);
+                    // batch_response += RespValue::encode(error_resp);
+                    error_resp->encodeTo(batch_response);
                     break;
                 }
 
@@ -492,7 +496,7 @@ namespace blue
                 std::string cmd = copy_arr[0].str;
                 std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
 
-                blue::RespValue response;
+                // blue::RespValue response;
                 bool is_special = false; // 是否需要特殊处理
 
                 auto start = SteadyClock::now();
@@ -547,13 +551,15 @@ namespace blue
                     // 记录慢查询
                     m_server->getSlowLog().pushEntry(cmd_str, sock, start, end);
                 }
-                if (response.str != "QUEUED" && m_server->getPushMonitor().load(std::memory_order_acquire))
+                if (response->str != "QUEUED" && m_server->getPushMonitor().load(std::memory_order_acquire))
                 {
                     // 推送消息给监控客户端
                     m_server->getMonitor().pushToMonitor(cmd_str, sock);
                 }
 
-                batch_response += RespValue::encode(response);
+                // batch_response += RespValue::encode(response);
+                response->encodeTo(batch_response);
+                response->reset();      // 清空但保留容量
                 cmd_count++;
                 m_server->incrementCommands();
 
@@ -623,7 +629,7 @@ namespace blue
 #endif
 
     template <typename T>
-    RespValue CommandHandler<T>::handleTransactionCommand(const std::string &cmd,
+    AutoRespValue CommandHandler<T>::handleTransactionCommand(const std::string &cmd,
                                                           std::vector<RespValue> &args,
                                                           MSocket::MSocketPtr sock,
                                                           const TimePoint &start)
@@ -690,7 +696,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandler<T>::handleSubscriptionCommand(const std::string &cmd,
+    AutoRespValue CommandHandler<T>::handleSubscriptionCommand(const std::string &cmd,
                                                            std::vector<RespValue> &args,
                                                            MSocket::MSocketPtr sock,
                                                            const TimePoint &start)
@@ -726,10 +732,10 @@ namespace blue
 
                 // 返回取消订阅消息
                 std::vector<RespValue> msg;
-                msg.push_back(RespValue::bulk_string("unsubscribe"));
-                msg.push_back(RespValue::bulk_string(channel));
-                msg.push_back(RespValue::integer(sock->getSubScriptionChannels().size()));
-                results.push_back(RespValue::array(std::move(msg)));
+                msg.push_back(*RespValue::bulk_string("unsubscribe"));
+                msg.push_back(*RespValue::bulk_string(channel));
+                msg.push_back(*RespValue::integer(sock->getSubScriptionChannels().size()));
+                results.push_back(*RespValue::array(std::move(msg)));
             }
             sock->endSubScription();
             return RespValue::array(std::move(results));
@@ -759,7 +765,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandler<T>::handleModeSwitchCommand(const std::string &cmd,
+    AutoRespValue CommandHandler<T>::handleModeSwitchCommand(const std::string &cmd,
                                                          std::vector<RespValue> &args,
                                                          MSocket::MSocketPtr sock,
                                                          const TimePoint &start)
@@ -812,11 +818,11 @@ namespace blue
 
                     // 返回订阅成功消息
                     std::vector<RespValue> msg;
-                    msg.push_back(RespValue::bulk_string("subscribe"));
-                    msg.push_back(RespValue::bulk_string(channel));
-                    msg.push_back(RespValue::integer(1)); // 当前订阅数
+                    msg.push_back(*RespValue::bulk_string("subscribe"));
+                    msg.push_back(*RespValue::bulk_string(channel));
+                    msg.push_back(*RespValue::integer(1)); // 当前订阅数
 
-                    results.push_back(RespValue::array(std::move(msg)));
+                    results.push_back(*RespValue::array(std::move(msg)));
                 }
                 return RespValue::array(std::move(results));
             }
@@ -825,7 +831,7 @@ namespace blue
     }
 
     template <typename T>
-    RespValue CommandHandler<T>::handlePublishCommand(const std::string &cmd,
+    AutoRespValue CommandHandler<T>::handlePublishCommand(const std::string &cmd,
                                                       std::vector<RespValue> &args,
                                                       MSocket::MSocketPtr sock,
                                                       const TimePoint &start)

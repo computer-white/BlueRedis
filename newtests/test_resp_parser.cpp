@@ -106,13 +106,13 @@ void test_buffer_overflow_protection() {
 
 void test_encoding() {
     // 测试编码和解码的一致性
-    RespValue original = RespValue::array({
-        RespValue::bulk_string("SET"),
-        RespValue::bulk_string("key"),
-        RespValue::bulk_string("value")
+    AutoRespValue original = RespValue::array({
+        *RespValue::bulk_string("SET"),
+        *RespValue::bulk_string("key"),
+        *RespValue::bulk_string("value")
     });
     
-    std::string encoded = RespValue::encode(original);
+    std::string encoded = RespValue::encode(*original);
     auto [decoded, consumed] = RespValue::parse(encoded);
     
     assert(decoded.type == RespValue::Type::ARRAY);

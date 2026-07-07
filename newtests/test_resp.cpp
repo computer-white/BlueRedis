@@ -3,14 +3,14 @@
 
 int main()
 {
-    blue::RespValue ping = blue::RespValue::array({blue::RespValue::bulk_string("PING")});
-    std::cout << blue::RespValue::encode(ping);
+    blue::AutoRespValue ping = blue::RespValue::array({*blue::RespValue::bulk_string("PING")});
+    std::cout << blue::RespValue::encode(*ping);
 
-    blue::RespValue original = blue::RespValue::array({
-        blue::RespValue::bulk_string("PING")
+    blue::AutoRespValue original = blue::RespValue::array({
+        *blue::RespValue::bulk_string("PING")
     });
 
-    std::string encoded = blue::RespValue::encode(original);
+    std::string encoded = blue::RespValue::encode(*original);
     auto [parsed, consumed] = blue::RespValue::parse(encoded);
 
     // parsed 应该和 original 结构一样
