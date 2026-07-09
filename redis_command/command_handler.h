@@ -737,7 +737,10 @@ namespace blue
                 msg.push_back(*RespValue::integer(sock->getSubScriptionChannels().size()));
                 results.push_back(*RespValue::array(std::move(msg)));
             }
-            sock->endSubScription();
+            if (sock->getSubScriptionChannels().size() == 0)
+            {
+                sock->endSubScription();
+            }
             return RespValue::array(std::move(results));
         }
         else if (cmd == "PING") // PING [message]
