@@ -188,6 +188,7 @@ namespace blue
         REGISTER_COMMAND_T(MONITOR, handleMONITOR);
         REGISTER_COMMAND_T(AOFROTATE, handleAOFROTATE);
         REGISTER_COMMAND_T(SHUTDOWN, handleSHUTDOWN);
+        REGISTER_COMMAND_T(QUIT, handleQUIT);
 
         // replication
         REGISTER_COMMAND_T(REPLICAOF, handleREPLICAOF);
@@ -297,6 +298,7 @@ namespace blue
             CMD_ENTRY_T(MONITOR, handleMONITOR, false, ONLY_ONE);
             CMD_ENTRY_T(AOFROTATE, handleAOFROTATE, false, ONLY_ONE);
             CMD_ENTRY_T(SHUTDOWN, handleSHUTDOWN, false, ONLY_ONE);
+            CMD_ENTRY_T(QUIT, handleQUIT, false, ONLY_ONE);
 
             // replication
             CMD_ENTRY_T(REPLICAOF, handleREPLICAOF, false, ONLY_THREE);
@@ -539,6 +541,14 @@ namespace blue
             result += "monitor=" + std::to_string((int)(sock->inMonitorMode())) + "\r\n";
             return RespValue::bulk_string(result);
         }
+        else if (subcmd == "SETINFO")
+        {
+            if (args.size() != 4)
+            {
+                return RespValue::error("ERR wrong number of arguments for 'CLIENT SETINFO'");
+            }
+            return RespValue::simple_string("OK");
+        }
         return RespValue::error("ERR wrong arguments for 'CLIENT'");
     }
 
@@ -614,6 +624,11 @@ namespace blue
             {
                 result.push_back(*RespValue::bulk_string("aof-max_buffer_size"));
                 result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getMaxAOFBufferSize())));
+            }
+            if (pattern == "*" || pattern == "database")
+            {
+                result.push_back(*RespValue::bulk_string("database"));
+                result.push_back(*RespValue::bulk_string("16"));
             }
             return RespValue::array(std::move(result));
         }
@@ -4113,6 +4128,15 @@ namespace blue
         }
         self->setShutdown(true);
         return RespValue::bulk_string("OK - waiting for clients to disconnect");
+    }
+
+    template <typename T>
+    AutoRespValue CommandHandlerTable<T>::handleQUIT(std::vector<RespValue> &args,
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
+    {
+        return RespValue::simple_string("OK");
     }
 
     template <typename T>

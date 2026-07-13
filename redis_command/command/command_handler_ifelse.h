@@ -235,6 +235,14 @@ namespace blue
                 result += "monitor=" + std::to_string((int)(sock->inMonitorMode())) + "\r\n";
                 return return_with_slowlog(RespValue::bulk_string(result));
             }
+            else if (subcmd == "SETINFO")
+            {
+                if (args.size() != 4)
+                {
+                    return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'CLIENT SETINFO'"));
+                }
+                return return_with_slowlog(RespValue::simple_string("OK"));
+            }
             return return_with_slowlog(RespValue::error("ERR wrong arguments for 'CLIENT'"));
         }
         else if (cmd == "CONFIG") // CONFIG (GET [...])/SET [...], 获取或设置客户端的配置信息
@@ -309,6 +317,11 @@ namespace blue
                 {
                     result.push_back(*RespValue::bulk_string("aof-max_buffer_size"));
                     result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getMaxAOFBufferSize())));
+                }
+                if (pattern == "*" || pattern == "database")
+                {
+                    result.push_back(*RespValue::bulk_string("database"));
+                    result.push_back(*RespValue::bulk_string("16"));
                 }
                 return return_with_slowlog(RespValue::array(std::move(result)));
             }
@@ -3788,6 +3801,10 @@ namespace blue
             }
 
             BLUE_LOG_INFO(xx::g_logger) << "SYNC: RDB sent to slave, " << rdb_data.size() << " bytes";
+            return return_with_slowlog(RespValue::simple_string("OK"));
+        }
+        else if (cmd == "QUIT")
+        {
             return return_with_slowlog(RespValue::simple_string("OK"));
         }
         else if (cmd == "SHUTDOWN") // SHUTDOWN 关闭服务器,如果连接数为0
