@@ -4158,7 +4158,7 @@ namespace blue
             "KEYS", "FLUSHDB", "FLUSHDBALL", "DBSIZE", "INFO", "SAVE", "BGSAVE", "LASTSAVE",
             "LASTSAVE1", "ECHO", "TIME", "LOCALTIME", "SHUTDOWN", "COMMAND",
             "RENAME", "RENAMENX", "RANDOMKEY", "EXPIRE", "TTL", "PEXPIRE", "PTTL",
-            "PERSIST",
+            "PERSIST", "QUIT", "SCAN",
             // 事务模式
             "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH",
             // 订阅模式
