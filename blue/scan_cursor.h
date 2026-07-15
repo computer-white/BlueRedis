@@ -1,6 +1,10 @@
 /**
  * @file scan_cursor.h
  * @brief SCAN 命令游标定义
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.7.15
+ * @copyright Copyright (c) 2026年 blue
  */
 #pragma once
 #include <string>
