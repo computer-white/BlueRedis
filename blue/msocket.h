@@ -14,6 +14,7 @@
 #include "address.h"
 #include "blue/task.h"
 #include "blue/resp_parser.h"
+#include "blue/scan_cursor.h"
 
 // socket 模块
 namespace blue
@@ -698,6 +699,34 @@ namespace blue
          * @brief 是否在监控模式
          */
         bool inMonitorMode() const noexcept { return m_in_monitor; }
+
+        /**
+         * @brief 是否具有游标
+         */
+        bool hasScanCursor() const { return m_hasScanCursor; }
+
+        /**
+         * @brief 获取游标
+         */
+        const ScanCursor& getScanCursor() const { return m_scanCursor; }
+
+        /**
+         * @brief 设置游标
+         */
+        void setScanCursor(const ScanCursor& cursor) 
+        {
+            m_scanCursor = cursor;
+            m_hasScanCursor = true;
+        }
+
+        /**
+         * @brief 清理游标
+         */
+        void clearScanCursor() 
+        {
+            m_hasScanCursor = false;
+            m_scanCursor = ScanCursor{};
+        }
     private:
         /**
          * @brief 初始化socket属性,TCP禁用nagle算法,socket本地地址重用
@@ -745,6 +774,10 @@ namespace blue
 
         // 监控模式
         bool m_in_monitor = false;
+
+        // 游标
+        ScanCursor m_scanCursor;  // SCAN 游标状态
+        bool m_hasScanCursor = false;
 
     private:
         int m_sockfd;

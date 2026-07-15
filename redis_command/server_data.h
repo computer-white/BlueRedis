@@ -22,6 +22,7 @@
 #include "blue/skiplist.h"
 #include "blue/resp_parser.h"
 #include "blue/tcpServer.h"
+#include "blue/scan_cursor.h"
 #include "modules/subscription.h"
 #include "modules/slowlog.h"
 #include "modules/monitor.h"
@@ -289,6 +290,49 @@ namespace blue
          */
         std::string generateRDB();
 
+        /**
+         * @brief 扫描键（完整实现）
+         * @param db 数据库编号
+         * @param cursor 游标（引用，会被更新）
+         * @param pattern 匹配模式
+         * @param count 每次返回数量
+         * @param keys 输出：匹配的键列表
+         * @return true 表示扫描完成，false 表示还有更多数据
+         */
+        bool scanKeys(int db, ScanCursor &cursor, const std::string &pattern,
+                      int count, std::vector<std::string> &keys);
+
+        /**
+         * @brief 获取数据库中所有键的总数
+         */
+        size_t getTotalKeys(int db) const;
+
+    private:
+        /**
+         * @brief 通配符匹配
+         */
+        bool matchPattern(const std::string &key, const std::string &pattern) const;
+
+        /**
+         * @brief 编译正则表达式（带缓存）
+         */
+        std::regex getRegex(const std::string &pattern) const;
+
+        /**
+         * @brief 从单个分片扫描指定类型的数据
+         */
+        template <typename Container>
+        bool scanContainer(const Container &container, const std::string &pattern,
+                           size_t startOffset, int count,
+                           std::vector<std::string> &keys, size_t &offset,
+                           int &matchedCount);
+
+        /**
+         * @brief 获取容器大小
+         */
+        template <typename Container>
+        size_t getContainerSize(const Container &container) const;
+
     private:
         TcpServer<T> *m_tcpserver = nullptr;
 
@@ -324,6 +368,10 @@ namespace blue
         AOFModule m_aof; // AOF
         /* Replication */
         ReplicationModule m_replication;
+
+        // 正则表达式缓存
+        mutable std::unordered_map<std::string, std::regex> m_regexCache;
+        mutable std::shared_mutex m_regexMutex;
     };
 
     template <typename T>
@@ -604,8 +652,8 @@ namespace blue
                 {
                     // 简单处理
                     result += "*3\r\n$3\r\nSET\r\n$" + std::to_string(key.size()) +
-                            "\r\n" + key + "\r\n$" + std::to_string(value.val.size()) +
-                            "\r\n" + value.val + "\r\n";
+                              "\r\n" + key + "\r\n$" + std::to_string(value.val.size()) +
+                              "\r\n" + value.val + "\r\n";
                     // TODO 过期时间
                 }
 
@@ -626,20 +674,20 @@ namespace blue
                 {
                     for (auto &value : list)
                     {
-                        result += "*3\r\n$5\r\nRPUSH\r\n$" + std::to_string(key.size()) + 
-                                    "\r\n" + key + "\r\n$" + std::to_string(value.size()) + 
-                                    "\r\n" + value + "\r\n";
+                        result += "*3\r\n$5\r\nRPUSH\r\n$" + std::to_string(key.size()) +
+                                  "\r\n" + key + "\r\n$" + std::to_string(value.size()) +
+                                  "\r\n" + value + "\r\n";
                     }
                 }
 
                 // Set
                 for (const auto &[key, set] : shard.sets)
                 {
-                    for (const auto& member : set)
+                    for (const auto &member : set)
                     {
-                        result += "*3\r\n$4\r\nSADD\r\n$" + std::to_string(key.size()) + 
-                                    "\r\n" + key + "\r\n$" + std::to_string(member.size()) + 
-                                    "\r\n" + member + "\r\n";
+                        result += "*3\r\n$4\r\nSADD\r\n$" + std::to_string(key.size()) +
+                                  "\r\n" + key + "\r\n$" + std::to_string(member.size()) +
+                                  "\r\n" + member + "\r\n";
                     }
                 }
 
@@ -650,14 +698,287 @@ namespace blue
                     {
                         std::string score_str = std::to_string(score);
                         result += "*4\r\n$4\r\nZADD\r\n$" + std::to_string(key.size()) +
-                                "\r\n" + key + "\r\n$" + std::to_string(score_str.size()) +
-                                "\r\n" + score_str + "\r\n$" + std::to_string(member.size()) + 
-                                "\r\n" + member + "\r\n";
+                                  "\r\n" + key + "\r\n$" + std::to_string(score_str.size()) +
+                                  "\r\n" + score_str + "\r\n$" + std::to_string(member.size()) +
+                                  "\r\n" + member + "\r\n";
                     }
                 }
             }
         }
         return result;
+    }
+
+    // 通配符转正则
+    inline std::string globToRegex(const std::string &pattern)
+    {
+        std::string regex_str;
+        regex_str.reserve(pattern.size() * 2);
+        for (char c : pattern)
+        {
+            if (c == '*')
+            {
+                regex_str += ".*";
+            }
+            else if (c == '?')
+            {
+                regex_str += ".";
+            }
+            else if (c == '.' || c == '+' || c == '[' || c == ']' ||
+                     c == '(' || c == ')' || c == '\\' || c == '^' || c == '$')
+            {
+                regex_str += '\\';
+                regex_str += c;
+            }
+            else
+            {
+                regex_str += c;
+            }
+        }
+        return regex_str;
+    }
+
+    // 获取编译后的正则（带缓存）
+    template <typename T>
+    std::regex ServerData<T>::getRegex(const std::string &pattern) const
+    {
+        // 先检查缓存
+        {
+            std::shared_lock<std::shared_mutex> lock(m_regexMutex);
+            auto it = m_regexCache.find(pattern);
+            if (it != m_regexCache.end())
+            {
+                return it->second;
+            }
+        }
+
+        // 编译新的正则
+        std::string regexPattern = globToRegex(pattern);
+        std::regex reg(regexPattern);
+
+        // 存入缓存
+        {
+            std::unique_lock<std::shared_mutex> lock(m_regexMutex);
+            m_regexCache[pattern] = reg;
+        }
+
+        return reg;
+    }
+
+    // 通配符匹配
+    template <typename T>
+    bool ServerData<T>::matchPattern(const std::string &key, const std::string &pattern) const
+    {
+        if (pattern == "*")
+        {
+            return true;
+        }
+        if (pattern == key)
+        {
+            return true;
+        }
+
+        try
+        {
+            std::regex reg = getRegex(pattern);
+            return std::regex_match(key, reg);
+        }
+        catch (...)
+        {
+            return key.find(pattern) != std::string::npos;
+        }
+    }
+
+    // 获取容器大小（特化）
+    template <typename T>
+    template <typename Container>
+    size_t ServerData<T>::getContainerSize(const Container &container) const
+    {
+        return container.size();
+    }
+
+    // 扫描单个容器
+    template <typename T>
+    template <typename Container>
+    bool ServerData<T>::scanContainer(const Container &container, const std::string &pattern,
+                                      size_t startOffset, int count,
+                                      std::vector<std::string> &keys,
+                                      size_t &offset, int &matchedCount)
+    {
+        // 返回true表示还可以继续扫描，也就是容器还有数据没有被扫描
+        size_t size = container.size();
+        if (startOffset >= size)
+        {
+            offset = size;
+            return false; // 该容器已遍历完
+        }
+
+        auto it = container.cbegin();
+        std::advance(it, startOffset);
+        offset = startOffset;
+
+        while (it != container.cend() && matchedCount < count)
+        {
+            if (matchPattern(it->first, pattern))
+            {
+                keys.push_back(it->first);
+                ++matchedCount;
+            }
+            ++it;
+            ++offset;
+        }
+
+        return matchedCount >= count; // 是否达到 count 限制
+    }
+
+    // 主 SCAN 实现
+    template <typename T>
+    bool ServerData<T>::scanKeys(int db, ScanCursor &cursor, const std::string &pattern,
+                                 int count, std::vector<std::string> &keys)
+    {
+        if (db < 0 || db >= DB_COUNT)
+        {
+            return false;
+        }
+
+        if (count <= 0)
+        {
+            count = 10;
+        }
+        if (count > 1000)
+        {
+            count = 1000; // 限制最大值
+        }
+
+        keys.clear();
+
+        // 如果游标已完成，直接返回
+        if (cursor.completed)
+        {
+            BLUE_LOG_INFO(xx::g_logger) << "cursor completed";
+            return true;
+        }
+
+        int matchedCount = 0;
+
+        // 从当前分片开始遍历
+        for (int shardIdx = cursor.shardIndex; shardIdx < SHARD_COUNT && matchedCount < count; ++shardIdx)
+        {
+            auto &shard = m_dbs[db][shardIdx];
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+
+            // 确定当前分片的起始数据类型
+            int startType = (shardIdx == cursor.shardIndex) ? cursor.dataType : 0;
+            size_t startOffset = (shardIdx == cursor.shardIndex) ? cursor.offset : 0;
+
+            // 遍历所有数据类型
+            for (int dataType = startType; dataType <= 4 && matchedCount < count; ++dataType)
+            {
+                size_t offset = (dataType == startType) ? startOffset : 0;
+                bool hasMore = false;
+
+                switch (dataType)
+                {
+                case 0:
+                { // string
+                    hasMore = scanContainer(shard.store, pattern, offset, count,
+                                            keys, offset, matchedCount);
+                    if (hasMore)
+                    {
+                        cursor.shardIndex = shardIdx;
+                        cursor.dataType = dataType;
+                        cursor.offset = offset;
+                        return false; // 还有更多数据,需要保存游标状态
+                    }
+                    break;
+                }
+                case 1:
+                { // hash
+                    hasMore = scanContainer(shard.hash, pattern, offset, count,
+                                            keys, offset, matchedCount);
+                    if (hasMore)
+                    {
+                        cursor.shardIndex = shardIdx;
+                        cursor.dataType = dataType;
+                        cursor.offset = offset;
+                        return false;
+                    }
+                    break;
+                }
+                case 2:
+                { // list
+                    hasMore = scanContainer(shard.lists, pattern, offset, count,
+                                            keys, offset, matchedCount);
+                    if (hasMore)
+                    {
+                        cursor.shardIndex = shardIdx;
+                        cursor.dataType = dataType;
+                        cursor.offset = offset;
+                        return false;
+                    }
+                    break;
+                }
+                case 3:
+                { // set
+                    hasMore = scanContainer(shard.sets, pattern, offset, count,
+                                            keys, offset, matchedCount);
+                    if (hasMore)
+                    {
+                        cursor.shardIndex = shardIdx;
+                        cursor.dataType = dataType;
+                        cursor.offset = offset;
+                        return false;
+                    }
+                    break;
+                }
+                case 4:
+                { // zset
+                    hasMore = scanContainer(shard.zset, pattern, offset, count,
+                                            keys, offset, matchedCount);
+                    if (hasMore)
+                    {
+                        cursor.shardIndex = shardIdx;
+                        cursor.dataType = dataType;
+                        cursor.offset = offset;
+                        return false;
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
+
+            // 当前分片所有数据类型遍历完成
+            // 更新游标到下一个分片
+            cursor.shardIndex = shardIdx + 1;
+            cursor.dataType = 0;
+            cursor.offset = 0;
+        }
+
+        // 所有分片遍历完成
+        cursor.completed = true;
+        return true;
+    }
+
+    // 获取总键数
+    template <typename T>
+    size_t ServerData<T>::getTotalKeys(int db) const
+    {
+        if (db < 0 || db >= DB_COUNT)
+            return 0;
+
+        size_t total = 0;
+        for (int shardIdx = 0; shardIdx < SHARD_COUNT; ++shardIdx)
+        {
+            const auto &shard = m_dbs[db][shardIdx];
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            total += shard.store.size();
+            total += shard.hash.size();
+            total += shard.lists.size();
+            total += shard.sets.size();
+            total += shard.zset.size();
+        }
+        return total;
     }
 
 } // namespace blue

@@ -75,7 +75,7 @@ namespace blue
                 self->getAOF().appendToAOF(aof_cmds);
 
                 // 如果是主节点，广播给从节点
-                if (self->getReplication().getisMaster() && !self->getReplication().slavesEmpty()) 
+                if (self->getReplication().getisMaster() && !self->getReplication().slavesEmpty())
                 {
                     self->getReplication().broadcastToSlaves(aof_cmds);
                 }
@@ -86,11 +86,11 @@ namespace blue
             // {
             //     std::weak_ptr<ServerData<T>> weak_self = self;
             //     std::thread([weak_self]()
-            //                 { 
+            //                 {
             //                     auto ptr = weak_self.lock();
             //                     if (ptr)
             //                     {
-            //                         ptr->saveToFile(); 
+            //                         ptr->saveToFile();
             //                     } })
             //         .detach();
             // }
@@ -1077,6 +1077,7 @@ namespace blue
             // 把 glob 风格转成 regex
             std::string pattern = args[1].str;
             std::string regex_str;
+            regex_str.reserve(pattern.size() * 2);
             for (char c : pattern)
             {
                 if (c == '*')
@@ -1088,7 +1089,7 @@ namespace blue
                     regex_str += ".";
                 }
                 else if (c == '.' || c == '+' || c == '[' || c == ']' ||
-                         c == '(' || c == ')' || c == '\\')
+                         c == '(' || c == ')' || c == '\\' || c == '^' || c == '$')
                 {
                     regex_str += '\\';
                     regex_str += c;
@@ -1156,6 +1157,116 @@ namespace blue
             }
 
             return return_with_slowlog(RespValue::array(std::move(result)));
+        }
+        else if (cmd == "SCAN") // SCAN cursor [MATCH pattern] [COUNT count]
+        {
+            if (sock->getClientlevel() < 1)
+            {
+                return return_with_slowlog(RespValue::error("ERR authentication required"));
+            }
+            if (args.size() < 2)
+            {
+                return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'SCAN'"));
+            }
+
+            // 解析游标
+            ScanCursor cursor;
+            if (sock->hasScanCursor())
+            {
+                cursor = sock->getScanCursor();
+                // 如果游标已完成，检查客户端是否传入了新游标
+                if (cursor.completed)
+                {
+                    // 客户端可能传入了 "0" 表示重新开始
+                    if (args[1].str == "0")
+                    {
+                        cursor = ScanCursor{};
+                    }
+                }
+            }
+            else
+            {
+                cursor = ScanCursor{};
+            }
+
+            // 如果客户端传入了游标，用客户端的值覆盖
+            if (args[1].str != "0")
+            {
+                // 解析客户端传来的游标
+                auto clientCursor = ScanCursor::deserialize(args[1].str);
+                if (!clientCursor.completed)
+                {
+                    cursor = clientCursor;
+                }
+            }
+
+            // 解析可选参数
+            std::string pattern = "*";
+            int count = 10;
+
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                std::string arg = args[i].str;
+                std::transform(arg.begin(), arg.end(), arg.begin(), ::toupper);
+
+                if (arg == "MATCH" && i + 1 < args.size())
+                {
+                    pattern = args[++i].str;
+                }
+                else if (arg == "COUNT" && i + 1 < args.size())
+                {
+                    try
+                    {
+                        count = std::stoi(args[++i].str);
+                        if (count <= 0)
+                            count = 1;
+                    }
+                    catch (...)
+                    {
+                        return return_with_slowlog(RespValue::error("ERR invalid COUNT"));
+                    }
+                }
+            }
+
+            // 获取当前数据库编号
+            int dbIndex = sock->getClientId() % DB_COUNT;
+            cursor.db = dbIndex;
+
+            // 执行扫描
+            std::vector<std::string> keys;
+            bool completed = self->scanKeys(dbIndex, cursor, pattern, count, keys);
+
+            // 保存游标状态
+            if (!completed)
+            {
+                sock->setScanCursor(cursor);
+            }
+            else
+            {
+                sock->clearScanCursor();
+            }
+
+            // 构造响应
+            std::vector<RespValue> result;
+            if (completed)
+            {
+                result.push_back(*RespValue::bulk_string("0"));
+            }
+            else
+            {
+                result.push_back(*RespValue::bulk_string(cursor.serialize()));
+            }
+
+            std::vector<RespValue> keysArray;
+            keysArray.reserve(keys.size());
+            for (const auto &key : keys)
+            {
+                keysArray.push_back(*RespValue::bulk_string(key));
+            }
+            result.push_back(*RespValue::array(keysArray));
+
+            return return_with_slowlog(RespValue::array(result));
+
         } // 链表操作
         else if (cmd == "LPUSH") // LPUSH key val [val...]
         {
@@ -2123,7 +2234,7 @@ namespace blue
 
                 return return_with_slowlog(RespValue::integer(0));
             }
-            auto& data = it->second;
+            auto &data = it->second;
             if (data.expire.has_value() && data.expire < SteadyClock::now())
             {
                 lock.unlock();
@@ -2879,7 +2990,7 @@ namespace blue
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
             auto it = shards.store.find(key);
             // 不存在或没有过期时间
-            if (it == shards.store.end() ||  !(it->second.expire.has_value()))
+            if (it == shards.store.end() || !(it->second.expire.has_value()))
             {
                 return return_with_slowlog(RespValue::integer(0));
             }
@@ -3332,27 +3443,25 @@ namespace blue
 
             // Replication
             info += "# Replication\r\n";
-            
-            if (self->getReplication().getisMaster()) 
+
+            if (self->getReplication().getisMaster())
             {
                 info += "role:master\r\n";
                 info += "connected_slaves:" + std::to_string(self->getReplication().slavesCount()) + "\r\n";
-                
+
                 // 列出所有从节点
                 auto slaves_info = self->getReplication().slavesToString();
-                if (!slaves_info.empty()) 
+                if (!slaves_info.empty())
                 {
                     info += slaves_info;
                 }
-            } 
-            else 
+            }
+            else
             {
                 info += "role:slave\r\n";
                 info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
                 info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
-                info += "master_link_status:" + std::string(
-                    self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down"
-                ) + "\r\n";
+                info += "master_link_status:" + std::string(self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down") + "\r\n";
                 info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
             }
 

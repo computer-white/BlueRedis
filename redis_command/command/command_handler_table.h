@@ -122,6 +122,7 @@ namespace blue
         REGISTER_COMMAND_T(HKEYS, handleHKEYS);
         REGISTER_COMMAND_T(HVALS, handleHVALS);
         REGISTER_COMMAND_T(KEYS, handleKEYS);
+        REGISTER_COMMAND_T(SCAN, handleSCAN);
 
         // list
         REGISTER_COMMAND_T(LPUSH, handleLPUSH);
@@ -232,6 +233,7 @@ namespace blue
             CMD_ENTRY_T(HKEYS, handleHKEYS, false, ONLY_TWO);
             CMD_ENTRY_T(HVALS, handleHVALS, false, ONLY_TWO);
             CMD_ENTRY_T(KEYS, handleKEYS, false, ONLY_TWO);
+            CMD_ENTRY_T(SCAN, handleSCAN, false, ONLY_MORE_TWO);
 
             // list
             // CMD_ENTRY_T(LPUSH, handleLPUSH, true, ONLY_MORE_THREE);
@@ -1299,6 +1301,7 @@ namespace blue
         // 把 glob 风格转成 regex
         std::string pattern = args[1].str;
         std::string regex_str;
+        regex_str.reserve(pattern.size() * 2);
         for (char c : pattern)
         {
             if (c == '*')
@@ -1310,7 +1313,7 @@ namespace blue
                 regex_str += ".";
             }
             else if (c == '.' || c == '+' || c == '[' || c == ']' ||
-                     c == '(' || c == ')' || c == '\\')
+                     c == '(' || c == ')' || c == '\\' || c == '^' || c == '$')
             {
                 regex_str += '\\';
                 regex_str += c;
@@ -1378,6 +1381,122 @@ namespace blue
         }
 
         return RespValue::array(std::move(result));
+    }
+
+    template <typename T>
+    AutoRespValue CommandHandlerTable<T>::handleSCAN(std::vector<RespValue> &args,
+                                                 MSocket::MSocketPtr sock,
+                                                 bool aof,
+                                                 std::shared_ptr<ServerData<int>> self)
+    {
+        if (sock->getClientlevel() < 1)
+        {
+            return RespValue::error("ERR authentication required");
+        }
+        if (args.size() < 2)
+        {
+            return RespValue::error("ERR wrong number of arguments for 'SCAN'");
+        }
+
+        // 解析游标
+        ScanCursor cursor;
+        if (sock->hasScanCursor())
+        {
+            cursor = sock->getScanCursor();
+            // 如果游标已完成，检查客户端是否传入了新游标
+            if (cursor.completed)
+            {
+                // 客户端可能传入了 "0" 表示重新开始
+                if (args[1].str == "0")
+                {
+                    cursor = ScanCursor{};
+                }
+            }
+        }
+        else
+        {
+            BLUE_LOG_INFO(xx::g_logger) << "sock have not ScanCursor";
+            cursor = ScanCursor{};
+        }
+
+        // 如果客户端传入了游标，用客户端的值覆盖
+        if (args[1].str != "0")
+        {
+            // 解析客户端传来的游标
+            auto clientCursor = ScanCursor::deserialize(args[1].str);
+            if (!clientCursor.completed)
+            {
+                cursor = clientCursor;
+            }
+        }
+
+        // 解析可选参数
+        std::string pattern = "*";
+        int count = 10;
+
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            std::string arg = args[i].str;
+            std::transform(arg.begin(), arg.end(), arg.begin(), ::toupper);
+
+            if (arg == "MATCH" && i + 1 < args.size())
+            {
+                pattern = args[++i].str;
+            }
+            else if (arg == "COUNT" && i + 1 < args.size())
+            {
+                try
+                {
+                    count = std::stoi(args[++i].str);
+                    if (count <= 0)
+                        count = 1;
+                }
+                catch (...)
+                {
+                    return RespValue::error("ERR invalid COUNT");
+                }
+            }
+        }
+
+        // 获取当前数据库编号
+        int dbIndex = sock->getClientId() % DB_COUNT;
+        cursor.db = dbIndex;
+
+        // 执行扫描
+        std::vector<std::string> keys;
+        bool completed = self->scanKeys(dbIndex, cursor, pattern, count, keys);
+
+        // 保存游标状态
+        if (!completed)
+        {
+            sock->setScanCursor(cursor);
+        }
+        else
+        {
+            sock->clearScanCursor();
+        }
+
+        // 构造响应
+        std::vector<RespValue> result;
+        if (completed)
+        {
+            result.push_back(*RespValue::bulk_string("0"));
+        }
+        else
+        {
+            // 返回类型为 ShardIndex:DataType:OffSet
+            result.push_back(*RespValue::bulk_string(cursor.serialize()));
+        }
+
+        std::vector<RespValue> keysArray;
+        keysArray.reserve(keys.size());
+        for (const auto &key : keys)
+        {
+            keysArray.push_back(*RespValue::bulk_string(key));
+        }
+        result.push_back(*RespValue::array(keysArray));
+
+        return RespValue::array(result);
     }
 
     // ========== Hash 命令 ==========
