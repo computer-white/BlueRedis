@@ -155,6 +155,7 @@ set(LIB_SRC
     blue/io_manager.cpp
     blue/timer.cpp
     blue/resp_parser.cpp
+    blue/cluster/cluster_node.cpp
     redis_command/modules/subscription.cpp
     redis_command/modules/slowlog.cpp
     redis_command/modules/monitor.cpp
@@ -336,6 +337,9 @@ add_newblue_test(test_timeout)
 add_newblue_test(test_generator)
 add_newblue_test(test_generator_game)
 add_newblue_test(test_url)
+add_newblue_test(test_bytearray)
+add_newblue_test(test_bytearrayBuffer)
+add_newblue_test(test_bytesize)
 
 # add_library(configinit_obj OBJECT blue/configinit.cpp)
 # add_executable(test_benchmark newtests/test_benchmark.cpp)
