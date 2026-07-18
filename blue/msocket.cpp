@@ -110,7 +110,7 @@ namespace blue
 
     bool MSocket::setNoBlocking()
     {
-        if (isVaild())
+        if (isValid())
         {
             int flags = fcntl(m_sockfd,F_GETFL,0);
             if (flags == -1)
@@ -124,7 +124,7 @@ namespace blue
 
     bool MSocket::setBlocking()
     {
-        if (isVaild())
+        if (isValid())
         {
             int flags = fcntl(m_sockfd, F_GETFL,0);
             if (flags == -1)
@@ -209,10 +209,10 @@ namespace blue
 
     bool MSocket::bind(const Address::AddressPtr address)
     {
-        if (!isVaild())
+        if (!isValid())
         {
             _newSocket();
-            if (BLUE_UNLIKELY(!isVaild()))
+            if (BLUE_UNLIKELY(!isValid()))
             {
                 return false;
             }
@@ -239,7 +239,7 @@ namespace blue
 
     bool MSocket::listen(int backlog)
     {
-        if (!isVaild())
+        if (!isValid())
         {
             BLUE_LOG_ERROR(g_logger) << "listen error sockfd = -1";
             return false;
@@ -256,10 +256,10 @@ namespace blue
 
     Task<bool> MSocket::connect(const Address::AddressPtr address, uint32_t timeout)
     {
-        if (!isVaild())
+        if (!isValid())
         {
             _newSocket();
-            if (BLUE_UNLIKELY(!isVaild()))
+            if (BLUE_UNLIKELY(!isValid()))
             {
                 co_return false;
             }
@@ -323,7 +323,7 @@ namespace blue
 
     bool MSocket::shutdown(int how)
     {
-        if (isVaild())
+        if (isValid())
         {
             int ret = ::shutdown(m_sockfd,how);
             return ret == 0;
@@ -331,7 +331,7 @@ namespace blue
         return false;
     }
 
-    bool MSocket::isVaild() const
+    bool MSocket::isValid() const
     {
         return m_sockfd != -1;
     }
@@ -751,12 +751,12 @@ namespace blue
         return blue::IOManager::GetThis()->cancelAll(m_sockfd);
     }
 
-    bool MSocket::setVaildFd()
+    bool MSocket::setValidFd()
     {
-        if (!isVaild())
+        if (!isValid())
         {
             _newSocket();
-            if (BLUE_LIKELY(!isVaild()))
+            if (BLUE_LIKELY(!isValid()))
             {
                 return false;
             }

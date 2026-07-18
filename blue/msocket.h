@@ -449,7 +449,7 @@ namespace blue
          * @brief 判断socket描述符是否有效
          * @return 有效返回true；无效返回 false
          */
-        bool isVaild() const;
+        bool isValid() const;
 
         /**
          * @brief 获取socket上的错误
@@ -492,7 +492,7 @@ namespace blue
         /**
          * @brief 设置有效的fd
          */
-        bool setVaildFd();
+        bool setValidFd();
 
         /**
          * @brief 设置为连接成功，并设置远端和本端地址
