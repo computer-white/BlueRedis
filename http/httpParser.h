@@ -349,7 +349,7 @@ namespace blue
             /**
              * @brief 对头部字段key进行格式化
              */
-            void _headerFieldFormat(std::string &headerfiled);
+            void _headerFieldFormat(std::string &headerfield);
 
             /**
              * @brief llhttp 的 URL 数据回调，每次收到 URL 片段时触发,供llhttp使用并在解析完后调用用户设置的url回调函数
@@ -649,7 +649,7 @@ namespace blue
             /**
              * @brief 对头部字段key进行格式化
              */
-            void _headerFieldFormat(std::string &headerfiled);
+            void _headerFieldFormat(std::string &headerfield);
 
             /**
              * @brief 接收到响应码的时候触发回调
