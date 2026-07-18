@@ -1712,8 +1712,8 @@ namespace blue
             }
             return RespValue::integer(0);
         }
-        auto filed_it = it->second.find(field);
-        if (filed_it == it->second.end())
+        auto field_it = it->second.find(field);
+        if (field_it == it->second.end())
         {
             return RespValue::integer(0);
         }

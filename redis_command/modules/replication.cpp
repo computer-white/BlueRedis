@@ -135,7 +135,7 @@ namespace blue
                 continue;
             }
             BLUE_LOG_INFO(g_logger) << "sock successful";
-            bool vailded = sock->setVaildFd(); // 使得fd有效
+            bool vailded = sock->setValidFd(); // 使得fd有效
             if (!vailded)
             {
                 std::this_thread::sleep_for(std::chrono::seconds(5));

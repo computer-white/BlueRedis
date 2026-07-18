@@ -966,8 +966,8 @@ namespace blue
                 }
                 return return_with_slowlog(RespValue::integer(0));
             }
-            auto filed_it = it->second.find(field);
-            if (filed_it == it->second.end())
+            auto field_it = it->second.find(field);
+            if (field_it == it->second.end())
             {
                 return return_with_slowlog(RespValue::integer(0));
             }
