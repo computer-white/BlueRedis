@@ -167,6 +167,11 @@ namespace blue
 		 * @return
 		 */
 		virtual void setPort(uint16_t v) = 0;
+
+		/**
+		 * @brief 获取ip地址
+		 */
+		virtual std::string getIp() const = 0;
 	};
 	class IPv4Address : public IPAddress
 	{
@@ -262,7 +267,7 @@ namespace blue
 		/**
 		 * @brief 获取ip地址
 		 */
-		std::string getIp() const;
+		virtual std::string getIp() const override;
 
 	private:
 		sockaddr_in m_addr;
@@ -364,7 +369,7 @@ namespace blue
 		/**
 		 * @brief 获取ip地址
 		 */
-		std::string getIp() const;
+		virtual std::string getIp() const override;
 
 	private:
 		sockaddr_in6 m_addr;

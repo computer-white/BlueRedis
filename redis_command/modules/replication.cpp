@@ -104,7 +104,7 @@ namespace blue
             {
                 break;
             }
-            
+
             // 重试10次后直接退出
             if (retry_count == 10)
             {
@@ -399,7 +399,10 @@ namespace blue
     void ReplicationModule::broadcastToSlaves(const std::string &cmd)
     {
         BLUE_LOG_INFO(g_logger) << "broadcast" << cmd << "to slaves";
-        std::shared_lock<std::shared_mutex> lock(m_slaves_mutex);
+
+        std::vector<MSocket::MSocketPtr> to_remove;
+
+        std::unique_lock<std::shared_mutex> lock(m_slaves_mutex);
 
         if (m_slaves.empty())
         {
@@ -409,33 +412,37 @@ namespace blue
 
         for (auto it = m_slaves.begin(); it != m_slaves.end();)
         {
+            if (it->expired())
+            {
+                it = m_slaves.erase(it);
+                continue;
+            }
+
             // 拿到MSocketPtr
             auto slave = it->lock();
             if (!slave || !slave->isConnected())
             {
-                it = m_slaves.erase(it);
+                to_remove.push_back(slave);
+                ++it;
                 continue;
             }
 
             // 非阻塞同步发送
             slave->setNoBlocking();
             ssize_t sent = ::send(slave->getSocketfd(), cmd.data(), cmd.size(), MSG_NOSIGNAL);
-            if (sent <= 0)
+            if (sent <= 0 && errno != EAGAIN && errno != EWOULDBLOCK)
             {
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                {
-                    BLUE_LOG_WARN(g_logger) << "Send buffer full, will retry";
-                    ++it;
-                    continue;
-                }
                 BLUE_LOG_WARN(g_logger) << "Failed to send command to slave";
-                lock.unlock();
-                remove(slave);
-                lock.lock();
-                it = m_slaves.begin(); // 重新开始
-                continue;
+                to_remove.push_back(slave);
             }
             ++it;
+        }
+
+        lock.unlock();
+
+        for (auto &slave : to_remove)
+        {
+            this->remove(slave);
         }
     }
 
@@ -522,60 +529,69 @@ namespace blue
     void ReplicationModule::remove(MSocket::MSocketPtr sock)
     {
         std::unique_lock<std::shared_mutex> lock(m_slaves_mutex);
-        auto it = std::find_if(m_slaves.begin(), m_slaves.end(),
-                               [sock](const auto &weak)
-                               {
-                                   auto ptr = weak.lock();
-                                   return ptr && ptr.get() == sock.get();
-                               });
-        if (it != m_slaves.end())
-        {
-            m_slaves.erase(it);
-        }
+        m_slaves.erase(std::remove_if(m_slaves.begin(), m_slaves.end(),
+                                      [sock](const auto &weak)
+                                      {
+                                          auto ptr = weak.lock();
+                                          return !ptr || ptr.get() == sock.get();
+                                      }),
+                       m_slaves.end());
     }
 
-    std::string ReplicationModule::slavesToString() const noexcept
+    std::string ReplicationModule::slavesToString()
     {
         std::string result;
         uint32_t idx = 0;
-        std::shared_lock<std::shared_mutex> lock(m_slaves_mutex);
-        
+        std::unique_lock<std::shared_mutex> lock(m_slaves_mutex);
         if (m_slaves.empty())
         {
             BLUE_LOG_INFO(g_logger) << "slaves empty";
             return result;
         }
 
-        for (auto it = m_slaves.begin(); it != m_slaves.end(); )
+        for (auto it = m_slaves.begin(); it != m_slaves.end();)
         {
             if (it->expired())
             {
+                it = m_slaves.erase(it);
                 continue;
             }
             auto ptr = it->lock();
             if (ptr)
             {
-                // 格式: slave0:addr=127.0.0.1:6666state=online
-                result += "slave" + std::to_string(idx++) + ":";
-                result += "addr=" + ptr->getRemoteAddress()->toString();
-                result += "state=online\r\n";
+                // 格式: slave0:ip=127.0.0.1,port=6666,state=online,offset=12345,lag=0
+                auto addr = ptr->getRemoteAddress();
+                if (addr)
+                {
+                    auto ip_addr = std::dynamic_pointer_cast<blue::IPAddress>(addr);
+                    if (ip_addr)
+                    {
+                        result += "slave" + std::to_string(idx++) + ":";
+                        result += "ip=" + ip_addr->getIp() + ",";
+                        result += "port=" + std::to_string(ip_addr->getPort()) + ",";
+                        result += "state=online,";
+                        result += "offset=" + std::to_string(m_repl_config.repl_offset) + ",";
+                        result += "lag=0\r\n";
+                    }
+                }
             }
             ++it;
         }
         return result;
     }
 
-    size_t ReplicationModule::slavesCount() const
+    size_t ReplicationModule::slavesCount()
     {
-        std::shared_lock<std::shared_mutex> lock(m_slaves_mutex);
-        size_t count = 0;
-        for (const auto &weak : m_slaves)
+        std::unique_lock<std::shared_mutex> lock(m_slaves_mutex);
+        for (auto it = m_slaves.begin(); it != m_slaves.end(); )
         {
-            if (!weak.expired())
+            if (it->expired())
             {
-                count++;
+                it = m_slaves.erase(it);
+                continue;
             }
+            ++it;
         }
-        return count;
+        return m_slaves.size();
     }
 }

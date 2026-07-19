@@ -103,12 +103,12 @@ namespace blue
         /**
          * @brief 输出slaves信息
          */
-        std::string slavesToString() const noexcept;
+        std::string slavesToString();
 
         /**
          * @brief 获取从节点个数
          */
-        size_t slavesCount() const;
+        size_t slavesCount();
 
         /**
          * @brief 获取当前复制状态

@@ -3405,88 +3405,178 @@ namespace blue
             std::uniform_int_distribution<> dis(0, all_keys.size() - 1);
             return return_with_slowlog(RespValue::bulk_string(all_keys[dis(gen)]));
         }
-        else if (cmd == "INFO") // INFO 返回服务器信息
+        else if (cmd == "INFO") // INFO 返回服务器信息, INFO [Server/Client...]
         {
             if (sock->getClientlevel() < 1)
             {
                 return return_with_slowlog(RespValue::error("ERR authentication required"));
             }
-            if (args.size() != 1)
+            if (args.size() < 1)
             {
                 return return_with_slowlog(RespValue::error("ERR wrong number of arguments for 'INFO'"));
             }
             std::string info;
-            // Server
-            info += "# Server\r\n";
-            info += "redis_version:1.0.0\r\n";
-            info += "tcp_port:6666\r\n";
-            info += "\r\n";
-
-            // Client
-            info += "# Client\r\n";
-            info += "connections:" + std::to_string(self->getConnection()) + "\r\n";
-            info += "maxclient:" + std::to_string(self->getMaxClientCount()) + "\r\n";
-            info += "reject_connections:" + std::to_string(self->getRejectConnection()) + "\r\n";
-            info += "\r\n";
-
-            // AOF
-            info += "# AOF\r\n";
-            info += "aof_enabled:" + std::string(self->getAOF().getConfig_AOFEnabled() ? "1" : "0") + "\r\n";
-            info += "aof_sync:" + self->getAOF().getConfig_AOFSync() + "\r\n";
-            info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
-            info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
-            info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
-            info += "aof_max_file_size:" + std::to_string(self->getAOF().getConfig_AOFMaxFileSize()) + "\r\n";
-            info += "aof_max_files:" + std::to_string(self->getAOF().getConfig_AOFMaxFileNumber()) + "\r\n";
-            info += "aof_max_buffer_size" + std::to_string(self->getAOF().getMaxAOFBufferSize()) + "\r\n";
-            info += "\r\n";
-
-            // Replication
-            info += "# Replication\r\n";
-
-            if (self->getReplication().getisMaster())
+            if (args.size() == 1)
             {
-                info += "role:master\r\n";
-                info += "connected_slaves:" + std::to_string(self->getReplication().slavesCount()) + "\r\n";
+                // Server
+                info += "# Server\r\n";
+                info += "redis_version:1.0.0\r\n";
+                info += "tcp_port:6666\r\n";
+                info += "\r\n";
 
-                // 列出所有从节点
-                auto slaves_info = self->getReplication().slavesToString();
-                if (!slaves_info.empty())
+                // Client
+                info += "# Client\r\n";
+                info += "connections:" + std::to_string(self->getConnection()) + "\r\n";
+                info += "maxclient:" + std::to_string(self->getMaxClientCount()) + "\r\n";
+                info += "reject_connections:" + std::to_string(self->getRejectConnection()) + "\r\n";
+                info += "\r\n";
+
+                // AOF
+                info += "# AOF\r\n";
+                info += "aof_enabled:" + std::string(self->getAOF().getConfig_AOFEnabled() ? "1" : "0") + "\r\n";
+                info += "aof_sync:" + self->getAOF().getConfig_AOFSync() + "\r\n";
+                info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
+                info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
+                info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
+                info += "aof_max_file_size:" + std::to_string(self->getAOF().getConfig_AOFMaxFileSize()) + "\r\n";
+                info += "aof_max_files:" + std::to_string(self->getAOF().getConfig_AOFMaxFileNumber()) + "\r\n";
+                info += "aof_max_buffer_size:" + std::to_string(self->getAOF().getMaxAOFBufferSize()) + "\r\n";
+                info += "\r\n";
+
+                // Replication
+                info += "# Replication\r\n";
+
+                if (self->getReplication().getisMaster())
                 {
-                    info += slaves_info;
+                    info += "role:master\r\n";
+                    info += "connected_slaves:" + std::to_string(self->getReplication().slavesCount()) + "\r\n";
+
+                    // 列出所有从节点
+                    auto slaves_info = self->getReplication().slavesToString();
+                    if (!slaves_info.empty())
+                    {
+                        info += slaves_info;
+                    }
                 }
+                else
+                {
+                    info += "role:slave\r\n";
+                    info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
+                    info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
+                    info += "master_link_status:" + std::string(self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down") + "\r\n";
+                    info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
+                }
+
+                info += "\r\n";
+
+                // Monitor
+                info += "# Monitor\r\n";
+                info += "monitor_clients:" + std::to_string(self->getMonitor().size()) + "\r\n";
+                info += "\r\n";
+
+                // Stats
+                info += "# Stats\r\n";
+                info += "total_connections_received:" + std::to_string(self->getConnection()) + "\r\n";
+                info += "total_commands_processed:" + std::to_string(self->getCommands().load(std::memory_order_acquire)) + "\r\n";
+                info += "\r\n";
+
+                // Memory
+                info += "# Memory\r\n";
+                size_t total_keys = 0;
+                for (auto &shard : self->getDBs()[sock->getClientId()])
+                {
+                    std::shared_lock<std::shared_mutex> lock(shard.mutex);
+                    total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
+                }
+                info += "total_keys:" + std::to_string(total_keys) + "\r\n";
             }
             else
             {
-                info += "role:slave\r\n";
-                info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
-                info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
-                info += "master_link_status:" + std::string(self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down") + "\r\n";
-                info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
+                for (size_t i = 1; i < args.size(); i++)
+                {
+                    std::string &tem = args[i].str;
+                    std::transform(tem.begin(), tem.end(), tem.begin(), ::toupper);
+                    if (tem == "SERVER")
+                    {
+                        info += "# Server\r\n";
+                        info += "redis_version:1.0.0\r\n";
+                        info += "tcp_port:6666\r\n";
+                        info += "\r\n";
+                    }
+                    else if (tem == "CLIENT")
+                    {
+                        info += "# Client\r\n";
+                        info += "connections:" + std::to_string(self->getConnection()) + "\r\n";
+                        info += "maxclient:" + std::to_string(self->getMaxClientCount()) + "\r\n";
+                        info += "reject_connections:" + std::to_string(self->getRejectConnection()) + "\r\n";
+                        info += "\r\n";
+                    }
+                    else if (tem == "AOF")
+                    {   
+                        info += "# AOF\r\n";
+                        info += "aof_enabled:" + std::string(self->getAOF().getConfig_AOFEnabled() ? "1" : "0") + "\r\n";
+                        info += "aof_sync:" + self->getAOF().getConfig_AOFSync() + "\r\n";
+                        info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
+                        info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
+                        info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
+                        info += "aof_max_file_size:" + std::to_string(self->getAOF().getConfig_AOFMaxFileSize()) + "\r\n";
+                        info += "aof_max_files:" + std::to_string(self->getAOF().getConfig_AOFMaxFileNumber()) + "\r\n";
+                        info += "aof_max_buffer_size:" + std::to_string(self->getAOF().getMaxAOFBufferSize()) + "\r\n";
+                        info += "\r\n";
+                    }
+                    else if (tem == "REPLICATION")
+                    {
+                        info += "# Replication\r\n";
+
+                        if (self->getReplication().getisMaster())
+                        {
+                            info += "role:master\r\n";
+                            info += "connected_slaves:" + std::to_string(self->getReplication().slavesCount()) + "\r\n";
+
+                            // 列出所有从节点
+                            auto slaves_info = self->getReplication().slavesToString();
+                            if (!slaves_info.empty())
+                            {
+                                info += slaves_info;
+                            }
+                        }
+                        else
+                        {
+                            info += "role:slave\r\n";
+                            info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
+                            info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
+                            info += "master_link_status:" + std::string(self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down") + "\r\n";
+                            info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
+                        }
+
+                        info += "\r\n";
+                    }
+                    else if (tem == "MONITOR")
+                    {
+                        info += "# Monitor\r\n";
+                        info += "monitor_clients:" + std::to_string(self->getMonitor().size()) + "\r\n";
+                        info += "\r\n";
+                    }
+                    else if (tem == "STATS")
+                    {
+                        info += "# Stats\r\n";
+                        info += "total_connections_received:" + std::to_string(self->getConnection()) + "\r\n";
+                        info += "total_commands_processed:" + std::to_string(self->getCommands().load(std::memory_order_acquire)) + "\r\n";
+                        info += "\r\n";
+                    }
+                    else if (tem == "MEMORY")
+                    {
+                        info += "# Memory\r\n";
+                        size_t total_keys = 0;
+                        for (auto &shard : self->getDBs()[sock->getClientId()])
+                        {
+                            std::shared_lock<std::shared_mutex> lock(shard.mutex);
+                            total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
+                        }
+                        info += "total_keys:" + std::to_string(total_keys) + "\r\n";
+                    }
+                }
             }
-
-            info += "\r\n";
-
-            // Monitor
-            info += "# Monitor\r\n";
-            info += "monitor_clients:" + std::to_string(self->getMonitor().size()) + "\r\n";
-            info += "\r\n";
-
-            // Stats
-            info += "# Stats\r\n";
-            info += "total_connections_received:" + std::to_string(self->getConnection()) + "\r\n";
-            info += "total_commands_processed:" + std::to_string(self->getCommands().load(std::memory_order_acquire)) + "\r\n";
-            info += "\r\n";
-
-            // Memory
-            info += "# Memory\r\n";
-            size_t total_keys = 0;
-            for (auto &shard : self->getDBs()[sock->getClientId()])
-            {
-                std::shared_lock<std::shared_mutex> lock(shard.mutex);
-                total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
-            }
-            info += "total_keys:" + std::to_string(total_keys) + "\r\n";
             return return_with_slowlog(RespValue::bulk_string(info));
         }
         else if (cmd == "SAVE") // SAVE 持久化
