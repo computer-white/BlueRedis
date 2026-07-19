@@ -161,6 +161,7 @@ set(LIB_SRC
     redis_command/modules/monitor.cpp
     redis_command/modules/AOF.cpp
     redis_command/modules/replication.cpp
+    redis_command/sentinel/sentinel.cpp
     http/http.cpp
     http/httpconnection.cpp
     http/httpParser.cpp
