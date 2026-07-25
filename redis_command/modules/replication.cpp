@@ -156,7 +156,7 @@ namespace blue
             sock->setNoBlocking();
             sock->setConnection(); // 会标记sock fd为已经连接上，并拿到本端和远端地址
             BLUE_LOG_INFO(g_logger) << "Connected to master, fd=" << sock->getSocketfd();
-            m_repl_sock = sock;
+            m_repl_sock = sock;     // 引用计数加一
 
             // 握手
             m_repl_state.store(REPL_STATE_HANDSHAKE, std::memory_order_release);
@@ -195,7 +195,7 @@ namespace blue
                 BLUE_LOG_INFO(g_logger) << "AUTH successful";
             }
 
-            // 发送SYNC命令（需要携带密码发送）
+            // 发送SYNC命令（没有配置密码，所以这里需要携带密码发送）
             const char *sync_cmd = "*2\r\n$4\r\nAUTH\r\n$9\r\nclient123\r\n*1\r\n$4\r\nSYNC\r\n";
             ssize_t send = ::send(sock->getSocketfd(), sync_cmd, strlen(sync_cmd), MSG_NOSIGNAL);
             if (send <= 0)
