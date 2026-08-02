@@ -504,9 +504,10 @@ namespace blue
         return formatter;
     }
 
-    FileoutLogAppender::FileoutLogAppender(const std::string &filename) : m_filename(filename)
+    FileoutLogAppender::FileoutLogAppender(const std::string &filename)
     {
-        reopen();
+        m_rotate_config.m_rotate_filename_template = filename;
+        this->init();
     }
 
     FileoutLogAppender::~FileoutLogAppender()
@@ -547,47 +548,139 @@ namespace blue
         // 格式化消息（在锁外执行，减少锁持有时间）
         std::string formatted = formatter->format(logger_ptr, level, event);
         // 加锁保护文件写入
-        {
-            MutexType::lockSco lock(m_mutex);
-            // 检查是否需要重新打开文件
-            uint64_t now = time(0);
-            if (now != m_lasttime.load(std::memory_order_acquire))
-            {
-                // reopen();  // 假设 reopen 内部会有锁 ,替换为原地实现，否则可能有死锁风险
-                if (m_filestream.is_open())
-                {
-                    m_filestream.flush();
-                    m_filestream.close();
-                }
-                m_filestream.open(m_filename, std::ios_base::app);
-                m_lasttime.store(now, std::memory_order_release);
-            }
-            // 写入文件
-            m_filestream << formatted;
-            m_filestream.flush();
-        }
+        this->writeToFile(formatted);
     }
 
-    void FileoutLogAppender::clear()
+    void FileoutLogAppender::init()
     {
-        MutexType::lockSco lock(m_mutex);
-        if (m_filestream.is_open())
-        {
-            m_filestream.close();
-        }
-        m_filestream.open(m_filename, std::ios_base::trunc);
-        reopen();
-    }
 
-    void FileoutLogAppender::reopen()
-    {
         MutexType::lockSco lock(m_mutex);
+        if (m_file_idx == 0)
+        {
+            m_file_idx = 1;
+            m_filename = this->getFilename(m_file_idx);
+        }
         if (m_filestream.is_open())
         {
             m_filestream.flush();
             m_filestream.close();
         }
         m_filestream.open(m_filename, std::ios_base::app);
+        
+    }
+
+    void FileoutLogAppender::writeToFile(const std::string &data)
+    {
+        MutexType::lockSco lock(m_mutex);
+        auto now = std::chrono::steady_clock::now();
+        if (now != m_lasttime.load(std::memory_order_acquire))
+        {
+            if (m_filestream.is_open())
+            {
+                m_filestream.flush();
+            }
+            m_lasttime.store(now, std::memory_order_release);
+        }
+        m_filestream << data;
+
+        size_t size = m_filestream.tellp();
+        if (size > m_rotate_config.m_rotate_file_size && 
+        !m_rotating.load(std::memory_order_acquire))
+        {
+            lock.unlock();
+            this->rotateFile();
+        }
+    }
+
+    void FileoutLogAppender::rotateFile()
+    {
+        if (m_rotate_config.m_rotate_file_num == 0)
+        {
+            std::cout << "max_file_number is 0, cannot rotate" << std::endl;
+            return;
+        }
+        if (m_rotating.load(std::memory_order_acquire))
+        {
+            std::cout << "AOF rotation already in progress" << std::endl;
+            return;
+        }
+
+        // 开始轮转
+        m_rotating.store(true, std::memory_order_release);
+
+        MutexType::lockSco lock(m_mutex);
+        if (m_filestream.is_open())
+        {
+            m_filestream.flush();
+            m_filestream.close();
+        }
+
+        // 让索引落在1-file_size之间
+        size_t next_idx = (m_file_idx % m_rotate_config.m_rotate_file_num) + 1;
+
+        std::string newfile = getFilename(next_idx);
+
+        bool can_used = cleanFilename(newfile);
+
+        if (!can_used)
+        {
+            std::ofstream truncate_file(newfile, std::ios::trunc);
+            if (truncate_file)
+            {
+                truncate_file.close();
+                std::cout << "Truncated old AOF file: " << newfile << std::endl;
+            }
+            else
+            {
+                std::cout << "Failed to truncate old AOF file: " << newfile << std::endl;
+                m_rotating.store(false, std::memory_order_release);
+                return;
+            }
+        }
+
+        m_filestream.open(newfile, std::ios::app);
+        if (!m_filestream)
+        {
+            std::cout << "Failed to open new AOF file: " << newfile << std::endl;
+            m_rotating.store(false, std::memory_order_release);
+            return;
+        }
+
+        m_file_idx = next_idx;
+        m_filename = newfile;
+        m_filestream.flush();
+        lock.unlock();
+
+        // 轮转结束
+        m_rotating.store(false, std::memory_order_release);
+    }
+
+    std::string FileoutLogAppender::getFilename(size_t idx) const
+    {
+        if (idx == 1)
+        {
+            return m_rotate_config.m_rotate_filename_template;
+        }
+        return m_rotate_config.m_rotate_filename_template + ":" + std::to_string(idx);
+    }
+
+    bool FileoutLogAppender::cleanFilename(const std::string &file) const
+    {
+        std::fstream test(file);
+        if (test.good())
+        {
+            test.close();
+            if (remove(file.c_str()) == 0)
+            {
+                std::cout << "Remove odl file " << file << std::endl;
+            }
+            else
+            {
+                std::cout << "Failed to remove old AOF file: " << file << std::endl;
+                return false;
+            }
+        }
+        return true;
     }
 
     std::string FileoutLogAppender::toyamlString()

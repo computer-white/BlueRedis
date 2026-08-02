@@ -488,7 +488,7 @@ namespace blue
     class FileoutLogAppender : public LogAppender
     {
     public:
-        ;
+        using TimePoint = std::chrono::steady_clock::time_point;
         using FileoutLogAppenderPtr = std::shared_ptr<FileoutLogAppender>;
         FileoutLogAppender() = default;
 
@@ -506,18 +506,24 @@ namespace blue
         FileoutLogAppender(const std::string &filename);
 
         /**
-         * @brief 重新打开文件
-         * @return
-         * @note 有锁
+         * @brief 设置轮转文件大小
          */
-        void reopen();
+        void setRotateFileSize(uint32_t val) noexcept { m_rotate_config.m_rotate_file_size = val; }
 
         /**
-         * @brief 清空文件
-         * @return
-         * @note 有锁
+         * @brief 设置轮转文件数量
          */
-        void clear();
+        void setRotateFileNum(uint32_t val) noexcept { m_rotate_config.m_rotate_file_num = val; }
+
+        /**
+         * @brief 获取轮转文件大小
+         */
+        uint32_t getRotateFileSize() const noexcept { return m_rotate_config.m_rotate_file_size; }
+
+        /**
+         * @brief 获取轮转文件数量
+         */
+        uint32_t getRotateFileNum() const noexcept { return m_rotate_config.m_rotate_file_num; }
 
         /**
          * @brief 文件信息转为yamlstring,最后以字符串输出
@@ -537,10 +543,48 @@ namespace blue
         virtual void log(std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event) override;
 
     private:
-        std::string m_filename;               // 文件名
-        std::ofstream m_filestream;           // 文件输出流
-        std::string m_name = "file";          // 输出目的名称(文件)
-        std::atomic<uint64_t> m_lasttime = 0; // 文件最新时间
+        struct RotateConfig
+        {
+            std::string m_rotate_filename_template = "blue.log"; // 日志文件模板名
+            uint32_t m_rotate_file_num = 5;                      // 轮转文件最大数量
+            uint32_t m_rotate_file_size = 1024;           // 每个文件的大小
+        };
+
+    private:
+        /**
+         * @brief 初始化信息
+         */
+        void init();
+
+        /**
+         * @brief 获取文件名称
+         */
+        std::string getFilename(size_t idx) const;
+
+        /**
+         * @brief 清理文件名称
+         */
+        bool cleanFilename(const std::string &file) const;
+
+        /**
+         * @brief 日志文件轮转
+         */
+        void rotateFile();
+
+        /**
+         * @brief 写入文件
+         */
+        void writeToFile(const std::string &data);
+
+    private:
+        std::string m_filename;              // 当前文件名
+        std::ofstream m_filestream;          // 文件输出流
+        std::string m_name = "file";         // 输出目的名称(文件)
+        size_t m_file_idx = 0;               // 当前文件编号
+        std::atomic<TimePoint> m_lasttime;   // 文件最新时间
+        std::atomic<bool> m_rotating{false}; // 轮转标志
+        RotateConfig m_rotate_config;        // 配置信息
+
     }; // FileoutLogAppender
 
     // logger管理类,生成root(默认name = "root",具有formatter格式,\
