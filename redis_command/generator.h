@@ -594,7 +594,8 @@ namespace blue
 
             for (auto &&val : source)
             {
-                result.emplace(keyfunc(val), valfunc(std::forward<decltype(val)>(val)));
+                auto key = keyfunc(val);
+                result.emplace(std::move(key), valfunc(std::forward<decltype(val)>(val)));
             }
             return result;
         };

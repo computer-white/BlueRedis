@@ -547,7 +547,7 @@ namespace blue
         {
             std::string m_rotate_filename_template = "blue.log"; // 日志文件模板名
             uint32_t m_rotate_file_num = 5;                      // 轮转文件最大数量
-            uint32_t m_rotate_file_size = 1024;           // 每个文件的大小
+            uint32_t m_rotate_file_size = 10 * 1024 * 1024;      // 每个文件的大小
         };
 
     private:
