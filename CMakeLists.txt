@@ -45,7 +45,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 开启协程支持
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    add_compile_options(-fcoroutines)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fcoroutines>)
 endif()
 # 错误检测
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
@@ -238,8 +238,10 @@ else()
     message(WARNING "⚠ MySQL not found")
 endif()
 
-# 链接boost,OpenSSL
 target_link_libraries(blue PRIVATE
+    ${YAML_CPP} 
+    ${PTHREAD_LIB} 
+    ${HIREDIS_LIB}
     ${OPENSSL_LIBRARIES}
     Boost::iostreams
     Boost::coroutine
@@ -250,6 +252,9 @@ target_link_libraries(blue PRIVATE
     absl::hash
 )
 target_link_libraries(blue_static PRIVATE
+    ${YAML_CPP} 
+    ${PTHREAD_LIB} 
+    ${HIREDIS_LIB}
     ${OPENSSL_LIBRARIES}
     Boost::iostreams
     Boost::coroutine
@@ -277,39 +282,11 @@ if(GUMBO_FOUND)
     target_link_libraries(blue_static PRIVATE ${GUMBO_LIBRARIES})
 endif()
 
-set(LINK_LIBS blue_static ${YAML_CPP} ${PTHREAD_LIB} ${HIREDIS_LIB})
-
-list(APPEND LINK_LIBS 
-    ${OPENSSL_LIBRARIES}
-    Boost::iostreams
-    Boost::coroutine
-    Boost::context
-    ZLIB::ZLIB
-    nlohmann_json::nlohmann_json
-    absl::flat_hash_map
-    absl::hash
-)
-
-# 链接mysql
-if (MYSQL_FOUND)
-    list(APPEND LINK_LIBS ${MYSQL_LIB})
-endif()
-
-# 链接 IDN
-if(LIBIDN2_FOUND)
-    list(APPEND LINK_LIBS ${LIBIDN2_LIBRARIES})
-endif()
-
-# 链接 GUMBO
-if(GUMBO_FOUND)
-    list(APPEND LINK_LIBS ${GUMBO_LIBRARIES})
-endif()
-
 # ========== 创建测试可执行文件 ==========
 macro(add_newblue_test test_name)
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/newtests/${test_name}.cpp)
         add_executable(${test_name} newtests/${test_name}.cpp)
-        target_link_libraries(${test_name} PRIVATE ${LINK_LIBS})
+        target_link_libraries(${test_name} PRIVATE blue_static)
         message(STATUS "测试程序 ${test_name} 已添加")
     else()
         message(WARNING "newtests/${test_name}.cpp 不存在，跳过测试程序")
@@ -342,6 +319,7 @@ add_newblue_test(test_bytearray)
 add_newblue_test(test_bytearrayBuffer)
 add_newblue_test(test_bytesize)
 add_newblue_test(test_log_rotate)
+add_newblue_test(test_config)
 
 # add_library(configinit_obj OBJECT blue/configinit.cpp)
 # add_executable(test_benchmark newtests/test_benchmark.cpp)
