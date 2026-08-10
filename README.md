@@ -13,15 +13,12 @@
 - **配置系统** — YAML / JSON 热加载，支持配置变更回调
 - **redis** — 使用c++20协程的redis服务器
 
-## 快速开始
-
-### 依赖
-
+## 依赖
 bash
-# 编译器
+## 编译器
 sudo apt install g++-12
 
-# 库
+## 库
 sudo apt install libboost-iostreams-dev libboost-coroutine-dev libboost-context-dev
 sudo apt install libssl-dev libyaml-cpp-dev nlohmann-json3-dev
 sudo apt install libmysqlclient-dev libhiredis-dev
@@ -69,53 +66,65 @@ MULTI, EXEC, DISCARD, WATCH, UNWATCH
 SUBSCRIBE, PUBLISH, UNSUBSCRIBE, SLOWLOG, MONITOR, AOFROTATE, REPLICAOF, SLAVEOF
 </details>
 
-## 说明
+# 说明
 
-# 协程模型
+## 协程模型
 每个客户端连接对应一个协程
 使用 IOManager 调度协程
 对称转移减少协程切换开销
 
-# 存储引擎
+## 存储引擎
 128 分片：将数据分散到 128 个分片，减少锁竞争
 
 16 个数据库：支持 Redis 多数据库模式
 
 absl::flat_hash_map：高性能哈希表，比 std::unordered_map 快 30%
 
-# 持久化
+## 持久化
 RDB：定期快照保存
 
 AOF：追加日志，支持 always、everysec、no 三种策略
 
-## 快速开始
+# 快速开始
 
-# 编译
+## 编译
     mkdir build && cd build
     cmake ..    # 默认是命令表
     make -j$(nproc)
 
-# 启动服务器
+## 启动服务器
     ../bin/test_commandHandler 127.0.0.1 6666
+
+## Docker 快速开始
+### 构建镜像
+    docker build -t your_images_name .
+### 查看镜像
+    docker images
+### 运行容器
+    docker run -d --rm --name your_container_name -p 6666:6666 your_images_name
+### 查看容器状态
+    docker ps
+### 使用
+    redis-cli -p 6666
 
 # 性能测试
 
-# 命令
+## 命令
     # 基础性能测试
     redis-benchmark -h 127.0.0.1 -p 6666 -a admin123 -t set,get -c 100 -n 100000
 
     # 管道模式测试
     redis-benchmark -h 127.0.0.1 -p 6666 -a admin123 -t set,get -P 32 -c 100 -n 1000000 -q
-# 结果
+## 结果
 
-# 加入对象池前
-# set,get Pipeline
+## 加入对象池前
+### set,get Pipeline
     blue@Plus:~/c_projects/newblue$ redis-benchmark -h 127.0.0.1 -p 6666 -a client123     -c 50 -n 50000 -t set,get -q -P 8
     WARNING: Could not fetch server CONFIG
     SET: 142045.45 requests per second, p50=2.407 msec                    
     GET: 226244.34 requests per second, p50=1.647 msec  
     
-# set Pipeline
+### set Pipeline
     blue@Plus:~/c_projects/newblue$ redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -t set -c 100 -n 100000 -P 10
     WARNING: Could not fetch server CONFIG
     ====== SET ======                                                     
@@ -185,7 +194,7 @@ AOF：追加日志，支持 always、everysec、no 三种策略
             avg       min       p50       p95       p99       max
             6.126     0.104     5.807     6.783    19.247    29.631
 
-# get,set 混合
+### get,set 混合
     blue@Plus:~/c_projects/newblue$ redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -t set,get -c 100 -n 100000
     WARNING: Could not fetch server CONFIG
     ====== SET ======                                                   
@@ -327,7 +336,7 @@ AOF：追加日志，支持 always、everysec、no 三种策略
     latency summary (msec):
             avg       min       p50       p95       p99       max
             1.070     0.016     1.039     1.511     1.703    12.727
-# 纯get
+### 纯get
     blue@Plus:~/c_projects/newblue$ redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -t get -c 100 -n 100000
     WARNING: Could not fetch server CONFIG
     ====== GET ======                                                   
@@ -401,8 +410,8 @@ AOF：追加日志，支持 always、everysec、no 三种策略
             avg       min       p50       p95       p99       max
             1.079     0.024     1.031     1.311     2.207    15.887
 
-# 加入对象池后的性能
-# Pipe
+### 加入对象池后的性能
+### Pipe
     blue@Plus:~/c_projects/newblue$ redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -c 100 -n 1000000 -t set,get,lpush,lpop -P 4 -q
     WARNING: Could not fetch server CONFIG
     SET: 132766.86 requests per second, p50=2.927 msec                    
@@ -449,7 +458,7 @@ AOF：追加日志，支持 always、everysec、no 三种策略
     LPOP: 203583.05 requests per second, p50=15.559 msec                     
     RPOP: 204750.22 requests per second, p50=15.519 msec                     
     SADD: 209292.59 requests per second, p50=15.215 msec
-# 非Pipe
+### 非Pipe
     blue@Plus:~/c_projects/newblue$ redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -c 100 -n 1000000 -t set,get,lpush,rpush,lpop,rpop,sadd,srem
     WARNING: Could not fetch server CONFIG
     ====== SET ======                                                   
@@ -1069,7 +1078,7 @@ AOF：追加日志，支持 always、everysec、no 三种策略
     latency summary (msec):
             avg       min       p50       p95       p99       max
             1.399     0.016     1.335     1.607     2.183   368.127
-# 关闭服务器(比较繁琐)
+### 关闭服务器(比较繁琐)
     blue@Plus:~/c_projects/newblue$ redis-cli -p 6666
     127.0.0.1:6666> auth admin123
     OK
