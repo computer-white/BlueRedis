@@ -115,7 +115,7 @@ AOF：追加日志，支持 always、everysec、no 三种策略
 
     # 管道模式测试
     redis-benchmark -h 127.0.0.1 -p 6666 -a admin123 -t set,get -P 32 -c 100 -n 1000000 -q
-## 结果
+# 结果
 
 ## 加入对象池前
 ### set,get Pipeline
@@ -410,7 +410,7 @@ AOF：追加日志，支持 always、everysec、no 三种策略
             avg       min       p50       p95       p99       max
             1.079     0.024     1.031     1.311     2.207    15.887
 
-### 加入对象池后的性能
+## 加入对象池后的性能
 ### Pipe
     blue@Plus:~/c_projects/newblue$ redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -c 100 -n 1000000 -t set,get,lpush,lpop -P 4 -q
     WARNING: Could not fetch server CONFIG
