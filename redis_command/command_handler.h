@@ -286,7 +286,7 @@ namespace blue
             {
                 if (should_done)
                 {
-                    break;
+                    goto clean;
                 }
                 // batch_response += RespValue::encode(response);
                 response->encodeTo(batch_response);
@@ -298,10 +298,6 @@ namespace blue
                     co_await send_response(batch_response);
                     co_await std::suspend_always{};
                 }
-            }
-            if (should_done)
-            {
-                break;
             }
 
             // 发送剩余的响应
@@ -326,7 +322,7 @@ namespace blue
             }
 
         } while (true);
-
+clean:
         // 检查是否是管理员连接断开
         auto admin = m_server->getAdminSocket().lock();
         if (admin && admin.get() == sock.get())
