@@ -13,6 +13,20 @@
 - **配置系统** — YAML / JSON 热加载，支持配置变更回调
 - **redis** — 使用c++20协程的redis服务器
 
+## 关于一些模块
+### 关于Redis服务器的入口文件(newtests/test_commandHandler.cpp)
+    这个是Redis服务器的测试函数，IO调度器提交协程任务，然后协程被执行，comm->start()后Redis服务器就成功启动了
+### 关于协程以及相关IO、Sleep实现(blue/task.h，blue/asyncio.h，blue/await.h，redis_command/generator.h)
+    这些是关于协程和利用协程实现的IO和Sleep操作,在asyncio.h和await.h内部搭配epoll和定时器实现。关于C++20协程的用法这里不过多解释，
+    这里只是它的一种使用方式，大家可以在github或其他地方或通过AI学习到其他的实现和使用方法。关于这部分协程的使用测试文件，我这里有简单的
+    newtests/test_debug.cpp。最后一个redis_command/generator.h这个是一个异步生成器，测试文件有newtests/test_generator_game.cpp和
+    newtests/test_generator.cpp。
+### 关于调度器和定时器模块(blue/scheduler.h，blue/io_manager.h，blue/timer.h)
+    关于调度器，这里为了适配c++20协程，我搭配AI改了之前跟着Sylar写的这块的逻辑，但是仔细看的话还是没有太大改变(^_^)，调度器支持提交
+    协程句柄，协程（返回Task<T>类型的函数），以及CallBack函数。最后都已CallBack函数提交到任务队列，这块AI帮我做了优化，性能对比优化
+    前提升了好几倍，距离我写这段过去好几个月了，当时也没仔细算。IO_manager这块还是基于epoll，对比Sylar的改动不大，定时器这块实际改变
+    也不大...
+
 ## 依赖
 bash
 ## 编译器
