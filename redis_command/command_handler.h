@@ -247,7 +247,7 @@ namespace blue
         {
             if (m_server->getShutdown().load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
             {
-                co_return;
+                break;
             }
             char tmp[8192];
             ssize_t ret;
@@ -429,7 +429,7 @@ namespace blue
         {
             if (m_server->getShutdown().load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
             {
-                co_return;
+                break;
             }
             char tmp[8192];
             ssize_t ret;
