@@ -26,7 +26,9 @@
     协程句柄，协程（返回Task<T>类型的函数），以及CallBack函数。最后都已CallBack函数提交到任务队列，这块AI帮我做了优化，性能对比优化
     前提升了好几倍，距离我写这段过去好几个月了，当时也没仔细算。IO_manager这块还是基于epoll，对比Sylar的改动不大，定时器这块实际改变
     也不大...
-
+### 存储文件路径(需要提前创建，并且需要让当前项目所属用户具有相应权限)
+    日志存放在/var/log/blueRedis/logs_dir/
+    AOF持久文件和RDB持久文件放在/var/lib/blueRedis/
 ## 依赖
 bash
 ## 编译器
