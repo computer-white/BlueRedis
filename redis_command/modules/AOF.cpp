@@ -303,11 +303,12 @@ namespace blue
 
     std::string AOFModule::getAOFFilename(int index)
     {
+        const char *prefix = "/var/lib/blueRedis/";
         if (index == 1)
         {
-            return m_aof_config.aof_filename;
+            return prefix + m_aof_config.aof_filename;
         }
-        return m_aof_config.aof_filename + "." + std::to_string(index);
+        return prefix + m_aof_config.aof_filename + "." + std::to_string(index);
     }
 
     bool AOFModule::cleanupOldAOFs(const std::string &filename)

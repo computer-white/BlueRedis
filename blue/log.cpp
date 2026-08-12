@@ -601,7 +601,7 @@ namespace blue
         }
         if (m_rotating.load(std::memory_order_acquire))
         {
-            std::cout << "AOF rotation already in progress" << std::endl;
+            std::cout << "logs rotation already in progress" << std::endl;
             return;
         }
 
@@ -628,11 +628,11 @@ namespace blue
             if (truncate_file)
             {
                 truncate_file.close();
-                std::cout << "Truncated old AOF file: " << newfile << std::endl;
+                std::cout << "Truncated old log file: " << newfile << std::endl;
             }
             else
             {
-                std::cout << "Failed to truncate old AOF file: " << newfile << std::endl;
+                std::cout << "Failed to truncate old log file: " << newfile << std::endl;
                 m_rotating.store(false, std::memory_order_release);
                 return;
             }
@@ -641,7 +641,7 @@ namespace blue
         m_filestream.open(newfile, std::ios::app);
         if (!m_filestream)
         {
-            std::cout << "Failed to open new AOF file: " << newfile << std::endl;
+            std::cout << "Failed to open new log file: " << newfile << std::endl;
             m_rotating.store(false, std::memory_order_release);
             return;
         }
@@ -657,11 +657,12 @@ namespace blue
 
     std::string FileoutLogAppender::getFilename(size_t idx) const
     {
+        const char *perfix = "/var/log/blueRedis/logs_dir/";
         if (idx == 1)
         {
-            return m_rotate_config.m_rotate_filename_template;
+            return perfix + m_rotate_config.m_rotate_filename_template;
         }
-        return m_rotate_config.m_rotate_filename_template + ":" + std::to_string(idx);
+        return perfix + m_rotate_config.m_rotate_filename_template + ":" + std::to_string(idx);
     }
 
     bool FileoutLogAppender::cleanFilename(const std::string &file) const
@@ -672,11 +673,11 @@ namespace blue
             test.close();
             if (remove(file.c_str()) == 0)
             {
-                std::cout << "Remove odl file " << file << std::endl;
+                std::cout << "Remove old logs file " << file << std::endl;
             }
             else
             {
-                std::cout << "Failed to remove old AOF file: " << file << std::endl;
+                std::cout << "Failed to remove old logs file: " << file << std::endl;
                 return false;
             }
         }

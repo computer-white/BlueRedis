@@ -76,7 +76,7 @@ void print_YAML(const YAML::Node &node, int level)
 
 void test_YAML()
 {
-    YAML::Node root = YAML::LoadFile("/home/blue/c_projects/newblue/bin/cof/test.yml");
+    YAML::Node root = YAML::LoadFile("/etc/blueRedis/logs_cof/test.yml");
     // BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT()) << root;
     print_YAML(root, 0);
 }
@@ -111,7 +111,7 @@ void test_config()
     XX(g_int_unordered_set_config_ptr, int_unordered_set, Before);
     YY(g_int_map_config_ptr, str_int_map, Before);
     YY(g_int_unordered_map_config_ptr, str_int_unordered_map, Before);
-    YAML::Node root = YAML::LoadFile("/home/blue/c_projects/newblue/bin/cof/test.yml");
+    YAML::Node root = YAML::LoadFile("/etc/blueRedis/logs_cof/test.yml");
     blue::Config::LoadFromYAML(root);
     BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT()) << "After : " << g_int_config_ptr->getValue();
     BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT()) << "After : " << g_float_config_ptr->toString();
@@ -234,7 +234,7 @@ void test_class()
     XX_P(g_person_config_ptr, Before);
     XX_P_M(g_person_map_config_ptr, Before);
     XX_V_P_M(g_vec_person_map_config_ptr, Before);
-    YAML::Node root = YAML::LoadFile("/home/blue/c_projects/newblue/bin/cof/test.yml");
+    YAML::Node root = YAML::LoadFile("/etc/blueRedis/logs_cof/test.yml");
     blue::Config::LoadFromYAML(root);
     XX_P(g_person_config_ptr, After);
     XX_P_M(g_person_map_config_ptr, After);
@@ -249,7 +249,7 @@ static void LoadYaml()
 {
     // 加载配置文件（只执行一次）
     YAML::Node root = YAML::LoadFile(
-        "/home/blue/c_projects/newblue/bin/cof/log.yml");
+        "/etc/blueRedis/logs_cof/log.yml");
     blue::Config::LoadFromYAML(root);
     
     // 获取 system logger（只获取一次）
@@ -277,7 +277,7 @@ void test_log()
     // std::call_once(init_flag, []() {
     //     // 加载配置文件（只执行一次）
     //     YAML::Node root = YAML::LoadFile(
-    //         "/home/blue/c_projects/sylar/bin/cof/log.yml");
+    //         "/etc/blueRedis/logs_cof/log.yml");
     //     blue::Config::LoadFromYAML(root);
         
     //     // 获取 system logger（只获取一次）
@@ -664,7 +664,7 @@ int main(int argc, char *argv[])
 //     std::cout << "========================================" << std::endl;
     
 //     // 确保配置已加载
-//     YAML::Node root = YAML::LoadFile("/home/blue/c_projects/sylar/bin/cof/log.yml");
+//     YAML::Node root = YAML::LoadFile("/etc/blueRedis/logs_cof/log.yml");
 //     blue::Config::LoadFromYAML(root);
     
 //     try {

@@ -377,7 +377,7 @@ namespace blue
     template <typename T>
     void ServerData<T>::saveToFile()
     {
-        const std::string filename = "dump.rdb";
+        const std::string filename = "/var/lib/blueRedis/dump.rdb";
         std::ofstream file(filename, std::ios::binary);
 
         if (!file)
@@ -444,7 +444,7 @@ namespace blue
     void ServerData<T>::loadFromFile()
     {
         BLUE_LOG_INFO(xx::g_logger) << "loadFromFile";
-        const std::string filename = "dump.rdb";
+        const std::string filename = "/var/lib/blueRedis/dump.rdb";
         std::ifstream file(filename);
 
         if (!file)
