@@ -111,18 +111,6 @@ AOF：追加日志，支持 always、everysec、no 三种策略
 ## 启动服务器
     ../bin/test_commandHandler 127.0.0.1 6666
 
-## Docker 快速开始
-### 构建镜像
-    docker build -t your_images_name .
-### 查看镜像
-    docker images
-### 运行容器
-    docker run -d --rm --name your_container_name -p 6666:6666 your_images_name
-### 查看容器状态
-    docker ps
-### 使用
-    redis-cli -p 6666
-
 # 性能测试
 
 ## 命令

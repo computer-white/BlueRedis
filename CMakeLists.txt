@@ -320,6 +320,7 @@ add_newblue_test(test_bytearrayBuffer)
 add_newblue_test(test_bytesize)
 add_newblue_test(test_log_rotate)
 add_newblue_test(test_config)
+add_newblue_test(test_log_rotate_config)
 
 # add_library(configinit_obj OBJECT blue/configinit.cpp)
 # add_executable(test_benchmark newtests/test_benchmark.cpp)

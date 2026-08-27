@@ -162,12 +162,12 @@ namespace blue
         void format(std::ostream &os, std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event) override
         {
             uint64_t e_time = event->getTime();
-            std::time_t beijing_t= e_time + 8 * 3600;
+            std::time_t beijing_t = e_time + 8 * 3600;
             std::tm time_local;
 #ifdef _WIN32
-    gmtime_s(&time_local, &beijing_t);
+            gmtime_s(&time_local, &beijing_t);
 #else
-    gmtime_r(&beijing_t, &time_local);
+            gmtime_r(&beijing_t, &time_local);
 #endif
             // std::put_time转为当地时间(北京时间)
             os << std::put_time(&time_local, m_format.c_str());
@@ -504,9 +504,18 @@ namespace blue
         return formatter;
     }
 
+    struct RotateConfig
+    {
+        std::string m_rotate_filename_template = "blue.log"; // 日志文件模板名
+        uint64_t m_rotate_file_size = 1024;                  // 每个文件的大小
+        uint32_t m_rotate_file_num = 5;                      // 轮转文件最大数量
+    };
+
+    static RotateConfig s_RotateConfig;
+
     FileoutLogAppender::FileoutLogAppender(const std::string &filename)
     {
-        m_rotate_config.m_rotate_filename_template = filename;
+        s_RotateConfig.m_rotate_filename_template = filename;
         this->init();
     }
 
@@ -516,6 +525,15 @@ namespace blue
         {
             m_filestream.close();
         }
+    }
+
+    std::string FileoutLogAppender::RotateConfigToString()
+    {
+        std::stringstream ss;
+        ss << "rotate_filename_template: " << s_RotateConfig.m_rotate_filename_template << "\n"
+           << "rotate_file_num: " << s_RotateConfig.m_rotate_file_num << "\n"
+           << "rotate_file_size: " << s_RotateConfig.m_rotate_file_size << "\n";
+        return ss.str();
     }
 
     void FileoutLogAppender::log(std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event)
@@ -566,7 +584,6 @@ namespace blue
             m_filestream.close();
         }
         m_filestream.open(m_filename, std::ios_base::app);
-        
     }
 
     void FileoutLogAppender::writeToFile(const std::string &data)
@@ -584,8 +601,8 @@ namespace blue
         m_filestream << data;
 
         size_t size = m_filestream.tellp();
-        if (size > m_rotate_config.m_rotate_file_size && 
-        !m_rotating.load(std::memory_order_acquire))
+        if (size > s_RotateConfig.m_rotate_file_size &&
+            !m_rotating.load(std::memory_order_acquire))
         {
             lock.unlock();
             this->rotateFile();
@@ -594,7 +611,7 @@ namespace blue
 
     void FileoutLogAppender::rotateFile()
     {
-        if (m_rotate_config.m_rotate_file_num == 0)
+        if (s_RotateConfig.m_rotate_file_num == 0)
         {
             std::cout << "max_file_number is 0, cannot rotate" << std::endl;
             return;
@@ -616,7 +633,7 @@ namespace blue
         }
 
         // 让索引落在1-file_size之间
-        size_t next_idx = (m_file_idx % m_rotate_config.m_rotate_file_num) + 1;
+        size_t next_idx = (m_file_idx % s_RotateConfig.m_rotate_file_num) + 1;
 
         std::string newfile = getFilename(next_idx);
 
@@ -660,9 +677,9 @@ namespace blue
         const char *perfix = "/var/log/blueRedis/logs_dir/";
         if (idx == 1)
         {
-            return perfix + m_rotate_config.m_rotate_filename_template;
+            return perfix + s_RotateConfig.m_rotate_filename_template;
         }
-        return perfix + m_rotate_config.m_rotate_filename_template + ":" + std::to_string(idx);
+        return perfix + s_RotateConfig.m_rotate_filename_template + ":" + std::to_string(idx);
     }
 
     bool FileoutLogAppender::cleanFilename(const std::string &file) const
@@ -1006,6 +1023,90 @@ namespace blue
         }
     }
 
+    // 从yaml文件加载出来的Logrotate内容的类型
+    struct LogRotateDefine
+    {
+        std::string rotate_filename; // 轮转文件名
+        uint64_t rotate_file_size;   // 轮转文件大小
+        uint32_t rotate_file_num;    // 轮转文件数量
+
+        bool operator==(const LogRotateDefine &rhs) const
+        {
+            return rotate_filename == rhs.rotate_filename &&
+                   rotate_file_num == rhs.rotate_file_num &&
+                   rotate_file_size == rhs.rotate_file_size;
+        }
+    };
+
+    // 从string -> LogRotateDefine
+    template <>
+    class LexicalCast<std::string, LogRotateDefine>
+    {
+    public:
+        LogRotateDefine operator()(const std::string &val)
+        {
+            YAML::Node node = YAML::Load(val);
+            LogRotateDefine res;
+            if (!node["rotate_filename"].IsDefined())
+            {
+                std::cout << "log config is error, LogRotateDefine.rotate_filename is null "
+                          << __FILE__ << __LINE__ << "\n["
+                          << node << "]" << std::endl;
+                return LogRotateDefine();
+            }
+            res.rotate_filename = node["rotate_filename"].as<std::string>();
+            if (!node["rotate_file_num"].IsDefined())
+            {
+                std::cout << "log config is error, LogRotateDefine.rotate_file_num is null "
+                          << __FILE__ << __LINE__ << "\n["
+                          << node << "]" << std::endl;
+                return LogRotateDefine();
+            }
+            res.rotate_file_num = node["rotate_file_num"].as<uint32_t>();
+            if (!node["rotate_file_size"].IsDefined())
+            {
+                std::cout << "log config is error, LogRotateDefine.rotate_file_size is null "
+                          << __FILE__ << __LINE__ << "\n["
+                          << node << "]" << std::endl;
+                return LogRotateDefine();
+            }
+            // number + (K,M,G)
+            // 默认M
+            std::string tem_val = node["rotate_file_size"].as<std::string>();
+            if (auto unit = tem_val.find('K'); unit != std::string::npos)
+            {
+                res.rotate_file_size = std::stoi(tem_val.substr(0, unit)) * 1024;
+            }
+            else if (auto unit = tem_val.find('G'); unit != std::string::npos)
+            {
+                res.rotate_file_size = std::stoi(tem_val.substr(0, unit)) * 1024 * 1024 * 1024;
+            }
+            else
+            {
+                res.rotate_file_size = std::stoi(tem_val.substr(0, unit)) * 1024 * 1024;
+            }
+            return res;
+        }
+    };
+
+    // 从LogRotateDefine -> string
+    template <>
+    class LexicalCast<LogRotateDefine, std::string>
+    {
+    public:
+        std::string operator()(const LogRotateDefine &val)
+        {
+            YAML::Node node;
+            node["rotate_filename"] = val.rotate_filename;
+            node["rotate_file_num"] = val.rotate_file_num;
+            node["rotate_file_size"] = val.rotate_file_size;
+
+            std::stringstream ss;
+            ss << node;
+            return ss.str();
+        }
+    };
+
     // 从yaml文件加载出来的LogAppender内容类型
     struct LogAppenderDefine
     {
@@ -1064,7 +1165,7 @@ namespace blue
             if (!node["name"].IsDefined())
             {
                 std::cout << "log config error LogAppenderDefine.name is null "
-                          << __FILE__ << " " << __LINE__ << "\n"
+                          << __FILE__ << " " << __LINE__ << "\n["
                           << node << "]" << std::endl;
                 return LogAppenderDefine();
             }
@@ -1283,6 +1384,11 @@ namespace blue
                                                                            std::set<LogDefine>(),
                                                                            "logs LogDefine");
 
+    blue::ConfigVar<LogRotateDefine>::ConfigVarPtr
+        g_logRotateDefine_config_ptr = blue::Config::Lookup<LogRotateDefine>("logrotate",
+                                                                             LogRotateDefine(),
+                                                                             "logrotate configuration");
+
     struct __LogIniter__
     {
         __LogIniter__()
@@ -1383,6 +1489,15 @@ namespace blue
                     }
                 }
             } });
+
+            g_logRotateDefine_config_ptr->addListener([](const LogRotateDefine &old_val,
+                                                         const LogRotateDefine &new_val)
+                                                      {
+                std::cout << "Begin update Rotate configuration!" << std::endl;
+                // 更新
+                s_RotateConfig.m_rotate_filename_template = new_val.rotate_filename;
+                s_RotateConfig.m_rotate_file_num = new_val.rotate_file_num;
+                s_RotateConfig.m_rotate_file_size = new_val.rotate_file_size; });
         }
     };
 
