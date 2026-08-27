@@ -509,25 +509,6 @@ namespace blue
          * @brief 输出轮转配置信息
          */
         static std::string RotateConfigToString();
-        // /**
-        //  * @brief 设置轮转文件大小
-        //  */
-        // void setRotateFileSize(uint32_t val) noexcept { m_rotate_config.m_rotate_file_size = val; }
-
-        // /**
-        //  * @brief 设置轮转文件数量
-        //  */
-        // void setRotateFileNum(uint32_t val) noexcept { m_rotate_config.m_rotate_file_num = val; }
-
-        // /**
-        //  * @brief 获取轮转文件大小
-        //  */
-        // uint32_t getRotateFileSize() const noexcept { return m_rotate_config.m_rotate_file_size; }
-
-        // /**
-        //  * @brief 获取轮转文件数量
-        //  */
-        // uint32_t getRotateFileNum() const noexcept { return m_rotate_config.m_rotate_file_num; }
 
         /**
          * @brief 文件信息转为yamlstring,最后以字符串输出
@@ -545,14 +526,6 @@ namespace blue
          * @note 无锁
          */
         virtual void log(std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event) override;
-
-    // private:
-    //     struct RotateConfig
-    //     {
-    //         std::string m_rotate_filename_template = "blue.log"; // 日志文件模板名
-    //         uint32_t m_rotate_file_num = 5;                      // 轮转文件最大数量
-    //         uint32_t m_rotate_file_size = 10 * 1024 * 1024;      // 每个文件的大小
-    //     };
 
     private:
         /**
@@ -587,7 +560,6 @@ namespace blue
         size_t m_file_idx = 0;               // 当前文件编号
         std::atomic<TimePoint> m_lasttime;   // 文件最新时间
         std::atomic<bool> m_rotating{false}; // 轮转标志
-        // RotateConfig m_rotate_config;        // 配置信息
 
     }; // FileoutLogAppender
 
