@@ -80,7 +80,7 @@ blue::Task<void> test()
 
 int main()
 {
-    blue::http::IniteConfig();
+    blue::http::blueHttpIniteConfig();
     blue::IOManager iom(2);
     iom.schedule(test());
     iom.wait_all();

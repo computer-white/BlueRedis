@@ -1,7 +1,8 @@
-#include "../blue/config.h"
-#include "../blue/log.h"
 #include <yaml-cpp/yaml.h>
 #include <iostream>
+#include "blue/config.h"
+#include "blue/log.h"
+#include "blue/configinit.h"
 // int -> string string -> int
 blue::ConfigVar<int>::ConfigVarPtr
     g_int_config_ptr = blue::Config::Lookup<int>("system.port",
@@ -269,6 +270,7 @@ static void LoadYaml()
 
 int main(int argc, char *argv[])
 {
+    blue::blueIniteConfig();
     test_YAML();
     test_config();
     test_class();
