@@ -7,7 +7,6 @@
  * @copyright Copyright (c) 2026年 blue
  */
 #pragma once
-#ifdef COMMAND_TABLE
 #include <array>
 #include <algorithm>
 #include <random>
@@ -208,5 +207,3 @@ namespace blue
     };
 
 }
-#else
-#endif

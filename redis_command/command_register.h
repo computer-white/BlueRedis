@@ -7,7 +7,6 @@
  * @copyright Copyright (c) 2026年 blue
  */
 #pragma once
-#ifdef COMMAND_TABLE
 #include "command_table.h"
 
 namespace blue
@@ -25,5 +24,3 @@ namespace blue
                     blue::fnv1a_hash(#Name), \
                     IsWrite, Argv);
 }
-#else
-#endif

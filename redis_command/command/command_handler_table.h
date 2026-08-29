@@ -7,17 +7,28 @@
  * @copyright Copyright (c) 2026年 blue
  */
 #pragma once
-#ifdef COMMAND_TABLE
 #include <memory>
-#include "command_handler_base.h"
+#include <chrono>
+#include <list>
+#include <string>
+#include <shared_mutex>
+#include <mutex>
+#include <atomic>
+#include <unordered_map>
+#include <unordered_set>
+#include "blue/config.h"
+#include "blue/msocket.h"
+#include "blue/skiplist.h"
+#include "blue/resp_parser.h"
 #include "blue/tcpServer.h"
+#include "redis_command/server_data.h"
 #include "redis_command/command_table.h"
 #include "redis_command/command_register.h"
 
 namespace blue
 {
     template <typename T>
-    class CommandHandlerTable : public CommandHandlerBased<T>
+    class CommandHandlerTable
     {
     public:
         using SteadyClock = std::chrono::steady_clock;
@@ -25,26 +36,15 @@ namespace blue
 
     public:
         /**
-         * @brief ifelse处理命令
-         * @param args 命令列表
-         * @param sock 客户端sock
-         * @param self 服务器数据
-         * @param RecordAOF 是否记录AOF
-         */
-        virtual RespValue executeIfelse(std::vector<RespValue> args,
-                                        MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
-                                        bool RecordAOF = true) override { return RespValue{}; }
-
-        /**
          * @brief 命令表处理命令
          * @param args 命令列表
          * @param sock 客户端sock
          * @param self 服务器数据
          * @param RecordAOF 是否记录AOF
          */
-        virtual RespValue executeTable(std::vector<RespValue> args,
+        RespValue executeTable(std::vector<RespValue> args,
                                        MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
-                                       bool RecordAOF = true) override;
+                                       bool RecordAOF = true);
 
     private:
         static constexpr auto EVEN_VALIDATOR = [](size_t argc) -> bool
@@ -4675,5 +4675,3 @@ namespace blue
         return RespValue::simple_string("OK");
     }
 }
-#else
-#endif

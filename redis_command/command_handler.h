@@ -22,12 +22,7 @@
 #include "blue/await.h"
 #include "server_data.h"
 #include "generator.h"
-#include "command/command_handler_ifelse.h"
-#ifdef COMMAND_TABLE
 #include "command/command_handler_table.h"
-#else
-#endif
-
 #define USE_GENERATOR 0 // 1: Generator, 0: Batch
 
 namespace blue
@@ -123,11 +118,7 @@ namespace blue
 
     private:
         std::shared_ptr<ServerData<T>> m_server;
-#ifdef COMMAND_TABLE
         CommandHandlerTable<T> m_table;
-#else
-        CommandHandlerIfelse<T> m_ifelse;
-#endif
     };
 
     template <typename T>
@@ -137,7 +128,6 @@ namespace blue
     {
         m_server = std::make_shared<ServerData<T>>();
         m_server->setTcpServer(this);
-#ifdef COMMAND_TABLE
         // 设置 Replication 执行器
         m_server->getReplication().setExecutor([this](std::vector<RespValue> args,
                                                       MSocket::MSocketPtr sock,
@@ -148,18 +138,6 @@ namespace blue
                                               MSocket::MSocketPtr sock,
                                               bool record) -> RespValue
                                        { return m_table.executeTable(args, sock, m_server, record); });
-#else
-        // 设置 Replication 执行器
-        m_server->getReplication().setExecutor([this](std::vector<RespValue> args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool record) -> RespValue
-                                               { return m_ifelse.executeIfelse(args, sock, m_server, record); });
-        // 设置 AOF 执行器
-        m_server->getAOF().setExecutor([this](std::vector<RespValue> args,
-                                              MSocket::MSocketPtr sock,
-                                              bool record) -> RespValue
-                                       { return m_ifelse.executeIfelse(args, sock, m_server, record); });
-#endif
         m_server->loadFromFile();
         m_server->getAOF().loadAOF();
         m_server->getAOF().initAOF(); // 初始化AOF,追加打开AOF文件,并开启AOF同步协程
@@ -194,11 +172,7 @@ namespace blue
         // 批量执行
         for (auto &args : batch_commands)
         {
-#ifdef COMMAND_TABLE
             results.push_back(m_table.executeTable(args, sock, m_server, RecordAOF));
-#else
-            results.push_back(m_ifelse.executeIfelse(args, sock, m_server, RecordAOF));
-#endif
         }
         return results;
     }
@@ -655,11 +629,7 @@ clean:
                     std::vector<RespValue> results;
                     for (const auto &transaction : sock->getTransaction())
                     {
-#ifdef COMMAND_TABLE
                         auto response = m_table.executeTable(transaction, sock, m_server, true);
-#else
-                        auto response = m_ifelse.executeIfelse(transaction, sock, m_server, true);
-#endif
                         results.push_back(response);
                     }
                     sock->clearTransaction();
@@ -917,11 +887,7 @@ clean:
             }
             else
             {
-#ifdef COMMAND_TABLE
                 response = m_table.executeTable(copy_arr, sock, m_server, true);
-#else
-                response = m_ifelse.executeIfelse(copy_arr, sock, m_server, true);
-#endif
             }
 
             std::string cmd_str;

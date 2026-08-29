@@ -115,10 +115,10 @@ AOF：追加日志，支持 always、everysec、no 三种策略
 
 ## 命令
     # 基础性能测试
-    redis-benchmark -h 127.0.0.1 -p 6666 -a admin123 -t set,get -c 100 -n 100000
+    redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -t set,get -c 100 -n 100000
 
     # 管道模式测试
-    redis-benchmark -h 127.0.0.1 -p 6666 -a admin123 -t set,get -P 32 -c 100 -n 1000000 -q
+    redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -t set,get -P 32 -c 100 -n 1000000 -q
 # 结果
 
 ## 加入对象池前
