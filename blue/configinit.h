@@ -39,9 +39,9 @@ namespace blue
                                                                            AOFConfigDefine(),
                                                                            "redis AOF configurations");
 
-        static blue::ConfigVar<size_t>::ConfigVarPtr
-            g_AOFMaxBufferSize_config_ptr = blue::Config::Lookup<size_t>("redis.aof_max_buffer_size",
-                                                                            1024 * 1024,
+        static blue::ConfigVar<std::string>::ConfigVarPtr
+            g_AOFMaxBufferSize_config_ptr = blue::Config::Lookup<std::string>("redis.aof_max_buffer_size",
+                                                                            "1M",
                                                                             "redis server, max buffer size of AOF modules");
     }
 

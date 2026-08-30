@@ -459,7 +459,12 @@ namespace blue
                           << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
                 return AOFConfigDefine();
             }
-            res.aof_max_file_size = node["aof_max_file_size"].as<size_t>();
+            std::string tmp_max_file_size = node["aof_max_file_size"].as<std::string>();
+            auto max_file_size = util::ConfigParser::ParseSize(tmp_max_file_size);
+            if (max_file_size.has_value())
+            {
+                res.aof_max_file_size = *max_file_size;
+            }
 
             if (!node["aof_max_file_number"].IsDefined())
             {
@@ -491,7 +496,7 @@ namespace blue
             YAML::Node node;
             node["aof_enabled"] = val.aof_enabled;
             node["aof_filename"] = val.aof_filename;
-            node["aof_max_file_size"] = val.aof_max_file_size;
+            node["aof_max_file_size"] = util::ConfigParser::FormatSize(val.aof_max_file_size);
             node["aof_max_file_number"] = val.aof_max_file_number;
             node["aof_sync"] = redisServerAOFConfig::syncStrategyToString(val.aof_sync);
             std::stringstream ss;

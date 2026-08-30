@@ -127,9 +127,14 @@ namespace blue
                     s_aof_sync.store(new_val.aof_sync, std::memory_order_release);
             });
 
-            redisServerAOFConfig::g_AOFMaxBufferSize_config_ptr->addListener([](const size_t &old_val, const size_t &new_val){
+            redisServerAOFConfig::g_AOFMaxBufferSize_config_ptr->addListener([](const std::string &old_val, const std::string &new_val){
                 std::cout << "Update AOF Max Buffer Size!" << std::endl;
-                s_aof_max_buffer_size.store(new_val, std::memory_order_release);
+                auto val = util::ConfigParser::ParseSize(new_val);
+                if (val.has_value())
+                {
+                    s_aof_max_buffer_size.store(*val, std::memory_order_release);
+                    std::cout << "Update AOF Max Buffer Size successful!" << std::endl;
+                }
             });
         }
     };
