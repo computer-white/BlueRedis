@@ -155,6 +155,7 @@ set(LIB_SRC
     blue/io_manager.cpp
     blue/timer.cpp
     blue/resp_parser.cpp
+    blue/config_parser.cpp
     blue/cluster/cluster_node.cpp
     redis_command/modules/subscription.cpp
     redis_command/modules/slowlog.cpp

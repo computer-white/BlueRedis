@@ -1,5 +1,6 @@
 #include "blue/bytearray.h"
-#include "blue/blue.h"
+#include "blue/log.h"
+#include "blue/macro.h"
 #include <random>
 #include <memory>
 static blue::Logger::LoggerPtr g_Logger = BLUE_LOG_MASSAGE_ROOT();

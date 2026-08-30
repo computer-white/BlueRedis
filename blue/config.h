@@ -412,6 +412,12 @@ namespace blue
             return m_val;
         }
 
+        auto getValueWithLock() const
+        {
+            auto lock = std::shared_lock<RWmutexType>(m_mutex);
+            return std::pair<const T&, decltype(lock)>(m_val, std::move(lock));
+        }
+
         /**
          * @brief 设置T类型的值
          * @return
@@ -501,6 +507,26 @@ namespace blue
         {
             RWmutexType::WritelockSco lock(m_mutex);
             m_mapfunc.clear();
+        }
+
+    private:
+        class LockedRef
+        {
+        public:
+            LockedRef(const T &val, std::shared_lock<RWmutexType> lock)
+            : m_val(val), m_lock(std::move(lock)) {}
+
+            const T *operator->() const { return &m_val; }
+            const T &operator*() const { return m_val; }
+        private:
+            const T& m_val;
+            std::shared_lock<RWmutexType> m_lock;
+        };
+
+    public:
+        LockedRef getValueLockedRef() const
+        {
+            return LockedRef(m_val, std::shared_lock<RWmutexType>(m_mutex));
         }
 
     private:

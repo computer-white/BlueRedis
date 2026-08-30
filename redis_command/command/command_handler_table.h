@@ -21,12 +21,20 @@
 #include "blue/skiplist.h"
 #include "blue/resp_parser.h"
 #include "blue/tcpServer.h"
+#include "blue/configinit.h"
 #include "redis_command/server_data.h"
 #include "redis_command/command_table.h"
 #include "redis_command/command_register.h"
 
 namespace blue
 {
+    extern std::atomic<bool> s_aof_enabled;
+    extern std::atomic<const char*> s_aof_filename;
+    extern std::atomic<size_t> s_aof_max_file_size;
+    extern std::atomic<size_t> s_aof_max_file_number;
+    extern std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync;
+    extern std::atomic<size_t> s_aof_max_buffer_size;
+
     template <typename T>
     class CommandHandlerTable
     {
@@ -602,32 +610,36 @@ namespace blue
             if (pattern == "*" || pattern == "aof-enabled" || pattern == "aof-*")
             {
                 result.push_back(*RespValue::bulk_string("aof-enabled"));
-                result.push_back(*RespValue::bulk_string(self->getAOF().getConfig_AOFEnabled() ? "yes" : "no"));
+                result.push_back(*RespValue::bulk_string(s_aof_enabled.load(std::memory_order_acquire) ? "yes" : "no"));
             }
             if (pattern == "*" || pattern == "aof-filename" || pattern == "aof-*")
             {
                 result.push_back(*RespValue::bulk_string("aof-filename"));
-                result.push_back(*RespValue::bulk_string(self->getAOF().getConfig_AOFFilename()));
+                result.push_back(*RespValue::bulk_string(s_aof_filename.load(std::memory_order_acquire)));
             }
             if (pattern == "*" || pattern == "aof-sync" || pattern == "aof-*")
             {
                 result.push_back(*RespValue::bulk_string("aof-sync"));
-                result.push_back(*RespValue::bulk_string(self->getAOF().getConfig_AOFSync()));
+                result.push_back(*RespValue::bulk_string(
+                    redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire))
+                ));
             }
             if (pattern == "*" || pattern == "aof-max_file_size" || pattern == "aof-*")
             {
                 result.push_back(*RespValue::bulk_string("aof-max_file_size"));
-                result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileSize())));
+                result.push_back(*RespValue::bulk_string(std::to_string(s_aof_max_file_size.load(std::memory_order_acquire))));
             }
             if (pattern == "*" || pattern == "aof-max_file_number" || pattern == "aof-*")
             {
                 result.push_back(*RespValue::bulk_string("aof-max_file_number"));
-                result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getConfig_AOFMaxFileNumber())));
+                result.push_back(*RespValue::bulk_string(std::to_string(s_aof_max_file_number.load(std::memory_order_acquire))));
             }
             if (pattern == "*" || pattern == "aof-max_buffer_size" || pattern == "aof-*")
             {
                 result.push_back(*RespValue::bulk_string("aof-max_buffer_size"));
-                result.push_back(*RespValue::bulk_string(std::to_string(self->getAOF().getMaxAOFBufferSize())));
+                result.push_back(*RespValue::bulk_string(
+                    std::to_string(s_aof_max_buffer_size.load(std::memory_order_acquire))
+                ));
             }
             if (pattern == "*" || pattern == "database")
             {
@@ -689,12 +701,12 @@ namespace blue
             {
                 if (value == "yes" || value == "1")
                 {
-                    self->getAOF().setConfig_AOFEnabled(true);
+                    s_aof_enabled.store(true, std::memory_order_release);
                     self->getAOF().initAOF();
                 }
                 else if (value == "no" || value == "0")
                 {
-                    self->getAOF().setConfig_AOFEnabled(false);
+                    s_aof_enabled.store(false, std::memory_order_release);
                     self->getAOF().closeAOF();
                 }
                 else
@@ -707,7 +719,7 @@ namespace blue
             {
                 if (value == "always" || value == "everysec" || value == "no")
                 {
-                    self->getAOF().setConfig_AOFSync(value);
+                    s_aof_sync.store(redisServerAOFConfig::stringToSyncStrategy(value), std::memory_order_release);
                     return RespValue::simple_string("OK");
                 }
                 return RespValue::error("ERR invalid sync mode");
@@ -718,7 +730,8 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid filename");
                 }
-                self->getAOF().setConfig_AOFFilename(value);
+                redisServerAOFConfig::aof_name = value;
+                s_aof_filename.store(redisServerAOFConfig::aof_name.c_str(), std::memory_order_release);
                 return RespValue::simple_string("OK");
             }
             if (param == "aof-max_file_size") // 每个aof文件大小
@@ -736,8 +749,7 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid integer value");
                 }
-
-                self->getAOF().setConfig_AOFMaxFileSize(val);
+                s_aof_max_file_size.store(val, std::memory_order_release);
                 return RespValue::simple_string("OK");
             }
             if (param == "aof-max_file_number") // 最多保留多少aof文件
@@ -755,7 +767,7 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid integer value");
                 }
-                self->getAOF().setConfig_AOFMaxFileNumber(val);
+                s_aof_max_file_number.store(val, std::memory_order_release);
                 return RespValue::simple_string("OK");
             }
             if (param == "aof-max_buffer_size") // aof缓冲区大小
@@ -773,7 +785,7 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid integer value");
                 }
-                self->getAOF().setMaxAOFBufferSize(val);
+                s_aof_max_buffer_size.store(val, std::memory_order_release);
                 return RespValue::simple_string("OK");
             }
             // 以下只允许管理员设置
@@ -3986,14 +3998,14 @@ namespace blue
 
             // AOF
             info += "# AOF\r\n";
-            info += "aof_enabled:" + std::string(self->getAOF().getConfig_AOFEnabled() ? "1" : "0") + "\r\n";
-            info += "aof_sync:" + self->getAOF().getConfig_AOFSync() + "\r\n";
+            info += "aof_enabled:" + std::string(s_aof_enabled.load(std::memory_order_acquire) ? "1" : "0") + "\r\n";
+            info += "aof_sync:" + redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire))+ "\r\n";
             info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
             info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
             info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
-            info += "aof_max_file_size:" + std::to_string(self->getAOF().getConfig_AOFMaxFileSize()) + "\r\n";
-            info += "aof_max_files:" + std::to_string(self->getAOF().getConfig_AOFMaxFileNumber()) + "\r\n";
-            info += "aof_max_buffer_size:" + std::to_string(self->getAOF().getMaxAOFBufferSize()) + "\r\n";
+            info += "aof_max_file_size:" + std::to_string(s_aof_max_file_size.load(std::memory_order_acquire)) + "\r\n";
+            info += "aof_max_files:" + std::to_string(s_aof_max_file_number.load(std::memory_order_acquire)) + "\r\n";
+            info += "aof_max_buffer_size:" + std::to_string(s_aof_max_buffer_size.load(std::memory_order_acquire)) + "\r\n";
             info += "\r\n";
 
             // Replication
@@ -4067,14 +4079,15 @@ namespace blue
                 else if (tem == "AOF")
                 {   
                     info += "# AOF\r\n";
-                    info += "aof_enabled:" + std::string(self->getAOF().getConfig_AOFEnabled() ? "1" : "0") + "\r\n";
-                    info += "aof_sync:" + self->getAOF().getConfig_AOFSync() + "\r\n";
+                    info += "aof_enabled:" + std::string(s_aof_enabled.load(std::memory_order_acquire) ? "1" : "0") + "\r\n";
+                    info += "aof_sync:" + redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire))+ "\r\n";
                     info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
                     info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
                     info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
-                    info += "aof_max_file_size:" + std::to_string(self->getAOF().getConfig_AOFMaxFileSize()) + "\r\n";
-                    info += "aof_max_files:" + std::to_string(self->getAOF().getConfig_AOFMaxFileNumber()) + "\r\n";
-                    info += "aof_max_buffer_size:" + std::to_string(self->getAOF().getMaxAOFBufferSize()) + "\r\n";
+                    info += "aof_max_file_size:" + std::to_string(s_aof_max_file_size.load(std::memory_order_acquire)) + "\r\n";
+                    info += "aof_max_files:" + std::to_string(s_aof_max_file_number.load(std::memory_order_acquire)) + "\r\n";
+                    info += "aof_max_buffer_size:" + std::to_string(s_aof_max_buffer_size.load(std::memory_order_acquire)) + "\r\n";
+
                     info += "\r\n";
                 }
                 else if (tem == "REPLICATION")
@@ -4470,7 +4483,7 @@ namespace blue
         {
             return RespValue::error("ERR authentication required");
         }
-        if (!self->getAOF().getConfig_AOFEnabled())
+        if (!s_aof_enabled.load(std::memory_order_acquire))
         {
             return RespValue::error("ERR AOF is disabled");
         }

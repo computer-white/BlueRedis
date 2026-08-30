@@ -1,5 +1,6 @@
 #include "blue/bytearray.h"
-#include "blue/blue.h"
+#include "blue/log.h"
+#include "blue/macro.h"
 #include <random>
 #include <memory>
 #include <cstring>

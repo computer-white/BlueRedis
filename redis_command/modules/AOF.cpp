@@ -1,15 +1,23 @@
-#include "AOF.h"
 #include "blue/io_manager.h"
 #include "blue/macro.h"
 #include "blue/log.h"
 #include "blue/await.h"
+#include "blue/configinit.h"
+#include "AOF.h"
 
 namespace blue
 {
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
+    extern std::atomic<bool> s_aof_enabled;
+    extern std::atomic<const char*> s_aof_filename;
+    extern std::atomic<size_t> s_aof_max_file_size;
+    extern std::atomic<size_t> s_aof_max_file_number;
+    extern std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync;
+    extern std::atomic<size_t> s_aof_max_buffer_size;
+
     void AOFModule::initAOF()
     {
-        if (!m_aof_config.aof_enabled)
+        if (!s_aof_enabled.load(std::memory_order_acquire))
         {
             return;
         }
@@ -24,7 +32,7 @@ namespace blue
         if (!m_aof_file)
         {
             BLUE_LOG_ERROR(g_logger) << "Failed to open AOF file: " << m_aof_current_filename;
-            m_aof_config.aof_enabled = false;
+            s_aof_enabled.store(false, std::memory_order_release);
             return;
         }
 
@@ -39,7 +47,7 @@ namespace blue
 
     void AOFModule::appendToAOF(const std::string &cmd)
     {
-        if (!m_aof_config.aof_enabled || !m_aof_file.is_open())
+        if (!s_aof_enabled.load(std::memory_order_acquire) || !m_aof_file.is_open())
         {
             return;
         }
@@ -50,7 +58,7 @@ namespace blue
             m_aof_buffer.aof_buffer_size += cmd.size();
         }
 
-        if (m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire) > m_aof_max_buffer_size)
+        if (m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire) > s_aof_max_buffer_size.load(std::memory_order_acquire))
         {
             m_aof_buffer.aof_cv.notify_one();
         }
@@ -62,12 +70,12 @@ namespace blue
         std::vector<std::string> files;
 
         // 提前分配
-        files.reserve(m_aof_config.aof_max_file_number);
+        files.reserve(s_aof_max_file_number.load(std::memory_order_acquire));
 
         int goodidx = 1;
         int idx = 1;
         // 遍历1-max_file_number之间的文件索引
-        for (; idx <= m_aof_config.aof_max_file_number; idx++)
+        for (; idx <= s_aof_max_file_number.load(std::memory_order_acquire); idx++)
         {
             std::string file_name = getAOFFilename(idx);
             std::ifstream test(file_name);
@@ -194,7 +202,7 @@ namespace blue
 
     Task<void> AOFModule::aofSyncLoop()
     {
-        if (!m_aof_config.aof_enabled)
+        if (!s_aof_enabled.load(std::memory_order_acquire))
         {
             co_return;
         }
@@ -203,7 +211,7 @@ namespace blue
         {
             co_await sleepFor(2);
 
-            if (m_aof_config.aof_sync == "everysec") // 每秒刷新
+            if (s_aof_sync.load(std::memory_order_acquire) == redisServerAOFConfig::AOFSyncStrategy::EVERYSEC) // 每秒刷新
             {
                 std::unique_lock<std::shared_mutex> lock(m_aof_mutex);
                 auto now = std::chrono::steady_clock::now();
@@ -215,7 +223,7 @@ namespace blue
                     m_last_aof_sync = now;
                 }
             }
-            else if (m_aof_config.aof_sync == "always")
+            else if (s_aof_sync.load(std::memory_order_acquire) == redisServerAOFConfig::AOFSyncStrategy::ALWAYS)
             {
                 if (m_aof_file.is_open())
                 {
@@ -228,7 +236,7 @@ namespace blue
 
     void AOFModule::rotateAOF()
     {
-        if (m_aof_config.aof_max_file_number == 0)
+        if (s_aof_max_file_number.load(std::memory_order_acquire) == 0)
         {
             BLUE_LOG_ERROR(g_logger) << "max_file_number is 0, cannot rotate";
             return;
@@ -246,7 +254,8 @@ namespace blue
         BLUE_LOG_INFO(g_logger) << "AOF rotation started, current file: "
                                     << m_aof_current_filename
                                     << ", idx: " << m_aof_file_idx
-                                    << ", max_file_number: " << m_aof_config.aof_max_file_number;
+                                    // << ", max_file_number: " << m_aof_config.aof_max_file_number;
+                                    << ", max_file_number: " << s_aof_max_file_number.load(std::memory_order_acquire);
 
         std::unique_lock<std::shared_mutex> lock(m_aof_mutex);
         if (m_aof_file.is_open())
@@ -256,7 +265,7 @@ namespace blue
         }
 
         // 让索引落在1-max_file_number之间
-        int next_idx = (m_aof_file_idx % m_aof_config.aof_max_file_number) + 1;
+        int next_idx = (m_aof_file_idx % s_aof_max_file_number.load(std::memory_order_acquire)) + 1;
 
         // 索引文件会在1-max_file_number之间循环,所以当返回一个已经存在的文件名，表示需要删除了
         std::string new_file = getAOFFilename(next_idx);
@@ -276,7 +285,7 @@ namespace blue
             else
             {
                 BLUE_LOG_ERROR(g_logger) << "Failed to truncate old AOF file: " << new_file;
-                m_aof_config.aof_enabled = false;
+                s_aof_enabled.store(false, std::memory_order_release);
                 m_aof_rotating.store(false, std::memory_order_release);
                 return;
             }
@@ -286,7 +295,7 @@ namespace blue
         if (!m_aof_file)
         {
             BLUE_LOG_ERROR(g_logger) << "Failed to open new AOF file: " << new_file;
-            m_aof_config.aof_enabled = false;
+            s_aof_enabled.store(false, std::memory_order_release);
             m_aof_rotating.store(false, std::memory_order_release);
             return;
         }
@@ -303,12 +312,12 @@ namespace blue
 
     std::string AOFModule::getAOFFilename(int index)
     {
-        const char *prefix = "/var/lib/blueRedis/";
+        static const std::string prefix = "/var/lib/blueRedis/";
         if (index == 1)
         {
-            return prefix + m_aof_config.aof_filename;
+            return prefix + s_aof_filename.load(std::memory_order_acquire);
         }
-        return prefix + m_aof_config.aof_filename + "." + std::to_string(index);
+        return prefix + s_aof_filename.load(std::memory_order_acquire) + "." + std::to_string(index);
     }
 
     bool AOFModule::cleanupOldAOFs(const std::string &filename)
@@ -370,58 +379,65 @@ namespace blue
     {
         while (m_aof_flush_running.load(std::memory_order_acquire) && !m_stop.load(std::memory_order_acquire))
         {
-            std::unique_lock<std::mutex> lock(m_aof_buffer.aof_mutex);
+            std::string data_to_write;
+            size_t data_size = 0;
 
-            m_aof_buffer.aof_cv.wait_for(lock, std::chrono::milliseconds(100), [this]()
-                                         { return m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire) > 0 
-                                            || !m_aof_flush_running.load(std::memory_order_acquire) 
-                                            || m_stop.load(std::memory_order_acquire); });
-
-            if (m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire) == 0)
             {
-                continue;
-            }
+                std::unique_lock<std::mutex> lock(m_aof_buffer.aof_mutex);
 
-            // 取出缓冲区内容
+                m_aof_buffer.aof_cv.wait_for(lock, std::chrono::milliseconds(100), [this]()
+                                            { return m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire) > 0 
+                                                || !m_aof_flush_running.load(std::memory_order_acquire) 
+                                                || m_stop.load(std::memory_order_acquire); });
 
-            BLUE_ASSERT(m_aof_buffer.aof_buffer.size() == m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire));
-            std::string data_to_write = std::move(m_aof_buffer.aof_buffer);
-            size_t data_size = data_to_write.size();
-            m_aof_buffer.aof_buffer.clear();
-            m_aof_buffer.aof_buffer_size.store(0, std::memory_order_release);
-            lock.unlock();
-
-            // 实际写入文件
-            std::unique_lock<std::shared_mutex> file_lock(m_aof_mutex);
-            if (m_aof_file.is_open())
-            {
-                m_aof_file << data_to_write;
-
-                if (m_aof_config.aof_sync == "always")
+                if (m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire) == 0)
                 {
-                    m_aof_file.flush();
+                    continue;
                 }
-                else if (m_aof_config.aof_sync == "everysec")
+
+                // 取出缓冲区内容
+
+                BLUE_ASSERT(m_aof_buffer.aof_buffer.size() == m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire));
+                data_to_write = std::move(m_aof_buffer.aof_buffer);
+                data_size = data_to_write.size();
+                m_aof_buffer.aof_buffer.clear();
+                m_aof_buffer.aof_buffer_size.store(0, std::memory_order_release);
+            } // 锁自动释放
+
+            // IO 操作
+            {
+                // 实际写入文件
+                std::unique_lock<std::shared_mutex> file_lock(m_aof_mutex);
+                if (m_aof_file.is_open())
                 {
-                    auto now = std::chrono::steady_clock::now();
-                    auto duration = std::chrono::duration_cast<std::chrono::seconds>(
-                                        now - m_last_aof_sync)
-                                        .count();
-                    if (duration >= 1)
+                    m_aof_file << data_to_write;
+
+                    if (s_aof_sync.load(std::memory_order_acquire) == redisServerAOFConfig::AOFSyncStrategy::ALWAYS)
                     {
                         m_aof_file.flush();
-                        m_last_aof_sync = now;
+                    }
+                    else if (s_aof_sync.load(std::memory_order_acquire) == redisServerAOFConfig::AOFSyncStrategy::EVERYSEC)
+                    {
+                        auto now = std::chrono::steady_clock::now();
+                        auto duration = std::chrono::duration_cast<std::chrono::seconds>(
+                                            now - m_last_aof_sync)
+                                            .count();
+                        if (duration >= 1)
+                        {
+                            m_aof_file.flush();
+                            m_last_aof_sync = now;
+                        }
+                    }
+
+                    size_t curr_size = m_aof_file.tellp();
+                    if (curr_size > s_aof_max_file_size.load(std::memory_order_acquire) && 
+                    !m_aof_rotating.load(std::memory_order_acquire))
+                    {
+                        file_lock.unlock();
+                        rotateAOF();
                     }
                 }
-
-                size_t curr_size = m_aof_file.tellp();
-                if (curr_size > m_aof_config.aof_max_file_size && !m_aof_rotating.load(std::memory_order_acquire))
-                {
-                    file_lock.unlock();
-                    rotateAOF();
-                }
-            }
-            file_lock.unlock();
+            } // 锁自动释放
 
             BLUE_LOG_DEBUGE(g_logger) << "AOF flushed " << data_size << " bytes";
         }

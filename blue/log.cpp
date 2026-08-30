@@ -4,16 +4,13 @@
 #include <functional>
 #include <stdarg.h>
 #include <iomanip>
-#include "log.h"
-#include "config.h"
+#include "blue/log.h"
+#include "blue/config.h"
+#include "blue/configinit.h"
 
 // 日志模块
 namespace blue
 {
-    extern std::string s_log_rotate_filename_template; // 日志文件模板名
-    extern uint64_t s_log_rotate_file_size;            // 每个文件的大小
-    extern uint32_t s_log_rotate_file_num;             // 轮转文件最大数量
-
     // 重载枚举类的 <<
     std::ostream &operator<<(std::ostream &os, Level level)
     {
@@ -460,7 +457,7 @@ namespace blue
 
     FileoutLogAppender::FileoutLogAppender(const std::string &filename)
     {
-        s_log_rotate_filename_template = filename;
+        logSystemConfig::g_logRotateDefine_config_ptr->setValue(LogRotateDefine(filename));
         this->init();
     }
 
@@ -474,11 +471,7 @@ namespace blue
 
     std::string FileoutLogAppender::RotateConfigToString()
     {
-        std::stringstream ss;
-        ss << "rotate_filename_template: " << s_log_rotate_filename_template << "\n"
-           << "rotate_file_num: " << s_log_rotate_file_num << "\n"
-           << "rotate_file_size: " << s_log_rotate_file_size << "\n";
-        return ss.str();
+        return logSystemConfig::g_logRotateDefine_config_ptr->toString();
     }
 
     void FileoutLogAppender::log(std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event)
@@ -530,7 +523,7 @@ namespace blue
         m_filestream << data;
 
         size_t size = m_filestream.tellp();
-        if (size > s_log_rotate_file_size &&
+        if (size > logSystemConfig::g_logRotateDefine_config_ptr->getValue().rotate_file_size &&
             !m_rotating.load(std::memory_order_acquire))
         {
             lock.unlock();
@@ -540,7 +533,7 @@ namespace blue
 
     void FileoutLogAppender::rotateFile()
     {
-        if (s_log_rotate_file_num == 0)
+        if (logSystemConfig::g_logRotateDefine_config_ptr->getValue().rotate_file_num == 0)
         {
             std::cout << "max_file_number is 0, cannot rotate" << std::endl;
             return;
@@ -562,7 +555,7 @@ namespace blue
         }
 
         // 让索引落在1-file_size之间
-        size_t next_idx = (m_file_idx % s_log_rotate_file_num) + 1;
+        size_t next_idx = (m_file_idx % logSystemConfig::g_logRotateDefine_config_ptr->getValue().rotate_file_num) + 1;
 
         std::string newfile = getFilename(next_idx);
 
@@ -603,12 +596,12 @@ namespace blue
 
     std::string FileoutLogAppender::getFilename(size_t idx) const
     {
-        const char *perfix = "/var/log/blueRedis/logs_dir/";
+        static const char* perfix = "/var/log/blueRedis/logs_dir/";
         if (idx == 1)
         {
-            return perfix + s_log_rotate_filename_template;
+            return perfix + logSystemConfig::g_logRotateDefine_config_ptr->getValue().rotate_filename;
         }
-        return perfix + s_log_rotate_filename_template + ":" + std::to_string(idx);
+        return perfix + logSystemConfig::g_logRotateDefine_config_ptr->getValue().rotate_filename + ":" + std::to_string(idx);
     }
 
     bool FileoutLogAppender::cleanFilename(const std::string &file) const

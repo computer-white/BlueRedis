@@ -7,10 +7,9 @@
 
 int main()
 {
-    blue::blueIniteConfig();
-    std::cout << "Before:\n" << blue::FileoutLogAppender::RotateConfigToString();
+    std::cout << "Before:\n" << blue::FileoutLogAppender::RotateConfigToString() << std::endl;
     YAML::Node root = YAML::LoadFile("/etc/blueRedis/logs_cof/log_rotate.yml");
     blue::Config::LoadFromYAML(root);
-    std::cout << "End:\n" << blue::FileoutLogAppender::RotateConfigToString();
+    std::cout << "End:\n" << blue::FileoutLogAppender::RotateConfigToString() << std::endl;
 
 }

@@ -270,7 +270,6 @@ static void LoadYaml()
 
 int main(int argc, char *argv[])
 {
-    blue::blueIniteConfig();
     test_YAML();
     test_config();
     test_class();

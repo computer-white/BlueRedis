@@ -1,4 +1,3 @@
-#include "blue/blue.h"
 #include "blue/io_manager.h"
 #include <iostream>
 #include "blue/await.h"

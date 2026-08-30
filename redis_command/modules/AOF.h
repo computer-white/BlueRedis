@@ -31,17 +31,6 @@ namespace blue
         AOFModule(const AOFModule& ) = delete;
         AOFModule& operator=(const AOFModule& ) = delete;
     private:
-        // AOF 配置
-        struct AOFConfig
-        {
-            // AOF
-            bool aof_enabled = false;                           // 是否开启aof
-            std::string aof_filename = "appendonly.aof";        // 文件模板名
-            size_t aof_max_file_size = 1024 * 1024;             // 每个文件最大大小
-            size_t aof_max_file_number = 5;                     // 保留5个aof文件
-            std::string aof_sync = "everysec";                  // 保存策略,always, everysec, no
-        };
-
         // AOF 异步
         struct AOFBuffer
         {
@@ -134,42 +123,6 @@ namespace blue
     public:
 
         /**
-         * @brief 获取和设置aof_config
-         */
-
-        // 获取
-        bool getConfig_AOFEnabled() const noexcept { return m_aof_config.aof_enabled; }
-
-        const std::string &getConfig_AOFFilename() const noexcept { return m_aof_config.aof_filename; }
-
-        size_t getConfig_AOFMaxFileSize() const noexcept { return m_aof_config.aof_max_file_size; }
-
-        size_t getConfig_AOFMaxFileNumber() const noexcept { return m_aof_config.aof_max_file_number; }
-
-        const std::string &getConfig_AOFSync() const noexcept { return m_aof_config.aof_sync; }
-
-        // 设置
-        void setConfig_AOFEnabled(bool val) noexcept { m_aof_config.aof_enabled = val; }
-
-        void setConfig_AOFFilename(const std::string &val) noexcept { m_aof_config.aof_filename = val; }
-
-        void setConfig_AOFMaxFileSize(size_t val) noexcept { m_aof_config.aof_max_file_size = val; }
-
-        void setConfig_AOFMaxFileNumber(size_t val) noexcept { m_aof_config.aof_max_file_number = val; }
-
-        void setConfig_AOFSync(const std::string &val) noexcept { m_aof_config.aof_sync = val; }
-
-        /**
-         * @brief 获取max_aof_buffer_size
-         */
-        size_t getMaxAOFBufferSize() const noexcept { return m_aof_max_buffer_size; }
-
-        /**
-         * @brief 设置max_aof_buffer_size
-         */
-        void setMaxAOFBufferSize(size_t val) noexcept { m_aof_max_buffer_size = val; }
-        
-        /**
          * @brief 获取last_aof_sync
          */
         TimePoint getLastAOFSync() const noexcept { return m_last_aof_sync; }
@@ -217,14 +170,11 @@ namespace blue
         void closeAOF() { if (m_aof_file.is_open()) { m_aof_file.close(); } }
 
     private:
-        // 配置
-        AOFConfig m_aof_config;                         // aof 配置
 
         // 异步变量
         AOFBuffer m_aof_buffer;                         // 异步aof缓存
         std::thread m_aof_flush_thread;                 // 刷新线程
         std::atomic<bool> m_aof_flush_running{false};   // 刷新线程是否正在运行中
-        size_t m_aof_max_buffer_size = 1024 * 1024;     // 最大缓存大小
 
         // 基础变量
         std::shared_mutex m_aof_mutex;           // 互斥变量

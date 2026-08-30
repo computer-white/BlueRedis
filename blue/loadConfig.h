@@ -1,6 +1,15 @@
+/**
+ * @file loadConfig.h
+ * @brief 从Yaml文件中加载一些自定义数据类型，并提供类型和string的转化
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.8.30
+ * @copyright Copyright (c) 2026年 blue
+ */
 #pragma once
 #include <iostream>
-#include "config.h"
+#include "blue/config.h"
+#include "blue/config_parser.h"
 
 namespace blue
 {
@@ -10,6 +19,11 @@ namespace blue
         std::string rotate_filename = "blue.log"; // 轮转文件名
         uint64_t rotate_file_size = 1024;         // 轮转文件大小
         uint32_t rotate_file_num = 5;             // 轮转文件数量
+
+        LogRotateDefine(const std::string &filename = "blue.log", uint64_t file_size = 1024, uint32_t file_num = 5)
+            : rotate_filename(std::move(filename)), rotate_file_size(file_size), rotate_file_num(file_num)
+        {
+        }
 
         bool operator==(const LogRotateDefine &rhs) const
         {
@@ -51,20 +65,15 @@ namespace blue
                           << node << "]" << std::endl;
                 return LogRotateDefine();
             }
-            // number + (K,M,G)
-            // 默认M
             std::string tem_val = node["rotate_file_size"].as<std::string>();
-            if (auto unit = tem_val.find('K'); unit != std::string::npos)
+            auto size_val = blue::util::ConfigParser::ParseSize(tem_val);
+            if (size_val.has_value())
             {
-                res.rotate_file_size = std::stoi(tem_val.substr(0, unit)) * 1024;
-            }
-            else if (auto unit = tem_val.find('G'); unit != std::string::npos)
-            {
-                res.rotate_file_size = std::stoi(tem_val.substr(0, unit)) * 1024 * 1024 * 1024;
+                res.rotate_file_size = *size_val;
             }
             else
             {
-                res.rotate_file_size = std::stoi(tem_val.substr(0, unit)) * 1024 * 1024;
+                res.rotate_file_size = 1024;
             }
             return res;
         }
@@ -80,7 +89,7 @@ namespace blue
             YAML::Node node;
             node["rotate_filename"] = val.rotate_filename;
             node["rotate_file_num"] = val.rotate_file_num;
-            node["rotate_file_size"] = val.rotate_file_size;
+            node["rotate_file_size"] = util::ConfigParser::FormatSize(val.rotate_file_size);
 
             std::stringstream ss;
             ss << node;
@@ -264,7 +273,7 @@ namespace blue
                     if (!appender_node["type"].IsDefined())
                     {
                         std::cout << "log config error val.LogAppenderDefine.type is null "
-                                  << __FILE__ << " " << __LINE__ << "\n[" << appender_node << std::endl;
+                                  << __FILE__ << " " << __LINE__ << "\n[" << appender_node << "]" << std::endl;
                         continue;
                     }
 
@@ -275,7 +284,7 @@ namespace blue
                         if (!appender_node["file"].IsDefined())
                         {
                             std::cout << "log config error val.LogAppenderDefine.file is null "
-                                      << __FILE__ << " " << __LINE__ << "\n[" << appender_node << std::endl;
+                                      << __FILE__ << " " << __LINE__ << "\n[" << appender_node << "]" << std::endl;
                             continue;
                         }
                         appender.file = appender_node["file"].as<std::string>();
@@ -354,6 +363,137 @@ namespace blue
                 }
                 node["appenders"] = appenders_node;
             }
+            std::stringstream ss;
+            ss << node;
+            return ss.str();
+        }
+    };
+
+    namespace redisServerAOFConfig
+    {
+        static std::string aof_name = "appendonly.aof";     // 作为一个锚点，让std::atomic<const char*>内部使用的值的内存指向aof_name
+        enum class AOFSyncStrategy : uint8_t
+        {
+            ALWAYS = 0,
+            EVERYSEC = 1,
+            NO = 2
+        };
+
+        // 辅助转换函数
+        inline AOFSyncStrategy stringToSyncStrategy(const std::string &str)
+        {
+            if (str == "always")
+            {
+                return AOFSyncStrategy::ALWAYS;
+            }
+            if (str == "no")
+            {
+                return AOFSyncStrategy::NO;
+            }
+            return AOFSyncStrategy::EVERYSEC; // 默认
+        }
+
+        inline std::string syncStrategyToString(AOFSyncStrategy strategy)
+        {
+            switch (strategy)
+            {
+            case AOFSyncStrategy::ALWAYS:
+                return "always";
+            case AOFSyncStrategy::NO:
+                return "no";
+            default:
+                return "everysec";
+            }
+        }
+    }
+
+    // 从yaml文件加载出来的Redis AOF
+    struct AOFConfigDefine
+    {
+        // AOF
+        bool aof_enabled = false;                    // 是否开启aof
+        std::string aof_filename = "appendonly.aof"; // 文件模板名
+        size_t aof_max_file_size = 1024 * 1024;      // 每个文件最大大小
+        size_t aof_max_file_number = 5;              // 保留5个aof文件
+        redisServerAOFConfig::AOFSyncStrategy aof_sync =
+            redisServerAOFConfig::AOFSyncStrategy::EVERYSEC; // 保存策略,always(0), everysec(1), no(2)
+
+        bool operator==(const AOFConfigDefine &rhs) const
+        {
+            return aof_enabled == rhs.aof_enabled &&
+                   aof_filename == rhs.aof_filename &&
+                   aof_max_file_number == rhs.aof_max_file_number &&
+                   aof_max_file_size == rhs.aof_max_file_size &&
+                   aof_sync == rhs.aof_sync;
+        }
+    };
+
+    // 特化string -> AOFConfigDefine
+    template <>
+    class LexicalCast<std::string, AOFConfigDefine>
+    {
+    public:
+        AOFConfigDefine operator()(const std::string &val)
+        {
+            YAML::Node node = YAML::Load(val);
+            AOFConfigDefine res;
+            if (!node["aof_enabled"].IsDefined())
+            {
+                std::cout << "AOF configuration error, aof_enabled is null "
+                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
+                return AOFConfigDefine();
+            }
+            res.aof_enabled = node["aof_enabled"].as<bool>();
+
+            if (!node["aof_filename"].IsDefined())
+            {
+                std::cout << "AOF configuration error, aof_filename is null "
+                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
+                return AOFConfigDefine();
+            }
+            res.aof_filename = node["aof_filename"].as<std::string>();
+
+            if (!node["aof_max_file_size"].IsDefined())
+            {
+                std::cout << "AOF configuration error, aof_max_file_size is null "
+                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
+                return AOFConfigDefine();
+            }
+            res.aof_max_file_size = node["aof_max_file_size"].as<size_t>();
+
+            if (!node["aof_max_file_number"].IsDefined())
+            {
+                std::cout << "AOF configuration error, aof_max_file_number is null "
+                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
+                return AOFConfigDefine();
+            }
+            res.aof_max_file_number = node["aof_max_file_number"].as<size_t>();
+
+            if (!node["aof_sync"].IsDefined())
+            {
+                std::cout << "AOF configuration error, aof_sync is null "
+                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
+                return AOFConfigDefine();
+            }
+            std::string tem_sync = node["aof_sync"].as<std::string>();
+            res.aof_sync = redisServerAOFConfig::stringToSyncStrategy(tem_sync);
+            return res;
+        }
+    };
+
+    // 特化AOFConfigDefine -> string
+    template <>
+    class LexicalCast<AOFConfigDefine, std::string>
+    {
+    public:
+        std::string operator()(const AOFConfigDefine &val)
+        {
+            YAML::Node node;
+            node["aof_enabled"] = val.aof_enabled;
+            node["aof_filename"] = val.aof_filename;
+            node["aof_max_file_size"] = val.aof_max_file_size;
+            node["aof_max_file_number"] = val.aof_max_file_number;
+            node["aof_sync"] = redisServerAOFConfig::syncStrategyToString(val.aof_sync);
             std::stringstream ss;
             ss << node;
             return ss.str();

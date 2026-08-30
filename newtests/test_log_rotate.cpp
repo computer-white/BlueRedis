@@ -5,6 +5,7 @@ int main()
 {
     auto g_logger = std::make_shared<blue::Logger>();
     auto appender = std::make_shared<blue::FileoutLogAppender>("blue.log");
+    std::cout << blue::FileoutLogAppender::RotateConfigToString() << std::endl;
     g_logger->addAppender(appender);
     for (int x = 0; x < 100; x++)
     {
