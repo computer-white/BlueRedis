@@ -11,7 +11,9 @@
 #include <string>
 #include "blue/dbmanager.h"
 #include "blue/redismanager.h"
-#include "blue/loadConfig.h"
+#include "blue/loadLogConfig.h"
+#include "redis_command/modules/loadAOFConfig.h"
+#include "redis_command/modules/loadSlowLogConfig.h"
 
 // 数据库和redis配置
 namespace blue
@@ -38,11 +40,11 @@ namespace blue
             g_AOFDefine_config_ptr = blue::Config::Lookup<AOFConfigDefine>("redis.aof",
                                                                            AOFConfigDefine(),
                                                                            "redis AOF configurations");
-
-        static blue::ConfigVar<std::string>::ConfigVarPtr
-            g_AOFMaxBufferSize_config_ptr = blue::Config::Lookup<std::string>("redis.aof_max_buffer_size",
-                                                                            "1M",
-                                                                            "redis server, max buffer size of AOF modules");
+        
+        static blue::ConfigVar<SlowLogConfigDefine>::ConfigVarPtr
+            g_SlowLogDefine_config_ptr = blue::Config::Lookup<SlowLogConfigDefine>("redis.slowlog",
+                                                                                    SlowLogConfigDefine(),
+                                                                                    "redis SlowLog search configurations");
     }
 
     // 这里是对于http模块中使用到的数据库和redis的配置

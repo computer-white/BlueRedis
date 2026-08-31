@@ -9,11 +9,15 @@ namespace blue
 {
     // redis server AOF configuration
     std::atomic<bool> s_aof_enabled{false};
-    std::atomic<const char*> s_aof_filename{"appendonly.aof"};
+    std::atomic<const char *> s_aof_filename{"appendonly.aof"};
     std::atomic<size_t> s_aof_max_file_size{1024};
     std::atomic<size_t> s_aof_max_file_number{5};
     std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync{redisServerAOFConfig::AOFSyncStrategy::EVERYSEC};
     std::atomic<size_t> s_aof_max_buffer_size{1024 * 1024};
+
+    // redis server SlowLog configuration
+    std::atomic<int64_t> s_slow_log_slower_than{10'000}; // 阈值（微秒），默认10ms
+    std::atomic<size_t> s_slow_log_max_len{128};         // 慢查询缓存最大保存条数
 
     struct InitConfig
     {
@@ -21,8 +25,8 @@ namespace blue
         {
             // 添加监听器,同时读取内容设置到日志系统里面
             logSystemConfig::g_logDefine_config_ptr->addListener([](const std::set<LogDefine> &old_val,
-                                                const std::set<LogDefine> &new_val)
-                                                {
+                                                                    const std::set<LogDefine> &new_val)
+                                                                 {
             BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT()) 
             << " on_change_cb conf changed! ";
             // 新增
@@ -90,7 +94,7 @@ namespace blue
                         else
                         {
                             // 有formatter但是解析出来有错误，我们不添加到new_logger里面
-                            std::cout << "log config error n_val.LogAppenderDefine.fomatter is error "
+                            std::cerr << "log config error n_val.LogAppenderDefine.fomatter is error "
                                         << __FILE__ << " " << __LINE__ << std::endl;
                             continue;
                         }
@@ -116,26 +120,26 @@ namespace blue
                 }
             } });
 
-            redisServerAOFConfig::g_AOFDefine_config_ptr->addListener([](const blue::AOFConfigDefine &old_val, 
-                const blue::AOFConfigDefine &new_val){
+            redisServerAOFConfig::g_AOFDefine_config_ptr->addListener([](const blue::AOFConfigDefine &old_val,
+                                                                         const blue::AOFConfigDefine &new_val)
+                                                                      {
                     std::cout << "Update AOF configuration!" << std::endl;
+
+                    // enabled
                     s_aof_enabled.store(new_val.aof_enabled, std::memory_order_release);
+                    // filename
                     redisServerAOFConfig::aof_name = new_val.aof_filename;
                     s_aof_filename.store(redisServerAOFConfig::aof_name.c_str(), std::memory_order_release);
+                    // max_buffer_size
+                    s_aof_max_buffer_size.store(new_val.aof_max_buffer_size, std::memory_order_release);
+                    // max_file_size
                     s_aof_max_file_size.store(new_val.aof_max_file_size, std::memory_order_release);
+                    // max_file_number
                     s_aof_max_file_number.store(new_val.aof_max_file_number, std::memory_order_release);
+                    // sync strategy
                     s_aof_sync.store(new_val.aof_sync, std::memory_order_release);
-            });
 
-            redisServerAOFConfig::g_AOFMaxBufferSize_config_ptr->addListener([](const std::string &old_val, const std::string &new_val){
-                std::cout << "Update AOF Max Buffer Size!" << std::endl;
-                auto val = util::ConfigParser::ParseSize(new_val);
-                if (val.has_value())
-                {
-                    s_aof_max_buffer_size.store(*val, std::memory_order_release);
-                    std::cout << "Update AOF Max Buffer Size successful!" << std::endl;
-                }
-            });
+                    std::cout << "Update AOF configuration Successful!" << std::endl; });
         }
     };
 

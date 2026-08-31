@@ -28,12 +28,15 @@
 
 namespace blue
 {
-    extern std::atomic<bool> s_aof_enabled;
-    extern std::atomic<const char*> s_aof_filename;
-    extern std::atomic<size_t> s_aof_max_file_size;
-    extern std::atomic<size_t> s_aof_max_file_number;
-    extern std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync;
-    extern std::atomic<size_t> s_aof_max_buffer_size;
+    extern std::atomic<bool> s_aof_enabled;                               // 是否开启aof
+    extern std::atomic<const char *> s_aof_filename;                      // 文件模板名
+    extern std::atomic<size_t> s_aof_max_file_size;                       // 每个文件最大大小
+    extern std::atomic<size_t> s_aof_max_file_number;                     // 保留aof文件数量
+    extern std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync; // 保存策略,always(0), everysec(1), no(2)
+    extern std::atomic<size_t> s_aof_max_buffer_size;                     // aof异步写入文件的最大缓冲区大小
+
+    extern std::atomic<int64_t> s_slow_log_slower_than; // 阈值（微秒），默认10ms
+    extern std::atomic<size_t> s_slow_log_max_len;      // 慢查询缓存最大保存条数
 
     template <typename T>
     class CommandHandlerTable
@@ -51,8 +54,8 @@ namespace blue
          * @param RecordAOF 是否记录AOF
          */
         RespValue executeTable(std::vector<RespValue> args,
-                                       MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
-                                       bool RecordAOF = true);
+                               MSocket::MSocketPtr sock, std::shared_ptr<ServerData<T>> self,
+                               bool RecordAOF = true);
 
     private:
         static constexpr auto EVEN_VALIDATOR = [](size_t argc) -> bool
@@ -96,9 +99,9 @@ namespace blue
 
     public:
         using CommandHandlerFunc = blue::AutoRespValue (*)(std::vector<RespValue> &,
-                                                       MSocket::MSocketPtr,
-                                                       bool,
-                                                       std::shared_ptr<ServerData<int>>);
+                                                           MSocket::MSocketPtr,
+                                                           bool,
+                                                           std::shared_ptr<ServerData<int>>);
         // 声明所有命令
         // connect
         REGISTER_COMMAND_T(PING, handlePING);
@@ -362,7 +365,7 @@ namespace blue
                 self->getReplication().broadcastToSlaves(aof_cmds);    \
             }                                                          \
         }                                                              \
-        result = *handle##name(args, sock, RecordAOF, self);                      \
+        result = *handle##name(args, sock, RecordAOF, self);           \
         /* 慢查询记录*/                                                \
         auto end = SteadyClock::now();                                 \
         std::string cmd_str;                                           \
@@ -432,9 +435,9 @@ namespace blue
     // ========== 连接命令 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handlePING(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         BLUE_LOG_INFO(xx::g_logger) << "commandTable 模式";
         if (sock->getClientlevel() < 1)
@@ -449,9 +452,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleAUTH(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (args[1].str == sock->getClientPassword())
         {
@@ -481,9 +484,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSELECT(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -508,9 +511,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleCLIENT(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -566,9 +569,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleCONFIG(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         // 同一时刻只能存在一个管理员，并且由于CommandHandler只有一个实例化，所以修改和获取不需要锁
         std::string subcmd = args[1].str;
@@ -600,12 +603,16 @@ namespace blue
             if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*")
             {
                 result.push_back(*RespValue::bulk_string("slowlog-log-slower-than"));
-                result.push_back(*RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowLogThan())));
+                result.push_back(*RespValue::bulk_string(
+                    std::to_string(s_slow_log_slower_than.load(std::memory_order_acquire))
+                ));
             }
             if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*")
             {
                 result.push_back(*RespValue::bulk_string("slowlog-max-len"));
-                result.push_back(*RespValue::bulk_string(std::to_string(self->getSlowLog().getSlowMaxLen())));
+                result.push_back(*RespValue::bulk_string(
+                    std::to_string(s_slow_log_max_len.load(std::memory_order_acquire))
+                ));
             }
             if (pattern == "*" || pattern == "aof-enabled" || pattern == "aof-*")
             {
@@ -621,8 +628,7 @@ namespace blue
             {
                 result.push_back(*RespValue::bulk_string("aof-sync"));
                 result.push_back(*RespValue::bulk_string(
-                    redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire))
-                ));
+                    redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire))));
             }
             if (pattern == "*" || pattern == "aof-max_file_size" || pattern == "aof-*")
             {
@@ -638,8 +644,7 @@ namespace blue
             {
                 result.push_back(*RespValue::bulk_string("aof-max_buffer_size"));
                 result.push_back(*RespValue::bulk_string(
-                    std::to_string(s_aof_max_buffer_size.load(std::memory_order_acquire))
-                ));
+                    std::to_string(s_aof_max_buffer_size.load(std::memory_order_acquire))));
             }
             if (pattern == "*" || pattern == "database")
             {
@@ -672,7 +677,7 @@ namespace blue
                     {
                         return RespValue::error("ERR value must be >= 0");
                     }
-                    self->getSlowLog().setSlowLogThan(val);
+                    s_slow_log_slower_than.store(val,std::memory_order_release);
                     return RespValue::simple_string("OK");
                 }
                 catch (...)
@@ -689,7 +694,7 @@ namespace blue
                     {
                         return RespValue::error("ERR value must be > 0");
                     }
-                    self->getSlowLog().setSlowMaxLen(val);
+                    s_slow_log_max_len.store(val, std::memory_order_release);
                     return RespValue::simple_string("OK");
                 }
                 catch (...)
@@ -839,9 +844,9 @@ namespace blue
     // ========== String 命令 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSET(std::vector<RespValue> &args,
-                                                MSocket::MSocketPtr sock,
-                                                bool aof,
-                                                std::shared_ptr<ServerData<int>> self)
+                                                    MSocket::MSocketPtr sock,
+                                                    bool aof,
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -902,9 +907,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleGET(std::vector<RespValue> &args,
-                                                MSocket::MSocketPtr sock,
-                                                bool aof,
-                                                std::shared_ptr<ServerData<int>> self)
+                                                    MSocket::MSocketPtr sock,
+                                                    bool aof,
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -936,9 +941,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleMSET(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -958,9 +963,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleMGET(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -998,9 +1003,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleGETSET(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1024,9 +1029,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleAPPEND(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1052,9 +1057,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSETNX(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1076,9 +1081,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleEXISTS(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1104,9 +1109,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleDEL(std::vector<RespValue> &args,
-                                                MSocket::MSocketPtr sock,
-                                                bool aof,
-                                                std::shared_ptr<ServerData<int>> self)
+                                                    MSocket::MSocketPtr sock,
+                                                    bool aof,
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1134,9 +1139,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleINCR(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1172,9 +1177,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleINCRBY(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1219,9 +1224,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSTRLEN(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1267,9 +1272,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleTYPE(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1303,9 +1308,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleKEYS(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1399,9 +1404,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSCAN(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1516,9 +1521,9 @@ namespace blue
     // ========== Hash 命令 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleHSET(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1560,9 +1565,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleHGET(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1592,9 +1597,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleHGETALL(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1619,9 +1624,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleHDEL(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1650,9 +1655,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleHLEN(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1690,9 +1695,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleHEXISTS(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1736,9 +1741,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleHKEYS(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1782,9 +1787,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleHVALS(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1829,9 +1834,9 @@ namespace blue
     // ========== List 命令 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLPUSH(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1865,9 +1870,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleRPUSH(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1897,9 +1902,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLPOP(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1950,9 +1955,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleRPOP(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -1999,9 +2004,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLLEN(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2020,9 +2025,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLINSERT(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2064,9 +2069,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLINDEX(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2109,9 +2114,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLSET(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2156,9 +2161,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleRPOPLPUSH(std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool aof,
-                                                      std::shared_ptr<ServerData<int>> self)
+                                                          MSocket::MSocketPtr sock,
+                                                          bool aof,
+                                                          std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2207,9 +2212,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLPOPRPUSH(std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool aof,
-                                                      std::shared_ptr<ServerData<int>> self)
+                                                          MSocket::MSocketPtr sock,
+                                                          bool aof,
+                                                          std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2258,9 +2263,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLRANGE(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2319,9 +2324,9 @@ namespace blue
     // ========== Set 命令 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSADD(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2352,9 +2357,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSMEMBERS(std::vector<RespValue> &args,
-                                                     MSocket::MSocketPtr sock,
-                                                     bool aof,
-                                                     std::shared_ptr<ServerData<int>> self)
+                                                         MSocket::MSocketPtr sock,
+                                                         bool aof,
+                                                         std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2378,9 +2383,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSREM(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2408,9 +2413,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSISMEMBER(std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool aof,
-                                                      std::shared_ptr<ServerData<int>> self)
+                                                          MSocket::MSocketPtr sock,
+                                                          bool aof,
+                                                          std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2430,9 +2435,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSCARD(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2451,9 +2456,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSRANDMEMBER(std::vector<RespValue> &args,
-                                                        MSocket::MSocketPtr sock,
-                                                        bool aof,
-                                                        std::shared_ptr<ServerData<int>> self)
+                                                            MSocket::MSocketPtr sock,
+                                                            bool aof,
+                                                            std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2517,9 +2522,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSPOP(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2595,9 +2600,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSDIFF(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2642,9 +2647,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSINTER(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2689,9 +2694,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSUNION(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2737,9 +2742,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSMOVE(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2800,9 +2805,9 @@ namespace blue
     // ========== ZSet 命令 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZADD(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2855,9 +2860,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZRANGE(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2923,9 +2928,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZREM(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2969,9 +2974,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZSCORE(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -2996,9 +3001,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZRANK(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3028,9 +3033,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZINCRBY(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3074,9 +3079,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZINCRBYFLOAT(std::vector<RespValue> &args,
-                                                         MSocket::MSocketPtr sock,
-                                                         bool aof,
-                                                         std::shared_ptr<ServerData<int>> self)
+                                                             MSocket::MSocketPtr sock,
+                                                             bool aof,
+                                                             std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3120,9 +3125,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZCOUNT(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3163,9 +3168,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZRANGEBYSCORE(std::vector<RespValue> &args,
-                                                          MSocket::MSocketPtr sock,
-                                                          bool aof,
-                                                          std::shared_ptr<ServerData<int>> self)
+                                                              MSocket::MSocketPtr sock,
+                                                              bool aof,
+                                                              std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3211,9 +3216,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleZREMRANGEBYSCORE(std::vector<RespValue> &args,
-                                                             MSocket::MSocketPtr sock,
-                                                             bool aof,
-                                                             std::shared_ptr<ServerData<int>> self)
+                                                                 MSocket::MSocketPtr sock,
+                                                                 bool aof,
+                                                                 std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3275,9 +3280,9 @@ namespace blue
     // ========== DB 命令 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleFLUSHDB(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3330,9 +3335,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleFLUSHDBALL(std::vector<RespValue> &args,
-                                                       MSocket::MSocketPtr sock,
-                                                       bool aof,
-                                                       std::shared_ptr<ServerData<int>> self)
+                                                           MSocket::MSocketPtr sock,
+                                                           bool aof,
+                                                           std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3391,9 +3396,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleDBSIZE(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3411,9 +3416,9 @@ namespace blue
     // ========== Key 命令 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleEXPIRE(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3446,9 +3451,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleTTL(std::vector<RespValue> &args,
-                                                MSocket::MSocketPtr sock,
-                                                bool aof,
-                                                std::shared_ptr<ServerData<int>> self)
+                                                    MSocket::MSocketPtr sock,
+                                                    bool aof,
+                                                    std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3483,9 +3488,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handlePEXPIRE(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3518,9 +3523,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handlePTTL(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3555,9 +3560,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handlePERSIST(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3578,9 +3583,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleRENAME(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3747,9 +3752,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleRENAMENX(std::vector<RespValue> &args,
-                                                     MSocket::MSocketPtr sock,
-                                                     bool aof,
-                                                     std::shared_ptr<ServerData<int>> self)
+                                                         MSocket::MSocketPtr sock,
+                                                         bool aof,
+                                                         std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3921,9 +3926,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleRANDOMKEY(std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool aof,
-                                                      std::shared_ptr<ServerData<int>> self)
+                                                          MSocket::MSocketPtr sock,
+                                                          bool aof,
+                                                          std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3972,9 +3977,9 @@ namespace blue
     // ========== Server 命令 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleINFO(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -3999,7 +4004,7 @@ namespace blue
             // AOF
             info += "# AOF\r\n";
             info += "aof_enabled:" + std::string(s_aof_enabled.load(std::memory_order_acquire) ? "1" : "0") + "\r\n";
-            info += "aof_sync:" + redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire))+ "\r\n";
+            info += "aof_sync:" + redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire)) + "\r\n";
             info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
             info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
             info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
@@ -4077,10 +4082,10 @@ namespace blue
                     info += "\r\n";
                 }
                 else if (tem == "AOF")
-                {   
+                {
                     info += "# AOF\r\n";
                     info += "aof_enabled:" + std::string(s_aof_enabled.load(std::memory_order_acquire) ? "1" : "0") + "\r\n";
-                    info += "aof_sync:" + redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire))+ "\r\n";
+                    info += "aof_sync:" + redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire)) + "\r\n";
                     info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
                     info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
                     info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
@@ -4148,9 +4153,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSAVE(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4162,9 +4167,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleBGSAVE(std::vector<RespValue> &args,
-                                                   MSocket::MSocketPtr sock,
-                                                   bool aof,
-                                                   std::shared_ptr<ServerData<int>> self)
+                                                       MSocket::MSocketPtr sock,
+                                                       bool aof,
+                                                       std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4195,9 +4200,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLASTSAVE(std::vector<RespValue> &args,
-                                                     MSocket::MSocketPtr sock,
-                                                     bool aof,
-                                                     std::shared_ptr<ServerData<int>> self)
+                                                         MSocket::MSocketPtr sock,
+                                                         bool aof,
+                                                         std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4208,9 +4213,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLASTSAVE1(std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool aof,
-                                                      std::shared_ptr<ServerData<int>> self)
+                                                          MSocket::MSocketPtr sock,
+                                                          bool aof,
+                                                          std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4230,9 +4235,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleCOMMAND(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4285,9 +4290,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleECHO(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4298,9 +4303,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleTIME(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4317,9 +4322,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleLOCALTIME(std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool aof,
-                                                      std::shared_ptr<ServerData<int>> self)
+                                                          MSocket::MSocketPtr sock,
+                                                          bool aof,
+                                                          std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4342,9 +4347,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSHUTDOWN(std::vector<RespValue> &args,
-                                                     MSocket::MSocketPtr sock,
-                                                     bool aof,
-                                                     std::shared_ptr<ServerData<int>> self)
+                                                         MSocket::MSocketPtr sock,
+                                                         bool aof,
+                                                         std::shared_ptr<ServerData<int>> self)
     {
         if (!self->isAdmin(sock))
         {
@@ -4365,9 +4370,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleWATCH(std::vector<RespValue> &args,
-                                                  MSocket::MSocketPtr sock,
-                                                  bool aof,
-                                                  std::shared_ptr<ServerData<int>> self)
+                                                      MSocket::MSocketPtr sock,
+                                                      bool aof,
+                                                      std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4385,9 +4390,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleUNWATCH(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4400,9 +4405,9 @@ namespace blue
     // ========== 慢查询 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSLOWLOG(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4455,9 +4460,9 @@ namespace blue
     // ========== 监控 ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleMONITOR(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4475,9 +4480,9 @@ namespace blue
     // ========== AOF ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleAOFROTATE(std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool aof,
-                                                      std::shared_ptr<ServerData<int>> self)
+                                                          MSocket::MSocketPtr sock,
+                                                          bool aof,
+                                                          std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4507,9 +4512,9 @@ namespace blue
     // ========== Replication ==========
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleREPLICAOF(std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      bool aof,
-                                                      std::shared_ptr<ServerData<int>> self)
+                                                          MSocket::MSocketPtr sock,
+                                                          bool aof,
+                                                          std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4576,9 +4581,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSLAVEOF(std::vector<RespValue> &args,
-                                                    MSocket::MSocketPtr sock,
-                                                    bool aof,
-                                                    std::shared_ptr<ServerData<int>> self)
+                                                        MSocket::MSocketPtr sock,
+                                                        bool aof,
+                                                        std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {
@@ -4645,9 +4650,9 @@ namespace blue
 
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSYNC(std::vector<RespValue> &args,
-                                                 MSocket::MSocketPtr sock,
-                                                 bool aof,
-                                                 std::shared_ptr<ServerData<int>> self)
+                                                     MSocket::MSocketPtr sock,
+                                                     bool aof,
+                                                     std::shared_ptr<ServerData<int>> self)
     {
         if (sock->getClientlevel() < 1)
         {

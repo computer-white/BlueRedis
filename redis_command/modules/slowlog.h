@@ -70,32 +70,11 @@ namespace blue
          * @brief 重置
          */
         void reset();
-
-        /**
-         * @brief 获取阈值
-         */
-        int64_t getSlowLogThan() const { return m_slow_log_slower_than.load(std::memory_order_acquire); }
-
-        /**
-         * @brief 获取最大保存条数
-         */
-        int64_t getSlowMaxLen() const { return m_slow_log_max_len.load(std::memory_order_acquire); }
-        /**
-        * @brief 设置阈值
-         */
-        void setSlowLogThan(int64_t val) { return m_slow_log_slower_than.store(val,std::memory_order_release); }
-
-        /**
-         * @brief 设置最大保存条数
-         */
-        void setSlowMaxLen(int64_t val) { return m_slow_log_max_len.store(val,std::memory_order_release); }
     private:
         SPSCQueue<SlowLogEntry, 2048> m_slow_logs;              // 慢查询日志队列
         mutable std::shared_mutex m_slow_logs_cache_mutex;      // 日志锁
         std::vector<SlowLogEntry> m_slow_logs_cache;            // 用于查询的缓存
 
         std::atomic<int64_t> m_slow_log_id{0};              // 自增ID
-        std::atomic<int64_t> m_slow_log_slower_than{10000}; // 阈值（微秒），默认10ms
-        std::atomic<size_t> m_slow_log_max_len{128};        // 最大保存条数
     };
 }

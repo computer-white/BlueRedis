@@ -26,7 +26,7 @@ namespace blue
         struct TimeUnit
         {
             std::string suffix;
-            size_t multiplier;  // 毫秒倍数
+            size_t multiplier;  // 微妙倍数
         };
 
         class ConfigParser
@@ -44,17 +44,17 @@ namespace blue
              */
             static std::string FormatSize(size_t val, int precision = 2);
 
-            // 时间解析, ms,s,m,h
+            // 时间解析, us,ms,s,m,h
 
             /**
-             * @brief 字符串 -> ms
+             * @brief 字符串 -> us
              */
-            static std::optional<std::chrono::milliseconds> ParseTime(const std::string &val);
+            static std::optional<std::chrono::microseconds> ParseTime(const std::string &val);
 
             /**
-             * @brief ms -> 字符串
+             * @brief us -> 字符串
              */
-            static std::string FormatTime(std::chrono::microseconds ms);
+            static std::string FormatTime(std::chrono::microseconds us, int precision = 2);
 
             // 布尔解析, yes/no, true/false, on/off, 1/0
             

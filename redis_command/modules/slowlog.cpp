@@ -2,11 +2,14 @@
 
 namespace blue
 {
+    extern std::atomic<int64_t> s_slow_log_slower_than; // 阈值（微秒），默认10ms
+    extern std::atomic<size_t> s_slow_log_max_len;      // 慢查询缓存最大保存条数
+
     void SlowLogModule::syncSlowLogs()
     {
         std::unique_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
         SlowLogEntry entry;
-        size_t max_len = m_slow_log_max_len.load(std::memory_order_acquire);
+        size_t max_len = s_slow_log_max_len.load(std::memory_order_acquire);
         while (m_slow_logs.pop(entry))
         {
             m_slow_logs_cache.push_back(std::move(entry));
@@ -17,13 +20,13 @@ namespace blue
         }
     }
 
-    void SlowLogModule::pushEntry(const std::string &cmd_str, MSocket::MSocketPtr sock, 
-                            std::chrono::steady_clock::time_point start, 
-                            std::chrono::steady_clock::time_point end)
+    void SlowLogModule::pushEntry(const std::string &cmd_str, MSocket::MSocketPtr sock,
+                                  std::chrono::steady_clock::time_point start,
+                                  std::chrono::steady_clock::time_point end)
     {
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-        if (duration.count() > m_slow_log_slower_than.load(std::memory_order_acquire))
+        if (duration.count() > s_slow_log_slower_than.load(std::memory_order_acquire))
         {
             SlowLogEntry entry{
                 ++m_slow_log_id,
@@ -40,6 +43,7 @@ namespace blue
     {
         std::vector<RespValue> results;
         std::shared_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);
+        // 获取最新的std::min(count,size)条
         size_t start = m_slow_logs_cache.size() - std::min((size_t)(count), m_slow_logs_cache.size());
         for (size_t i = start; i < m_slow_logs_cache.size(); i++)
         {
@@ -51,8 +55,8 @@ namespace blue
 
             // 时间戳微秒
             auto ts = std::chrono::duration_cast<std::chrono::microseconds>(
-                            entry.timestamp.time_since_epoch())
-                            .count();
+                          entry.timestamp.time_since_epoch())
+                          .count();
             log_entry.push_back(*RespValue::integer(ts));
 
             // 执行时间(微秒)

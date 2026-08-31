@@ -19,10 +19,11 @@ namespace blue
 
         // 时间单位映射
         static const std::vector<TimeUnit> TIME_UNITS = {
-            {"h", 60 * 60 * 1000},
-            {"m", 60 * 1000},
-            {"s", 1000},
-            {"ms", 1}};
+            {"h", 60ULL * 60 * 1000 * 1000},
+            {"m", 60ULL * 1000 * 1000},
+            {"s", 1000ULL * 1000},
+            {"ms", 1000ULL},
+            {"us", 1ULL}};
 
         std::optional<size_t> ConfigParser::ParseSize(const std::string &val)
         {
@@ -137,7 +138,7 @@ namespace blue
             return std::to_string(val) + SIZE_UNITS[4].suffix;
         }
 
-        std::optional<std::chrono::milliseconds> ConfigParser::ParseTime(const std::string &input)
+        std::optional<std::chrono::microseconds> ConfigParser::ParseTime(const std::string &input)
         {
             if (input.empty())
             {
@@ -186,10 +187,10 @@ namespace blue
             std::string unit_str = str.substr(i);
             std::transform(unit_str.begin(), unit_str.end(), unit_str.begin(), ::tolower);
 
-            // 如果没有单位，默认是毫秒
+            // 如果没有单位，默认是微秒
             if (unit_str.empty())
             {
-                return std::chrono::milliseconds(static_cast<long long>(value));
+                return std::chrono::microseconds(static_cast<long long>(value));
             }
 
             // 查找单位
@@ -197,7 +198,7 @@ namespace blue
             {
                 if (unit_str == unit.suffix)
                 {
-                    return std::chrono::milliseconds(
+                    return std::chrono::microseconds(
                         static_cast<long long>(value * unit.multiplier));
                 }
             }
@@ -205,47 +206,51 @@ namespace blue
             return std::nullopt;
         }
 
-        std::string ConfigParser::FormatTime(std::chrono::microseconds ms)
+        std::string ConfigParser::FormatTime(std::chrono::microseconds us, int precision)
         {
-            long long total_ms = ms.count();
+            long long total_us = us.count();
 
-            if (total_ms == 0)
+            if (total_us == 0)
             {
-                return "0ms";
+                return "0us";
             }
 
             // 从大到小尝试
             for (const auto &unit : TIME_UNITS)
             {
-                if (total_ms >= unit.multiplier && total_ms % unit.multiplier == 0)
+                if (total_us >= unit.multiplier && total_us % unit.multiplier == 0)
                 {
-                    return std::to_string(total_ms / unit.multiplier) + unit.suffix;
+                    return std::to_string(total_us / unit.multiplier) + unit.suffix;
                 }
             }
 
-            if (total_ms >= TIME_UNITS[0].multiplier)
+            std::ostringstream oss;
+            if (total_us >= TIME_UNITS[0].multiplier)
             {
-                double hours = total_ms / static_cast<double>(TIME_UNITS[0].multiplier);
-                std::ostringstream oss;
-                oss << std::fixed << std::setprecision(2) << hours << TIME_UNITS[0].suffix;
+                double hours = total_us / static_cast<double>(TIME_UNITS[0].multiplier);
+                oss << std::fixed << std::setprecision(precision) << hours << TIME_UNITS[0].suffix;
                 return oss.str();
             }
-            else if (total_ms >= TIME_UNITS[1].multiplier)
+            else if (total_us >= TIME_UNITS[1].multiplier)
             {
-                double min = total_ms / static_cast<double>(TIME_UNITS[1].multiplier);
-                std::ostringstream oss;
-                oss << std::fixed << std::setprecision(2) << min << TIME_UNITS[1].suffix;
+                double min = total_us / static_cast<double>(TIME_UNITS[1].multiplier);
+                oss << std::fixed << std::setprecision(precision) << min << TIME_UNITS[1].suffix;
                 return oss.str();
             }
-            else if (total_ms >= TIME_UNITS[2].multiplier)
+            else if (total_us >= TIME_UNITS[2].multiplier)
             {
-                double sec = total_ms / static_cast<double>(TIME_UNITS[2].multiplier);
-                std::ostringstream oss;
-                oss << std::fixed << std::setprecision(2) << sec << TIME_UNITS[2].suffix;
+                double sec = total_us / static_cast<double>(TIME_UNITS[2].multiplier);
+                oss << std::fixed << std::setprecision(precision) << sec << TIME_UNITS[2].suffix;
+                return oss.str();
+            }
+            else if (total_us >= TIME_UNITS[3].multiplier)
+            {
+                double ms = total_us / static_cast<double>(TIME_UNITS[3].multiplier);
+                oss << std::fixed << std::setprecision(precision) << ms << TIME_UNITS[3].suffix;
                 return oss.str();
             }
 
-            return std::to_string(total_ms) + TIME_UNITS[3].suffix;
+            return std::to_string(total_us) + TIME_UNITS[4].suffix;
         }
 
         bool ConfigParser::ParseBool(const std::string &input)

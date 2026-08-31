@@ -1,6 +1,6 @@
 /**
  * @file loadConfig.h
- * @brief 从Yaml文件中加载一些自定义数据类型，并提供类型和string的转化
+ * @brief 从Yaml文件中加载日志系统相关配置，并提供类型和string的转化
  * @author blue
  * @email homeheyang@outlook.com
  * @date 2026.8.30
@@ -31,6 +31,14 @@ namespace blue
                    rotate_file_num == rhs.rotate_file_num &&
                    rotate_file_size == rhs.rotate_file_size;
         }
+
+        friend std::ostream &operator<<(std::ostream &os, const LogRotateDefine &lhs)
+        {
+            os << "rotate_filename: " << lhs.rotate_filename << "\n"
+               << "rotate_file_size: " << lhs.rotate_file_size << "\n"
+               << "rotate_file_num: " << lhs.rotate_file_num;
+            return os;
+        }
     };
 
     // 从string -> LogRotateDefine
@@ -44,25 +52,38 @@ namespace blue
             LogRotateDefine res;
             if (!node["rotate_filename"].IsDefined())
             {
-                std::cout << "log config is error, LogRotateDefine.rotate_filename is null "
-                          << __FILE__ << __LINE__ << "\n["
-                          << node << "]" << std::endl;
-                return LogRotateDefine();
+                std::cerr << "LogRotateDefine.rotate_filename is null "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default filename: "
+                          << res.rotate_filename
+                          << std::endl;
             }
-            res.rotate_filename = node["rotate_filename"].as<std::string>();
+            else
+            {
+                res.rotate_filename = node["rotate_filename"].as<std::string>();
+            }
             if (!node["rotate_file_num"].IsDefined())
             {
-                std::cout << "log config is error, LogRotateDefine.rotate_file_num is null "
-                          << __FILE__ << __LINE__ << "\n["
-                          << node << "]" << std::endl;
+                std::cerr << "log config is error, LogRotateDefine.rotate_file_num is null "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default LogRotateDefine value, "
+                          << "this yaml configuration file will not be used"
+                          << LogRotateDefine()
+                          << std::endl;
                 return LogRotateDefine();
             }
             res.rotate_file_num = node["rotate_file_num"].as<uint32_t>();
             if (!node["rotate_file_size"].IsDefined())
             {
-                std::cout << "log config is error, LogRotateDefine.rotate_file_size is null "
-                          << __FILE__ << __LINE__ << "\n["
-                          << node << "]" << std::endl;
+                std::cerr << "log config is error, LogRotateDefine.rotate_file_size is null "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default LogRotateDefine value, "
+                          << "this yaml configuration file will not be used"
+                          << LogRotateDefine()
+                          << std::endl;
                 return LogRotateDefine();
             }
             std::string tem_val = node["rotate_file_size"].as<std::string>();
@@ -73,6 +94,11 @@ namespace blue
             }
             else
             {
+                std::cerr << "log config is error, LogRotateDefine.rotate_file_size is invalid "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default rotate_file_size: 1K"
+                          << std::endl;
                 res.rotate_file_size = 1024;
             }
             return res;
@@ -154,9 +180,12 @@ namespace blue
             LogAppenderDefine p;
             if (!node["name"].IsDefined())
             {
-                std::cout << "log config error LogAppenderDefine.name is null "
-                          << __FILE__ << " " << __LINE__ << "\n["
-                          << node << "]" << std::endl;
+                std::cerr << "log config error LogAppenderDefine.name is null "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default LogAppenderDefine value, "
+                          << "this yaml configuration file will not be used"
+                          << std::endl;
                 return LogAppenderDefine();
             }
 
@@ -164,8 +193,12 @@ namespace blue
 
             if (!node["type"].IsDefined())
             {
-                std::cout << "log config error LogAppenderDefine.type is null"
-                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
+                std::cerr << "log config error LogAppenderDefine.type is null"
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default LogAppenderDefine value, "
+                          << "this yaml configuration file will not be used"
+                          << std::endl;
                 return LogAppenderDefine();
             }
 
@@ -175,8 +208,12 @@ namespace blue
                 p.type = 1;
                 if (!node["file"].IsDefined())
                 {
-                    std::cout << "log config error LogAppenderDefine.file is null "
-                              << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
+                    std::cerr << "log config error LogAppenderDefine.file is null "
+                              << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                              << node << "\n"
+                              << "I will use default LogAppenderDefine value, "
+                              << "this yaml configuration file will not be used"
+                              << std::endl;
                     return LogAppenderDefine();
                 }
                 p.file = node["file"].as<std::string>();
@@ -187,8 +224,12 @@ namespace blue
             }
             else
             {
-                std::cout << "log config error LogAppenderDefine.type is invalid "
-                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
+                std::cerr << "log config error LogAppenderDefine.type is invalid "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default LogAppenderDefine value, "
+                          << "this yaml configuration file will not be used"
+                          << std::endl;
                 return LogAppenderDefine();
             }
 
@@ -247,8 +288,12 @@ namespace blue
 
             if (!node["name"].IsDefined())
             {
-                std::cout << " log error val.LogDefine.name is null "
-                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
+                std::cerr << " log error val.LogDefine.name is null "
+                          << __FILE__ << " " << __LINE__ << "\nnode\n"
+                          << node << "\n"
+                          << "I will use default LogDefine value, "
+                          << "this yaml configuration file will not be used"
+                          << std::endl;
                 return LogDefine();
             }
 
@@ -272,8 +317,10 @@ namespace blue
 
                     if (!appender_node["type"].IsDefined())
                     {
-                        std::cout << "log config error val.LogAppenderDefine.type is null "
-                                  << __FILE__ << " " << __LINE__ << "\n[" << appender_node << "]" << std::endl;
+                        std::cerr << "log config error val.LogAppenderDefine.type is null "
+                                  << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                                  << appender_node << "\n"
+                                  << std::endl;
                         continue;
                     }
 
@@ -283,8 +330,10 @@ namespace blue
                         appender.type = 1;
                         if (!appender_node["file"].IsDefined())
                         {
-                            std::cout << "log config error val.LogAppenderDefine.file is null "
-                                      << __FILE__ << " " << __LINE__ << "\n[" << appender_node << "]" << std::endl;
+                            std::cerr << "log config error val.LogAppenderDefine.file is null "
+                                      << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                                      << appender_node << "\n"
+                                      << std::endl;
                             continue;
                         }
                         appender.file = appender_node["file"].as<std::string>();
@@ -295,8 +344,10 @@ namespace blue
                     }
                     else
                     {
-                        std::cout << "log config error val.LogAppenderDefine.type is invalid "
-                                  << __FILE__ << " " << __LINE__ << "\n[" << appender_node << "]" << std::endl;
+                        std::cerr << "log config error val.LogAppenderDefine.type is invalid "
+                                  << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                                  << appender_node << "\n"
+                                  << std::endl;
                         continue;
                     }
 
@@ -368,141 +419,4 @@ namespace blue
             return ss.str();
         }
     };
-
-    namespace redisServerAOFConfig
-    {
-        static std::string aof_name = "appendonly.aof";     // 作为一个锚点，让std::atomic<const char*>内部使用的值的内存指向aof_name
-        enum class AOFSyncStrategy : uint8_t
-        {
-            ALWAYS = 0,
-            EVERYSEC = 1,
-            NO = 2
-        };
-
-        // 辅助转换函数
-        inline AOFSyncStrategy stringToSyncStrategy(const std::string &str)
-        {
-            if (str == "always")
-            {
-                return AOFSyncStrategy::ALWAYS;
-            }
-            if (str == "no")
-            {
-                return AOFSyncStrategy::NO;
-            }
-            return AOFSyncStrategy::EVERYSEC; // 默认
-        }
-
-        inline std::string syncStrategyToString(AOFSyncStrategy strategy)
-        {
-            switch (strategy)
-            {
-            case AOFSyncStrategy::ALWAYS:
-                return "always";
-            case AOFSyncStrategy::NO:
-                return "no";
-            default:
-                return "everysec";
-            }
-        }
-    }
-
-    // 从yaml文件加载出来的Redis AOF
-    struct AOFConfigDefine
-    {
-        // AOF
-        bool aof_enabled = false;                    // 是否开启aof
-        std::string aof_filename = "appendonly.aof"; // 文件模板名
-        size_t aof_max_file_size = 1024 * 1024;      // 每个文件最大大小
-        size_t aof_max_file_number = 5;              // 保留5个aof文件
-        redisServerAOFConfig::AOFSyncStrategy aof_sync =
-            redisServerAOFConfig::AOFSyncStrategy::EVERYSEC; // 保存策略,always(0), everysec(1), no(2)
-
-        bool operator==(const AOFConfigDefine &rhs) const
-        {
-            return aof_enabled == rhs.aof_enabled &&
-                   aof_filename == rhs.aof_filename &&
-                   aof_max_file_number == rhs.aof_max_file_number &&
-                   aof_max_file_size == rhs.aof_max_file_size &&
-                   aof_sync == rhs.aof_sync;
-        }
-    };
-
-    // 特化string -> AOFConfigDefine
-    template <>
-    class LexicalCast<std::string, AOFConfigDefine>
-    {
-    public:
-        AOFConfigDefine operator()(const std::string &val)
-        {
-            YAML::Node node = YAML::Load(val);
-            AOFConfigDefine res;
-            if (!node["aof_enabled"].IsDefined())
-            {
-                std::cout << "AOF configuration error, aof_enabled is null "
-                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
-                return AOFConfigDefine();
-            }
-            res.aof_enabled = node["aof_enabled"].as<bool>();
-
-            if (!node["aof_filename"].IsDefined())
-            {
-                std::cout << "AOF configuration error, aof_filename is null "
-                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
-                return AOFConfigDefine();
-            }
-            res.aof_filename = node["aof_filename"].as<std::string>();
-
-            if (!node["aof_max_file_size"].IsDefined())
-            {
-                std::cout << "AOF configuration error, aof_max_file_size is null "
-                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
-                return AOFConfigDefine();
-            }
-            std::string tmp_max_file_size = node["aof_max_file_size"].as<std::string>();
-            auto max_file_size = util::ConfigParser::ParseSize(tmp_max_file_size);
-            if (max_file_size.has_value())
-            {
-                res.aof_max_file_size = *max_file_size;
-            }
-
-            if (!node["aof_max_file_number"].IsDefined())
-            {
-                std::cout << "AOF configuration error, aof_max_file_number is null "
-                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
-                return AOFConfigDefine();
-            }
-            res.aof_max_file_number = node["aof_max_file_number"].as<size_t>();
-
-            if (!node["aof_sync"].IsDefined())
-            {
-                std::cout << "AOF configuration error, aof_sync is null "
-                          << __FILE__ << " " << __LINE__ << "\n[" << node << "]" << std::endl;
-                return AOFConfigDefine();
-            }
-            std::string tem_sync = node["aof_sync"].as<std::string>();
-            res.aof_sync = redisServerAOFConfig::stringToSyncStrategy(tem_sync);
-            return res;
-        }
-    };
-
-    // 特化AOFConfigDefine -> string
-    template <>
-    class LexicalCast<AOFConfigDefine, std::string>
-    {
-    public:
-        std::string operator()(const AOFConfigDefine &val)
-        {
-            YAML::Node node;
-            node["aof_enabled"] = val.aof_enabled;
-            node["aof_filename"] = val.aof_filename;
-            node["aof_max_file_size"] = util::ConfigParser::FormatSize(val.aof_max_file_size);
-            node["aof_max_file_number"] = val.aof_max_file_number;
-            node["aof_sync"] = redisServerAOFConfig::syncStrategyToString(val.aof_sync);
-            std::stringstream ss;
-            ss << node;
-            return ss.str();
-        }
-    };
-
 }

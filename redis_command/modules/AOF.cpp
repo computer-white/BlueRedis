@@ -8,12 +8,12 @@
 namespace blue
 {
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
-    extern std::atomic<bool> s_aof_enabled;
-    extern std::atomic<const char*> s_aof_filename;
-    extern std::atomic<size_t> s_aof_max_file_size;
-    extern std::atomic<size_t> s_aof_max_file_number;
-    extern std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync;
-    extern std::atomic<size_t> s_aof_max_buffer_size;
+    extern std::atomic<bool> s_aof_enabled;                               // 是否开启aof
+    extern std::atomic<const char *> s_aof_filename;                      // 文件模板名
+    extern std::atomic<size_t> s_aof_max_file_size;                       // 每个文件最大大小
+    extern std::atomic<size_t> s_aof_max_file_number;                     // 保留aof文件数量
+    extern std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync; // 保存策略,always(0), everysec(1), no(2)
+    extern std::atomic<size_t> s_aof_max_buffer_size;                     // aof异步写入文件的最大缓冲区大小
 
     void AOFModule::initAOF()
     {
@@ -169,7 +169,7 @@ namespace blue
         }
 
         BLUE_LOG_INFO(g_logger) << "AOF loaded: " << total_cmds
-                                    << " commands, errors: " << errors;
+                                << " commands, errors: " << errors;
     }
 
     bool AOFModule::isWriteCommand(const std::string &cmd)
@@ -252,10 +252,9 @@ namespace blue
         m_aof_rotating.store(true, std::memory_order_release);
 
         BLUE_LOG_INFO(g_logger) << "AOF rotation started, current file: "
-                                    << m_aof_current_filename
-                                    << ", idx: " << m_aof_file_idx
-                                    // << ", max_file_number: " << m_aof_config.aof_max_file_number;
-                                    << ", max_file_number: " << s_aof_max_file_number.load(std::memory_order_acquire);
+                                << m_aof_current_filename
+                                << ", idx: " << m_aof_file_idx
+                                << ", max_file_number: " << s_aof_max_file_number.load(std::memory_order_acquire);
 
         std::unique_lock<std::shared_mutex> lock(m_aof_mutex);
         if (m_aof_file.is_open())
@@ -386,9 +385,7 @@ namespace blue
                 std::unique_lock<std::mutex> lock(m_aof_buffer.aof_mutex);
 
                 m_aof_buffer.aof_cv.wait_for(lock, std::chrono::milliseconds(100), [this]()
-                                            { return m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire) > 0 
-                                                || !m_aof_flush_running.load(std::memory_order_acquire) 
-                                                || m_stop.load(std::memory_order_acquire); });
+                                             { return m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire) > 0 || !m_aof_flush_running.load(std::memory_order_acquire) || m_stop.load(std::memory_order_acquire); });
 
                 if (m_aof_buffer.aof_buffer_size.load(std::memory_order_acquire) == 0)
                 {
@@ -430,8 +427,8 @@ namespace blue
                     }
 
                     size_t curr_size = m_aof_file.tellp();
-                    if (curr_size > s_aof_max_file_size.load(std::memory_order_acquire) && 
-                    !m_aof_rotating.load(std::memory_order_acquire))
+                    if (curr_size > s_aof_max_file_size.load(std::memory_order_acquire) &&
+                        !m_aof_rotating.load(std::memory_order_acquire))
                     {
                         file_lock.unlock();
                         rotateAOF();

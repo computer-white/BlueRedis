@@ -363,7 +363,7 @@ namespace blue
         if (m_formatter->getHasError())
         {
             MutexType::WritelockSco lock(m_mutex);
-            std::cout << " Logger::setFormatter(const std::string& ) Error, name is "
+            std::cerr << " Logger::setFormatter(const std::string& ) Error, name is "
                       << m_name << " pattern is " << rhs << std::endl;
             return;
         }
@@ -406,7 +406,7 @@ namespace blue
             else
             {
                 MutexType::WritelockSco lock(m_mutex);
-                std::cout << " No appender configured for root logger! " << __FILE__
+                std::cerr << " No appender configured for root logger! " << __FILE__
                           << " " << __LINE__ << std::endl;
             }
         }
@@ -535,12 +535,12 @@ namespace blue
     {
         if (logSystemConfig::g_logRotateDefine_config_ptr->getValue().rotate_file_num == 0)
         {
-            std::cout << "max_file_number is 0, cannot rotate" << std::endl;
+            std::cerr << "max_file_number is 0, cannot rotate" << std::endl;
             return;
         }
         if (m_rotating.load(std::memory_order_acquire))
         {
-            std::cout << "logs rotation already in progress" << std::endl;
+            std::cerr << "logs rotation already in progress" << std::endl;
             return;
         }
 
@@ -567,11 +567,11 @@ namespace blue
             if (truncate_file)
             {
                 truncate_file.close();
-                std::cout << "Truncated old log file: " << newfile << std::endl;
+                std::cerr << "Truncated old log file: " << newfile << std::endl;
             }
             else
             {
-                std::cout << "Failed to truncate old log file: " << newfile << std::endl;
+                std::cerr << "Failed to truncate old log file: " << newfile << std::endl;
                 m_rotating.store(false, std::memory_order_release);
                 return;
             }
@@ -580,7 +580,7 @@ namespace blue
         m_filestream.open(newfile, std::ios::app);
         if (!m_filestream)
         {
-            std::cout << "Failed to open new log file: " << newfile << std::endl;
+            std::cerr << "Failed to open new log file: " << newfile << std::endl;
             m_rotating.store(false, std::memory_order_release);
             return;
         }
@@ -612,11 +612,11 @@ namespace blue
             test.close();
             if (remove(file.c_str()) == 0)
             {
-                std::cout << "Remove old logs file " << file << std::endl;
+                std::cerr << "Remove old logs file " << file << std::endl;
             }
             else
             {
-                std::cout << "Failed to remove old logs file: " << file << std::endl;
+                std::cerr << "Failed to remove old logs file: " << file << std::endl;
                 return false;
             }
         }
@@ -660,7 +660,7 @@ namespace blue
         std::string formatted = formatter->format(logger_ptr, level, event);
         {
             MutexType::lockSco lock(m_mutex);
-            std::cout << formatted << std::endl;
+            std::cerr << formatted << std::endl;
         }
     }
 
@@ -783,7 +783,7 @@ namespace blue
             }
             else if (fmt_status == 1)
             {
-                std::cout << "pattern parse error: " << m_pattern << " - "
+                std::cerr << "pattern parse error: " << m_pattern << " - "
                           << m_pattern.substr(i) << std::endl;
                 vec.emplace_back("<<pattern_error>>", fmt, 0);
                 m_HasError.store(true, std::memory_order_release);
@@ -846,7 +846,7 @@ namespace blue
                 }
             }
 
-            // std::cout << "(" << str << ") - (" << fmt << ") - (" << type << ")" << std::endl;
+            // std::cerr << "(" << str << ") - (" << fmt << ") - (" << type << ")" << std::endl;
         }
 
         /*
@@ -869,7 +869,7 @@ namespace blue
         {
             it->format(ss, logger_ptr, level, event);
         }
-        // std::cout << m_items.size() << std::endl;
+        // std::cerr << m_items.size() << std::endl;
         return ss.str();
     }
 
