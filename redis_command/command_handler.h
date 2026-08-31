@@ -76,6 +76,11 @@ namespace blue
         std::vector<RespValue> executeBatch(std::vector<std::vector<RespValue>> batch_commands,
                                             MSocket::MSocketPtr sock, bool RecordAOF);
 
+        /**
+         * @brief 关闭服务器
+         */
+        bool ShutDownServer();
+
     protected:
         /**
          * @brief 处理client事件
@@ -119,6 +124,7 @@ namespace blue
     private:
         std::shared_ptr<ServerData<T>> m_server;
         CommandHandlerTable<T> m_table;
+        std::vector<MSocket::MSocketWPtr> m_clients;
     };
 
     template <typename T>
@@ -148,6 +154,7 @@ namespace blue
         }
         m_server->setPassword(s_admin_password);
         m_server->getAOF().setLastAOFSync(SteadyClock::now());
+        m_clients.reserve(m_server->getMaxClientCount());
     }
 
     template <typename T>
@@ -160,6 +167,24 @@ namespace blue
         m_server->getAOF().stopAOFFlushThread();                      // 停止stopAOFFlushThread
         m_server->saveToFile();                                       // 保存进入rdb
         m_server->getAOF().closeAOFWithFlush();                       // 刷新并关闭AOF写入文件流
+    }
+
+    template <typename T>
+    bool CommandHandler<T>::ShutDownServer()
+    {
+        for (auto wptr : m_clients)
+        {
+            if (wptr.expired())
+            {
+                continue;
+            }
+            auto ptr = wptr.lock();
+            if (ptr)
+            {
+                ptr->shutdown(SHUT_RDWR);
+            }
+        }
+        return true;
     }
 
     template <typename T>
@@ -181,6 +206,7 @@ namespace blue
     template <typename T>
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
+        m_clients.push_back(sock);
         BLUE_LOG_INFO(xx::g_logger) << "generator";
         BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
         // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
@@ -221,6 +247,8 @@ namespace blue
         {
             if (m_server->getShutdown().load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
             {
+                // 关闭服务器
+                this->ShutDownServer();
                 break;
             }
             char tmp[8192];
@@ -329,6 +357,8 @@ clean:
     template <typename T>
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
+        // 收集连接上来的客户端sock
+        m_clients.push_back(sock);
         BLUE_LOG_INFO(xx::g_logger) << "batch_commands";
         BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
         // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
@@ -399,6 +429,8 @@ clean:
         {
             if (m_server->getShutdown().load(std::memory_order_acquire) || TcpServer<T>::getIsStop())
             {
+                // 关闭服务器
+                this->ShutDownServer();
                 break;
             }
             char tmp[8192];

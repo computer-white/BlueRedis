@@ -1110,10 +1110,14 @@ PONG
             avg       min       p50       p95       p99       max
             1.399     0.016     1.335     1.607     2.183   368.127
 ### 关闭服务器(比较繁琐)
+#### 1.使用管理员登录进去，输入shutdown
     blue@Plus:~/c_projects/newblue$ redis-cli -p 6666
     127.0.0.1:6666> auth admin123
     OK
     127.0.0.1:6666> shutdown
     "OK - waiting for clients to disconnect"
     127.0.0.1:6666> exit
+#### 2.直接按ctrl + c
+    ctrl + c
+
 ## 欢迎提交 Issue 和 Pull Request！

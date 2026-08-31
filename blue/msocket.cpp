@@ -306,7 +306,7 @@ namespace blue
 
     bool MSocket::close()
     {
-        // 已经关闭或没有正确初始化
+        // 已经关闭直接退出
         if (!m_isConnected && m_sockfd == -1)
         {
             return true;

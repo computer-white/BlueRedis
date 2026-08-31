@@ -10,6 +10,13 @@
 using namespace blue;
 static Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();
 
+std::atomic<bool> g_running{true};
+
+void signalHandler(int signum)
+{
+    g_running.store(false, std::memory_order_release);
+}
+
 Task<void> runServer(const std::string host)
 {
     auto address = Address::LookupAnyIpAddress(host);
@@ -29,10 +36,11 @@ Task<void> runServer(const std::string host)
         BLUE_LOG_INFO(g_logger) << "Server started successfully on port 6666";
     }
     // 保持服务器运行，直到收到停止信号
-    while (!comm->getIsStop())
+    while (g_running.load(std::memory_order_acquire) && !comm->getIsStop())
     {
         co_await sleepFor(1);
     }
+    comm->ShutDownServer();
     BLUE_LOG_INFO(g_logger) << "Server stopped";
     IOManager::GetThis()->clear();
     co_return;
@@ -53,6 +61,8 @@ void print_usage(const char *prog_name)
 
 int main(int argc, char *argv[])
 {
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
     // 默认配置
     std::string bind_host = "127.0.0.1";
     std::string port = "6666";
