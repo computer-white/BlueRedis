@@ -1121,3 +1121,6 @@ PONG
     ctrl + c
 
 ## 欢迎提交 Issue 和 Pull Request！
+
+## License
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE.md](LICENSE.md) file for details.

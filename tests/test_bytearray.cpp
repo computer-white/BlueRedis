@@ -1,3 +1,8 @@
+/*
+ * BlueRedis - Test file
+ * Copyright (C) 2026 blue
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 #include "blue/bytearray.h"
 #include "blue/log.h"
 #include "blue/macro.h"

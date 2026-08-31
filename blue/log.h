@@ -1,3 +1,20 @@
+/*
+ * BlueRedis - High Performance Redis Server based on C++20 Coroutine
+ * Copyright (C) 2026 blue
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 /**
  * @file log.h
  * @brief 日志系统，几乎完全按照sylar版本写的，但在内部实现细节上，比如一些日志的输出采用无锁是自己写的
@@ -37,24 +54,6 @@
 #define BLUE_LOG_WARN(logger) BLUE_LOG_LEVER(logger, blue::Level::WARN)
 #define BLUE_LOG_ERROR(logger) BLUE_LOG_LEVER(logger, blue::Level::ERROR)
 #define BLUE_LOG_FATAL(logger) BLUE_LOG_LEVER(logger, blue::Level::FATAL)
-
-// format输出
-#define BLUE_LOG_FORMAT_LEVEL(logger, fmt, level, ...)                                                                                        \
-    if (logger->getlevel() <= level)                                                                                                          \
-    blue::LogEventWrap(blue::LogEvent::LogEventPtr(new blue::LogEvent(logger, level, __FILE__,                                                \
-                                                                      std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()), \
-                                                                      __LINE__, 0,                                                            \
-                                                                      blue::GetThreadId(),                                                    \
-                                                                      blue::GetFiberID(),                                                     \
-                                                                      blue::Mthread::GetName())))                                             \
-        .getEvent()                                                                                                                           \
-        ->format(fmt, ##__VA_ARGS__)
-
-#define BLUE_LOG_FORMAT_DEBUGE(logger, fmt, ...) BLUE_LOG_FORMAT_LEVEL(logger, fmt, blue::Level::DEBUG, ##__VA_ARGS__)
-#define BLUE_LOG_FORMAT_INFO(logger, fmt, ...) BLUE_LOG_FORMAT_LEVEL(logger, fmt, blue::Level::INFO, ##__VA_ARGS__)
-#define BLUE_LOG_FORMAT_WARN(logger, fmt, ...) BLUE_LOG_FORMAT_LEVEL(logger, fmt, blue::Level::WARN, ##__VA_ARGS__)
-#define BLUE_LOG_FORMAT_ERROR(logger, fmt, ...) BLUE_LOG_FORMAT_LEVEL(logger, fmt, blue::Level::ERROR, ##__VA_ARGS__)
-#define BLUE_LOG_FORMAT_FATAL(logger, fmt, ...) BLUE_LOG_FORMAT_LEVEL(logger, fmt, blue::Level::FATAL, ##__VA_ARGS__)
 
 // 输出LogMessageRoot,默认输出到控制台
 #define BLUE_LOG_MASSAGE_ROOT() blue::LoggerMgr::GetInstance()->getRoot()

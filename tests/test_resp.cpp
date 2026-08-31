@@ -1,3 +1,8 @@
+/*
+ * BlueRedis - Test file
+ * Copyright (C) 2026 blue
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 #include "blue/resp_parser.h"
 #include <iostream>
 

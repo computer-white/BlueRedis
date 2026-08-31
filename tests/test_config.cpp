@@ -1,3 +1,8 @@
+/*
+ * BlueRedis - Test file
+ * Copyright (C) 2026 blue
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 #include <yaml-cpp/yaml.h>
 #include <iostream>
 #include "blue/config.h"

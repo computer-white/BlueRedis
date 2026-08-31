@@ -1,3 +1,8 @@
+/*
+ * BlueRedis - Test file
+ * Copyright (C) 2026 blue
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 #include "http/httpconnection.h"
 #include "blue/configinit.h"
 #include "blue/io_manager.h"
