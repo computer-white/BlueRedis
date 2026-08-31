@@ -1,6 +1,6 @@
 .vscode
 abseil-cpp
-thirdparty
+thirdparty/llhttp-release-v9.2.0
 bin
 lib
 build
