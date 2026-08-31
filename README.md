@@ -104,12 +104,39 @@ AOF：追加日志，支持 always、everysec、no 三种策略
 # 快速开始
 
 ## 编译
+```bash
     mkdir build && cd build
     cmake ..    # 默认是命令表
     make -j$(nproc)
+```
 
 ## 启动服务器
-    ../bin/test_commandHandler 127.0.0.1 6666
+
+### 1. Default (Localhost)
+```bash
+./bin/blueredis-server
+# Server started at 127.0.0.1:6666
+```
+
+### 2. Custom Host and Port
+```bash
+./bin/blueredis-server --bind 0.0.0.0 --port 6379
+# Or using short options
+./bin/blueredis-server -b 0.0.0.0 -p 6379
+```
+
+### 3. Show Help
+```bash
+./bin/blueredis-server --help
+```
+
+### 4. Connect with redis-cli
+```bash
+redis-cli -h 127.0.0.1 -p 6666
+127.0.0.1:6666> PING
+PONG
+```
+
 
 # 性能测试
 
@@ -1090,12 +1117,3 @@ AOF：追加日志，支持 always、everysec、no 三种策略
     "OK - waiting for clients to disconnect"
     127.0.0.1:6666> exit
 ## 欢迎提交 Issue 和 Pull Request！
-    
-
-
-
-
-
-
-
-

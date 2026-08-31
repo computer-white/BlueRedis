@@ -1,5 +1,6 @@
 #include <csignal>
 #include <atomic>
+#include <getopt.h>
 #include "redis_command/command_handler.h"
 #include "blue/address.h"
 #include "blue/task.h"
@@ -9,18 +10,8 @@
 using namespace blue;
 static Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();
 
-std::atomic<bool> g_running(true);
-IOManager* g_iom = nullptr;
-void signalHandler(int signum) {
-    BLUE_LOG_INFO(g_logger) << "Received signal " << signum << ", shutting down...";
-    g_running.store(false);
-}
-
-Task<void> test(const std::string host)
+Task<void> runServer(const std::string host)
 {
-    // // 注册信号处理
-    // signal(SIGINT, signalHandler);
-    // signal(SIGTERM, signalHandler);
     auto address = Address::LookupAnyIpAddress(host);
     if (!address)
     {
@@ -47,29 +38,63 @@ Task<void> test(const std::string host)
     co_return;
 }
 
-int main(int argc, char* argv[])
+void print_usage(const char *prog_name)
 {
-    if (argc != 3)
-    {
-        BLUE_LOG_INFO(g_logger) << "need host and port";
-        return -1;
-    }
-    const char* host = argv[1];
-    const char* port = argv[2];
-    BLUE_LOG_INFO(g_logger) << host << ":" << port;
-    std::string host_with_port;
-    host_with_port.append(host, strlen(host));
-    host_with_port += ":";
-    host_with_port.append(port, strlen(port));
+    std::cout << "Usage: " << prog_name << " [options]\n"
+              << "Options:\n"
+              << "  -b, --bind <ip>     Bind address (default: 127.0.0.1)\n"
+              << "  -p, --port <port>   Listen port (default: 6666)\n"
+              << "  -h, --help          Show this help message\n"
+              << "\nExample:\n"
+              << "  " << prog_name << "                    # Start with defaults\n"
+              << "  " << prog_name << " -b 0.0.0.0 -p 6379 # Bind all interfaces\n"
+              << "  " << prog_name << " --help             # Show help\n";
+}
 
-    BLUE_LOG_INFO(g_logger) << "main begin";
-    
+int main(int argc, char *argv[])
+{
+    // 默认配置
+    std::string bind_host = "127.0.0.1";
+    std::string port = "6666";
+
+    // 定义长参数选项
+    static struct option long_options[] = {
+        {"bind", required_argument, 0, 'b'},
+        {"port", required_argument, 0, 'p'},
+        {"help", no_argument, 0, 'h'},
+        {0, 0, 0, 0}};
+
+    int opt;
+    while ((opt = getopt_long(argc, argv, "b:p:h", long_options, nullptr)) != -1)
+    {
+        switch (opt)
+        {
+        case 'b':
+            bind_host = optarg;
+            break;
+        case 'p':
+            port = optarg;
+            break;
+        case 'h':
+            print_usage(argv[0]);
+            return 0;
+        default:
+            print_usage(argv[0]);
+            return 1;
+        }
+    }
+
+    // 构造地址字符串
+    std::string address_str = bind_host + ":" + port;
+    BLUE_LOG_INFO(g_logger) << "Starting BlueRedis with address: " << address_str;
+
+    // 启动调度器和服务器协程
     IOManager iom(2);
-    iom.schedule(test(host_with_port));
-    
-    BLUE_LOG_INFO(g_logger) << "calling wait_all()";
+    iom.schedule(runServer(address_str));
+
+    BLUE_LOG_INFO(g_logger) << "Event loop started, waiting for tasks...";
     iom.wait_all();
-    BLUE_LOG_INFO(g_logger) << "wait_all() returned";
-    
+    BLUE_LOG_INFO(g_logger) << "Event loop finished";
+
     return 0;
 }
