@@ -1,4 +1,6 @@
 .vscode
+abseil-cpp
+thirdparty
 bin
 lib
 build
