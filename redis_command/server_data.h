@@ -112,26 +112,6 @@ namespace blue
          */
         std::array<std::array<DataShard, SHARD_COUNT>, DB_COUNT> &getDBs() { return m_dbs; }
 
-        /**
-         * @brief 获取最大支持客户端数量
-         */
-        const int getMaxClientCount() const noexcept { return m_config.maxClients; }
-
-        /**
-         * @brief 获取客户端超时
-         */
-        const int32_t getTimeoutS() const noexcept { return m_config.timeout_s; }
-
-        /**
-         * @brief 设置最大支持客户端数量
-         */
-        void setMaxClientCount(int32_t val) noexcept { m_config.maxClients = val; }
-
-        /**
-         * @brief 设置客户端超时
-         */
-        void setTimeoutS(int32_t val) noexcept { m_config.timeout_s = val; }
-
         // ========== 统计 ==========
         std::atomic<uint32_t> &getCommands() { return m_commands; }
 
@@ -173,11 +153,6 @@ namespace blue
             return admin && admin == sock;
         }
 
-        // ========== 密码 ==========
-        const std::string &getPassword() const noexcept { return m_password; }
-
-        void setPassword(const std::string &val) noexcept { m_password = val; }
-
         // ========== 模块访问 ==========
         SubscriptionModule &getSubscription() { return m_subscription; }
 
@@ -195,6 +170,44 @@ namespace blue
         bool isPushMonitor() const { return m_push_monitor.load(std::memory_order_acquire); }
 
         void setPushMonitor(bool val) { m_push_monitor.store(val, std::memory_order_release); }
+
+        /**
+         * @brief 持久化到文件
+         */
+        void saveToFile();
+
+        /**
+         * @brief 从文件加载
+         */
+        void loadFromFile();
+
+        /**
+         * @brief 定期删除过期的命令
+         */
+        Task<void> expireTime();
+        void removeExpireCycle();
+
+        /**
+         * @brief 生产RDB 消息供 replication 使用
+         */
+        std::string generateRDB();
+
+        /**
+         * @brief 扫描键（完整实现）
+         * @param db 数据库编号
+         * @param cursor 游标（引用，会被更新）
+         * @param pattern 匹配模式
+         * @param count 每次返回数量
+         * @param keys 输出：匹配的键列表
+         * @return true 表示扫描完成，false 表示还有更多数据
+         */
+        bool scanKeys(int db, ScanCursor &cursor, const std::string &pattern,
+                      int count, std::vector<std::string> &keys);
+
+        /**
+         * @brief 获取数据库中所有键的总数
+         */
+        size_t getTotalKeys(int db) const;
 
         /**
          * @brief 获取 key 对应的分片
@@ -235,16 +248,6 @@ namespace blue
         }
 
         /**
-         * @brief 持久化到文件
-         */
-        void saveToFile();
-
-        /**
-         * @brief 从文件加载
-         */
-        void loadFromFile();
-
-        /**
          * @brief 获取key版本
          * @param key 键值
          * @param sock 封装的socket 类智能指针
@@ -262,12 +265,6 @@ namespace blue
             }
             return 0;
         }
-
-        /**
-         * @brief 定期删除过期的命令
-         */
-        Task<void> expireTime();
-        void removeExpireCycle();
 
         /**
          * @brief 格式化socre
@@ -302,28 +299,6 @@ namespace blue
          */
         uint32_t getRejectConnection() const noexcept { return m_tcpserver->getRejectConnection(); }
 
-        /**
-         * @brief 生产RDB 消息供 replication 使用
-         */
-        std::string generateRDB();
-
-        /**
-         * @brief 扫描键（完整实现）
-         * @param db 数据库编号
-         * @param cursor 游标（引用，会被更新）
-         * @param pattern 匹配模式
-         * @param count 每次返回数量
-         * @param keys 输出：匹配的键列表
-         * @return true 表示扫描完成，false 表示还有更多数据
-         */
-        bool scanKeys(int db, ScanCursor &cursor, const std::string &pattern,
-                      int count, std::vector<std::string> &keys);
-
-        /**
-         * @brief 获取数据库中所有键的总数
-         */
-        size_t getTotalKeys(int db) const;
-
     private:
         /**
          * @brief 通配符匹配
@@ -354,22 +329,10 @@ namespace blue
         TcpServer<T> *m_tcpserver = nullptr;
 
     private:
-        /* REDIS SERVER CONFIG */
-        struct CommConfig
-        {
-            int32_t maxClients = 1000; // 最大客户端数量
-            int32_t timeout_s = 0;     // 客户端超时(s)
-            std::string save;          // 保存策略
-        };
-
-        CommConfig m_config;
-
-    private:
         /* REDIS SERVER */
         std::array<std::array<DataShard, SHARD_COUNT>, DB_COUNT> m_dbs; // 数据库
         std::atomic<uint32_t> m_commands{0};                            // 总共命令数量
         std::atomic<bool> m_shutdown{false};                            // 服务器关闭标识
-        std::string m_password = "";                                    // 管理员密码
         std::atomic<time_t> m_last_time{0};                             // 上一次保存rdb文件时间
         std::atomic<bool> m_bgsave_running{false};                      // 后台保存rdb
         MSocket::MSocketWPtr m_admin_sock;                              // 用于同一时间只能一个管理员上线

@@ -1,4 +1,4 @@
- /*
+/*
  * BlueRedis - High Performance Redis Server based on C++20 Coroutine
  * Copyright (C) 2026 blue
  *
@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
- /**
+/**
  * @file command_handler.h
  * @brief redis server
  * @author blue
@@ -44,21 +44,6 @@
 
 namespace blue
 {
-    // redis-cli admin
-    static blue::ConfigVar<std::string>::ConfigVarPtr g_admin_password =
-        blue::Config::Lookup<std::string>("admin.password", "admin123", "admin password");
-
-    static std::string s_admin_password = "";
-    struct __AdminIniter__
-    {
-        __AdminIniter__()
-        {
-            s_admin_password = g_admin_password->getValue();
-            g_admin_password->addListener([](const std::string &old_val, const std::string &new_val)
-                                          { s_admin_password = new_val; });
-        }
-    };
-
     /**
      * @brief redis 服务器
      */
@@ -110,33 +95,33 @@ namespace blue
          * @brief 处理事务模式
          */
         AutoRespValue handleTransactionCommand(const std::string &cmd,
-                                           std::vector<RespValue> &args,
-                                           MSocket::MSocketPtr sock,
-                                           const TimePoint &start);
+                                               std::vector<RespValue> &args,
+                                               MSocket::MSocketPtr sock,
+                                               const TimePoint &start);
 
         /**
          * @brief 处理订阅模式
          */
         AutoRespValue handleSubscriptionCommand(const std::string &cmd,
-                                            std::vector<RespValue> &args,
-                                            MSocket::MSocketPtr sock,
-                                            const TimePoint &start);
+                                                std::vector<RespValue> &args,
+                                                MSocket::MSocketPtr sock,
+                                                const TimePoint &start);
 
         /**
          * @brief 处理进入事务或订阅模式
          */
         AutoRespValue handleModeSwitchCommand(const std::string &cmd,
-                                          std::vector<RespValue> &args,
-                                          MSocket::MSocketPtr sock,
-                                          const TimePoint &start);
+                                              std::vector<RespValue> &args,
+                                              MSocket::MSocketPtr sock,
+                                              const TimePoint &start);
 
         /**
          * @brief 处理发布订阅
          */
         AutoRespValue handlePublishCommand(const std::string &cmd,
-                                       std::vector<RespValue> &args,
-                                       MSocket::MSocketPtr sock,
-                                       const TimePoint &start);
+                                           std::vector<RespValue> &args,
+                                           MSocket::MSocketPtr sock,
+                                           const TimePoint &start);
 
     private:
         std::shared_ptr<ServerData<T>> m_server;
@@ -165,13 +150,8 @@ namespace blue
         m_server->getAOF().loadAOF();
         m_server->getAOF().initAOF(); // 初始化AOF,追加打开AOF文件,并开启AOF同步协程
         IOManager::GetThis()->schedule(m_server->expireTime());
-        if (s_admin_password.empty())
-        {
-            s_admin_password = "admin123";
-        }
-        m_server->setPassword(s_admin_password);
         m_server->getAOF().setLastAOFSync(SteadyClock::now());
-        m_clients.reserve(m_server->getMaxClientCount());
+        m_clients.reserve(s_redis_server_maxClients.load(std::memory_order_acquire));
     }
 
     template <typename T>
@@ -237,8 +217,6 @@ namespace blue
         batch_response.reserve(BATCH_SIZE);
         int cmd_count = 0;
 
-        const uint64_t timeout_ms = static_cast<uint64_t>(m_server->getTimeoutS()) * 1000ul;
-
         // 回复函数
         auto send_response = [&](std::string &data) -> Task<void>
         {
@@ -268,11 +246,12 @@ namespace blue
                 this->ShutDownServer();
                 break;
             }
+            const uint64_t timeout = s_redis_server_timeout.load(std::memory_order_acquire);
             char tmp[8192];
             ssize_t ret;
-            if (timeout_ms > 0)
+            if (timeout > 0)
             {
-                ret = co_await sock->recvT(tmp, sizeof(tmp), 0, timeout_ms);
+                ret = co_await sock->recvT(tmp, sizeof(tmp), 0, timeout);
             }
             else
             {
@@ -288,7 +267,7 @@ namespace blue
                 if (errno == ETIMEDOUT)
                 {
                     BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
-                                                << "] timeout (" << m_server->getTimeoutS() << "s), closing";
+                                                << "] timeout (" << util::ConfigParser::FormatTime(std::chrono::microseconds(timeout)) << "), closing";
                     break;
                 }
                 else if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -341,7 +320,7 @@ namespace blue
             }
 
         } while (true);
-clean:
+    clean:
         // 检查是否是管理员连接断开
         auto admin = m_server->getAdminSocket().lock();
         if (admin && admin.get() == sock.get())
@@ -391,8 +370,6 @@ clean:
         std::string batch_response;
         batch_response.reserve(BATCH_SIZE * 2);
         int cmd_count = 0;
-
-        const uint64_t timeout_ms = static_cast<uint64_t>(m_server->getTimeoutS()) * 1000ul;
 
         blue::AutoRespValue response;
 
@@ -450,11 +427,12 @@ clean:
                 this->ShutDownServer();
                 break;
             }
+            const uint64_t timeout = s_redis_server_timeout.load(std::memory_order_acquire);
             char tmp[8192];
             ssize_t ret;
-            if (timeout_ms > 0)
+            if (timeout > 0)
             {
-                ret = co_await sock->recvT(tmp, sizeof(tmp), 0, timeout_ms);
+                ret = co_await sock->recvT(tmp, sizeof(tmp), 0, timeout);
             }
             else
             {
@@ -470,7 +448,7 @@ clean:
                 if (errno == ETIMEDOUT)
                 {
                     BLUE_LOG_WARN(xx::g_logger) << "[client " << sock->getSocketfd()
-                                                << "] timeout (" << m_server->getTimeoutS() << "s), closing";
+                                                << "] timeout (" << util::ConfigParser::FormatTime(std::chrono::microseconds(timeout)) << "), closing";
                     break;
                 }
                 else if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -578,7 +556,7 @@ clean:
 
                 // batch_response += RespValue::encode(response);
                 response->encodeTo(batch_response);
-                response->reset();      // 清空但保留容量
+                response->reset(); // 清空但保留容量
                 cmd_count++;
                 m_server->incrementCommands();
 
@@ -649,9 +627,9 @@ clean:
 
     template <typename T>
     AutoRespValue CommandHandler<T>::handleTransactionCommand(const std::string &cmd,
-                                                          std::vector<RespValue> &args,
-                                                          MSocket::MSocketPtr sock,
-                                                          const TimePoint &start)
+                                                              std::vector<RespValue> &args,
+                                                              MSocket::MSocketPtr sock,
+                                                              const TimePoint &start)
     {
         if (cmd == "EXEC") // EXEC
         {
@@ -712,9 +690,9 @@ clean:
 
     template <typename T>
     AutoRespValue CommandHandler<T>::handleSubscriptionCommand(const std::string &cmd,
-                                                           std::vector<RespValue> &args,
-                                                           MSocket::MSocketPtr sock,
-                                                           const TimePoint &start)
+                                                               std::vector<RespValue> &args,
+                                                               MSocket::MSocketPtr sock,
+                                                               const TimePoint &start)
     {
         if (cmd == "UNSUBSCRIBE") // UNSUBSCRIBE [channel...], 并退出订阅模式
         {
@@ -784,9 +762,9 @@ clean:
 
     template <typename T>
     AutoRespValue CommandHandler<T>::handleModeSwitchCommand(const std::string &cmd,
-                                                         std::vector<RespValue> &args,
-                                                         MSocket::MSocketPtr sock,
-                                                         const TimePoint &start)
+                                                             std::vector<RespValue> &args,
+                                                             MSocket::MSocketPtr sock,
+                                                             const TimePoint &start)
     {
         if (cmd == "MULTI") // MULTI, 进入事务模式
         {
@@ -850,9 +828,9 @@ clean:
 
     template <typename T>
     AutoRespValue CommandHandler<T>::handlePublishCommand(const std::string &cmd,
-                                                      std::vector<RespValue> &args,
-                                                      MSocket::MSocketPtr sock,
-                                                      const TimePoint &start)
+                                                          std::vector<RespValue> &args,
+                                                          MSocket::MSocketPtr sock,
+                                                          const TimePoint &start)
     {
         if (sock->getClientlevel() < 1)
         {

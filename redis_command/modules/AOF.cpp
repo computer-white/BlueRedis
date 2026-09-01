@@ -25,12 +25,12 @@
 namespace blue
 {
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
-    extern std::atomic<bool> s_aof_enabled;                               // 是否开启aof
-    extern std::atomic<const char *> s_aof_filename;                      // 文件模板名
-    extern std::atomic<size_t> s_aof_max_file_size;                       // 每个文件最大大小
-    extern std::atomic<size_t> s_aof_max_file_number;                     // 保留aof文件数量
-    extern std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync; // 保存策略,always(0), everysec(1), no(2)
-    extern std::atomic<size_t> s_aof_max_buffer_size;                     // aof异步写入文件的最大缓冲区大小
+    extern std::atomic<RedisServerConfig::AOFSyncStrategy> s_aof_sync; // 保存策略,always(0), everysec(1), no(2)
+    extern std::atomic<const char *> s_aof_filename;                   // 文件模板名
+    extern std::atomic<size_t> s_aof_max_file_size;                    // 每个文件最大大小
+    extern std::atomic<size_t> s_aof_max_buffer_size;                  // aof异步写入文件的最大缓冲区大小
+    extern std::atomic<int> s_aof_max_file_number;                     // 保留aof文件数量
+    extern std::atomic<bool> s_aof_enabled;                            // 是否开启aof
 
     void AOFModule::initAOF()
     {
@@ -228,7 +228,7 @@ namespace blue
         {
             co_await sleepFor(2);
 
-            if (s_aof_sync.load(std::memory_order_acquire) == redisServerAOFConfig::AOFSyncStrategy::EVERYSEC) // 每秒刷新
+            if (s_aof_sync.load(std::memory_order_acquire) == RedisServerConfig::AOFSyncStrategy::EVERYSEC) // 每秒刷新
             {
                 std::unique_lock<std::shared_mutex> lock(m_aof_mutex);
                 auto now = std::chrono::steady_clock::now();
@@ -240,7 +240,7 @@ namespace blue
                     m_last_aof_sync = now;
                 }
             }
-            else if (s_aof_sync.load(std::memory_order_acquire) == redisServerAOFConfig::AOFSyncStrategy::ALWAYS)
+            else if (s_aof_sync.load(std::memory_order_acquire) == RedisServerConfig::AOFSyncStrategy::ALWAYS)
             {
                 if (m_aof_file.is_open())
                 {
@@ -426,11 +426,11 @@ namespace blue
                 {
                     m_aof_file << data_to_write;
 
-                    if (s_aof_sync.load(std::memory_order_acquire) == redisServerAOFConfig::AOFSyncStrategy::ALWAYS)
+                    if (s_aof_sync.load(std::memory_order_acquire) == RedisServerConfig::AOFSyncStrategy::ALWAYS)
                     {
                         m_aof_file.flush();
                     }
-                    else if (s_aof_sync.load(std::memory_order_acquire) == redisServerAOFConfig::AOFSyncStrategy::EVERYSEC)
+                    else if (s_aof_sync.load(std::memory_order_acquire) == RedisServerConfig::AOFSyncStrategy::EVERYSEC)
                     {
                         auto now = std::chrono::steady_clock::now();
                         auto duration = std::chrono::duration_cast<std::chrono::seconds>(

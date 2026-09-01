@@ -29,8 +29,9 @@
 #include "blue/dbmanager.h"
 #include "blue/redismanager.h"
 #include "blue/loadLogConfig.h"
-#include "redis_command/modules/loadAOFConfig.h"
-#include "redis_command/modules/loadSlowLogConfig.h"
+#include "redis_command/loadRedisAOFConfig.h"
+#include "redis_command/loadRedisSlowLogConfig.h"
+#include "redis_command/loadRedisClientConfig.h"
 
 // 数据库和redis配置
 namespace blue
@@ -50,8 +51,18 @@ namespace blue
     }
 
     // redis server AOF config
-    namespace redisServerAOFConfig
+    namespace RedisServerConfig
     {
+        // redis-cli admin
+        static blue::ConfigVar<std::string>::ConfigVarPtr 
+            g_admin_password = blue::Config::Lookup<std::string>("redis.admin.password", 
+                                                                "admin123", 
+                                                                "admin password");
+        static blue::ConfigVar<RedisServerConfigDefine>::ConfigVarPtr
+            g_RedisServerConfigDefine_config_ptr = 
+            blue::Config::Lookup<RedisServerConfigDefine>("redis",
+                                                        RedisServerConfigDefine(),
+                                                        "redis server configurations");
 
         static blue::ConfigVar<AOFConfigDefine>::ConfigVarPtr
             g_AOFDefine_config_ptr = blue::Config::Lookup<AOFConfigDefine>("redis.aof",

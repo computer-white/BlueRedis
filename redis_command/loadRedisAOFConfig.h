@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 /**
- * @file loadaofconfig.h
+ * @file loadAOFConfig.h
  * @brief 从Yaml文件中加载Reduis AOF配置，并提供类型和string的转化
  * @author blue
  * @email homeheyang@outlook.com
@@ -30,9 +30,10 @@
 
 namespace blue
 {
-    namespace redisServerAOFConfig
+    namespace RedisServerConfig
     {
-        static std::string aof_name = "appendonly.aof"; // 作为一个锚点，让std::atomic<const char*>内部使用的值的内存指向aof_name
+        // 作为一个锚点，让std::atomic<const char*>内部使用的值的内存指向aof_name
+        static std::string aof_name = "appendonly.aof";
         enum class AOFSyncStrategy : uint8_t
         {
             ALWAYS = 0,
@@ -72,13 +73,13 @@ namespace blue
     struct AOFConfigDefine
     {
         // AOF
-        bool aof_enabled = false;                    // 是否开启aof
         size_t aof_max_buffer_size = 1024 * 1024;    // aof异步写入文件的最大缓冲区大小
         size_t aof_max_file_size = 1024;             // 每个文件最大大小
-        size_t aof_max_file_number = 5;              // 保留5个aof文件
+        int aof_max_file_number = 5;              // 保留5个aof文件
+        bool aof_enabled = false;                    // 是否开启aof
         std::string aof_filename = "appendonly.aof"; // 文件模板名
-        redisServerAOFConfig::AOFSyncStrategy aof_sync =
-            redisServerAOFConfig::AOFSyncStrategy::EVERYSEC; // 保存策略,always(0), everysec(1), no(2)
+        RedisServerConfig::AOFSyncStrategy aof_sync =
+            RedisServerConfig::AOFSyncStrategy::EVERYSEC; // 保存策略,always(0), everysec(1), no(2)
 
         bool operator==(const AOFConfigDefine &rhs) const
         {
@@ -95,7 +96,7 @@ namespace blue
                << "aof_filename: " << lhs.aof_filename << "\n"
                << "aof_max_file_size: " << lhs.aof_max_file_size << "\n"
                << "aof_max_file_number: " << lhs.aof_max_file_number << "\n"
-               << "aof_sync: " << redisServerAOFConfig::syncStrategyToString(lhs.aof_sync);
+               << "aof_sync: " << RedisServerConfig::syncStrategyToString(lhs.aof_sync);
             return os;
         }
     };
@@ -205,13 +206,13 @@ namespace blue
                           << __FILE__ << " " << __LINE__ << "\nnode:\n"
                           << node << "\n"
                           << "I will use default aof_sync: "
-                          << redisServerAOFConfig::syncStrategyToString(res.aof_sync)
+                          << RedisServerConfig::syncStrategyToString(res.aof_sync)
                           << std::endl;
             }
             else
             {
                 std::string tem_sync = node["aof_sync"].as<std::string>();
-                res.aof_sync = redisServerAOFConfig::stringToSyncStrategy(tem_sync);
+                res.aof_sync = RedisServerConfig::stringToSyncStrategy(tem_sync);
             }
             return res;
         }
@@ -230,7 +231,7 @@ namespace blue
             node["aof_max_buffer_size"] = util::ConfigParser::FormatSize(val.aof_max_buffer_size);
             node["aof_max_file_size"] = util::ConfigParser::FormatSize(val.aof_max_file_size);
             node["aof_max_file_number"] = val.aof_max_file_number;
-            node["aof_sync"] = redisServerAOFConfig::syncStrategyToString(val.aof_sync);
+            node["aof_sync"] = RedisServerConfig::syncStrategyToString(val.aof_sync);
             std::stringstream ss;
             ss << node;
             return ss.str();

@@ -25,128 +25,135 @@
 namespace blue
 {
     // redis server AOF configuration
-    std::atomic<bool> s_aof_enabled{false};
+    std::atomic<RedisServerConfig::AOFSyncStrategy> s_aof_sync{RedisServerConfig::AOFSyncStrategy::EVERYSEC};
     std::atomic<const char *> s_aof_filename{"appendonly.aof"};
     std::atomic<size_t> s_aof_max_file_size{1024};
-    std::atomic<size_t> s_aof_max_file_number{5};
-    std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync{redisServerAOFConfig::AOFSyncStrategy::EVERYSEC};
     std::atomic<size_t> s_aof_max_buffer_size{1024 * 1024};
+    std::atomic<bool> s_aof_enabled{false};
+    std::atomic<int> s_aof_max_file_number{5};
 
     // redis server SlowLog configuration
     std::atomic<int64_t> s_slow_log_slower_than{10'000}; // 阈值（微秒），默认10ms
     std::atomic<size_t> s_slow_log_max_len{128};         // 慢查询缓存最大保存条数
+
+    // redis server configuration
+    std::atomic<uint64_t> s_redis_server_timeout{0};       // 每个客户端与服务器最大的待机时长
+    std::atomic<uint32_t> s_redis_server_maxClients{1000}; // 最大客户端数量
 
     struct InitConfig
     {
         InitConfig()
         {
             // 添加监听器,同时读取内容设置到日志系统里面
-            logSystemConfig::g_logDefine_config_ptr->addListener([](const std::set<LogDefine> &old_val,
-                                                                    const std::set<LogDefine> &new_val)
-                                                                 {
-            BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT()) 
-            << " on_change_cb conf changed! ";
-            // 新增
-            for (auto& n_val : new_val)
-            {
-                auto it = old_val.find(n_val);
-                blue::Logger::LoggerPtr new_logger;
-                if (it == old_val.end())
+            logSystemConfig::g_logDefine_config_ptr->addListener(
+                [](const std::set<LogDefine> &old_val, const std::set<LogDefine> &new_val)
                 {
-                    // 新增,利用名字查找,这样就会将新增的放入到\
-                    Message管理的logger里面,同时设置了默认的Appender
-                    new_logger = BLUE_LOG_NAME(n_val.name);
-                }
-                else
-                {
-                    if (*it == n_val)
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Log System COnfigguration! ";
+                    // 新增
+                    for (auto &n_val : new_val)
                     {
-                        continue;
-                    }
-                    // 修改
-                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())  
-                    << " Update logger: [" << n_val.name << "]";
-                    new_logger = BLUE_LOG_NAME(n_val.name);
-                }
-                // 这里也可以不用判断,因为不知道文件的level是什么或者设置的是错误的,那么有必要去提醒？
-                if (n_val.level != blue::Level::NOKNOW)
-                {
-                    new_logger->setlevel(n_val.level);
-                }
-                if (!n_val.formatter.empty())
-                {
-                    new_logger->setFormatter(n_val.formatter);
-                }
-                // 清除默认的new_logger的Appender
-                new_logger->clearAppender();
-                for (auto& a : n_val.appenders)
-                {
-                    blue::LogAppender::LogAppenderPtr new_appender;
-                    if (a.type == 1) // file
-                    {
-                        new_appender.reset(new blue::FileoutLogAppender(a.file));
-                    }
-                    else if (a.type == 2) // std
-                    {
-                        new_appender.reset(new blue::StdoutLogAppender);
-                    }
-                    else
-                    {
-                        BLUE_LOG_ERROR(BLUE_LOG_MASSAGE_ROOT())
-                        << " LogDefine.type的值未知 type : [" << a.type << "]";
-                        continue;
-                    }
-                    if (a.level != blue::Level::NOKNOW)
-                    {
-                        new_appender->setLevel(a.level);
-                    }
-                    if (!a.formatter.empty())
-                    {
-                        auto a_formatter = 
-                        std::make_shared<blue::LogFormatter>(a.formatter);
-                        if (!a_formatter->getHasError())
+                        auto it = old_val.find(n_val);
+                        blue::Logger::LoggerPtr new_logger;
+                        if (it == old_val.end())
                         {
-                            new_appender->setformatter(a_formatter);
+                            // 新增,利用名字查找,这样就会将新增的放入到\
+                    Message管理的logger里面,同时设置了默认的Appender
+                            new_logger = BLUE_LOG_NAME(n_val.name);
                         }
                         else
                         {
-                            // 有formatter但是解析出来有错误，我们不添加到new_logger里面
-                            std::cerr << "log config error n_val.LogAppenderDefine.fomatter is error "
-                                        << __FILE__ << " " << __LINE__ << std::endl;
-                            continue;
+                            if (*it == n_val)
+                            {
+                                continue;
+                            }
+                            // 修改
+                            BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                                << " Update logger: [" << n_val.name << "]";
+                            new_logger = BLUE_LOG_NAME(n_val.name);
+                        }
+                        // 这里也可以不用判断,因为不知道文件的level是什么或者设置的是错误的,那么有必要去提醒？
+                        if (n_val.level != blue::Level::NOKNOW)
+                        {
+                            new_logger->setlevel(n_val.level);
+                        }
+                        if (!n_val.formatter.empty())
+                        {
+                            new_logger->setFormatter(n_val.formatter);
+                        }
+                        // 清除默认的new_logger的Appender
+                        new_logger->clearAppender();
+                        for (auto &a : n_val.appenders)
+                        {
+                            blue::LogAppender::LogAppenderPtr new_appender;
+                            if (a.type == 1) // file
+                            {
+                                new_appender.reset(new blue::FileoutLogAppender(a.file));
+                            }
+                            else if (a.type == 2) // std
+                            {
+                                new_appender.reset(new blue::StdoutLogAppender);
+                            }
+                            else
+                            {
+                                BLUE_LOG_ERROR(BLUE_LOG_MASSAGE_ROOT())
+                                    << " LogDefine.type的值未知 type : [" << a.type << "]";
+                                continue;
+                            }
+                            if (a.level != blue::Level::NOKNOW)
+                            {
+                                new_appender->setLevel(a.level);
+                            }
+                            if (!a.formatter.empty())
+                            {
+                                auto a_formatter =
+                                    std::make_shared<blue::LogFormatter>(a.formatter);
+                                if (!a_formatter->getHasError())
+                                {
+                                    new_appender->setformatter(a_formatter);
+                                }
+                                else
+                                {
+                                    // 有formatter但是解析出来有错误，我们不添加到new_logger里面
+                                    std::cerr << "log config error n_val.LogAppenderDefine.fomatter is error "
+                                              << __FILE__ << " " << __LINE__ << std::endl;
+                                    continue;
+                                }
+                            }
+                            // 这里addAppender时如果new_appender没有自己的forrmatter,就会被设置为new_logger的formatter
+                            new_logger->addAppender(new_appender);
                         }
                     }
-                    // 这里addAppender时如果new_appender没有自己的forrmatter,就会被设置为new_logger的formatter
-                    new_logger->addAppender(new_appender);
-                }
-            }
-            // 删除
-            for (auto& o_val : old_val)
-            {
-                auto it = new_val.find(o_val);
-                if (it == new_val.end())
-                {
-                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())  
-                    << " Remove logger: [" << o_val.name << "]";
-                    auto logger = BLUE_LOG_NAME(o_val.name);
-                    if (logger)
+                    // 删除
+                    for (auto &o_val : old_val)
                     {
-                        logger->clearAppender();
-                        logger->setlevel(static_cast<blue::Level>(100));
+                        auto it = new_val.find(o_val);
+                        if (it == new_val.end())
+                        {
+                            BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                                << " Remove logger: [" << o_val.name << "]";
+                            auto logger = BLUE_LOG_NAME(o_val.name);
+                            if (logger)
+                            {
+                                logger->clearAppender();
+                                logger->setlevel(static_cast<blue::Level>(100));
+                            }
+                        }
                     }
-                }
-            } });
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Log System COnfigguration Successful! ";
+                });
 
-            redisServerAOFConfig::g_AOFDefine_config_ptr->addListener([](const blue::AOFConfigDefine &old_val,
-                                                                         const blue::AOFConfigDefine &new_val)
-                                                                      {
-                    std::cout << "Update AOF configuration!" << std::endl;
-
+            RedisServerConfig::g_AOFDefine_config_ptr->addListener(
+                [](const blue::AOFConfigDefine &old_val, const blue::AOFConfigDefine &new_val)
+                {
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update AOF Configuration! ";
                     // enabled
                     s_aof_enabled.store(new_val.aof_enabled, std::memory_order_release);
                     // filename
-                    redisServerAOFConfig::aof_name = new_val.aof_filename;
-                    s_aof_filename.store(redisServerAOFConfig::aof_name.c_str(), std::memory_order_release);
+                    RedisServerConfig::aof_name = new_val.aof_filename;
+                    s_aof_filename.store(RedisServerConfig::aof_name.c_str(), std::memory_order_release);
                     // max_buffer_size
                     s_aof_max_buffer_size.store(new_val.aof_max_buffer_size, std::memory_order_release);
                     // max_file_size
@@ -155,8 +162,35 @@ namespace blue
                     s_aof_max_file_number.store(new_val.aof_max_file_number, std::memory_order_release);
                     // sync strategy
                     s_aof_sync.store(new_val.aof_sync, std::memory_order_release);
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update AOF Configuration Successful! ";
+                });
 
-                    std::cout << "Update AOF configuration Successful!" << std::endl; });
+            RedisServerConfig::g_SlowLogDefine_config_ptr->addListener(
+                [](const SlowLogConfigDefine &old_val, const SlowLogConfigDefine &new_val)
+                {
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update SlowLog Configuration! ";
+                    // slower_than
+                    s_slow_log_slower_than.store(new_val.slow_log_slower_than, std::memory_order_release);
+                    // max_len
+                    s_slow_log_max_len.store(new_val.slow_log_max_len, std::memory_order_release);
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update SlowLog Configuration Successful! ";
+                });
+
+            RedisServerConfig::g_RedisServerConfigDefine_config_ptr->addListener(
+                [](const RedisServerConfigDefine &old_val, const RedisServerConfigDefine &new_val)
+                {
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Redis Server Configuration ";
+                    // timeout
+                    s_redis_server_timeout.store(new_val.timeout, std::memory_order_release);
+                    // maxClient
+                    s_redis_server_maxClients.store(new_val.maxClients, std::memory_order_release);
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Redis Server Configuration Successful! ";
+                });
         }
     };
 

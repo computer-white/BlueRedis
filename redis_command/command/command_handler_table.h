@@ -45,15 +45,18 @@
 
 namespace blue
 {
-    extern std::atomic<bool> s_aof_enabled;                               // 是否开启aof
-    extern std::atomic<const char *> s_aof_filename;                      // 文件模板名
-    extern std::atomic<size_t> s_aof_max_file_size;                       // 每个文件最大大小
-    extern std::atomic<size_t> s_aof_max_file_number;                     // 保留aof文件数量
-    extern std::atomic<redisServerAOFConfig::AOFSyncStrategy> s_aof_sync; // 保存策略,always(0), everysec(1), no(2)
-    extern std::atomic<size_t> s_aof_max_buffer_size;                     // aof异步写入文件的最大缓冲区大小
+    extern std::atomic<RedisServerConfig::AOFSyncStrategy> s_aof_sync; // 保存策略,always(0), everysec(1), no(2)
+    extern std::atomic<const char *> s_aof_filename;                   // 文件模板名
+    extern std::atomic<size_t> s_aof_max_file_size;                    // 每个文件最大大小
+    extern std::atomic<size_t> s_aof_max_buffer_size;                  // aof异步写入文件的最大缓冲区大小
+    extern std::atomic<bool> s_aof_enabled;                            // 是否开启aof
+    extern std::atomic<int> s_aof_max_file_number;                     // 保留aof文件数量
 
     extern std::atomic<int64_t> s_slow_log_slower_than; // 阈值（微秒），默认10ms
     extern std::atomic<size_t> s_slow_log_max_len;      // 慢查询缓存最大保存条数
+
+    extern std::atomic<uint64_t> s_redis_server_timeout;            // 每个客户端与服务器最大的待机时长
+    extern std::atomic<uint32_t> s_redis_server_maxClients;         // 最大客户端数量
 
     template <typename T>
     class CommandHandlerTable
@@ -482,7 +485,7 @@ namespace blue
             sock->setClientlevel(1);
             return RespValue::simple_string("OK");
         }
-        if (args[1].str == self->getPassword())
+        if (args[1].str == RedisServerConfig::g_admin_password->getValue())
         {
             if (!self->getAdminSocket().expired())
             {
@@ -610,26 +613,26 @@ namespace blue
             if (pattern == "*" || pattern == "maxclients")
             {
                 result.push_back(*RespValue::bulk_string("maxclients"));
-                result.push_back(*RespValue::bulk_string(std::to_string(self->getMaxClientCount())));
+                result.push_back(*RespValue::bulk_string(std::to_string(
+                    s_redis_server_maxClients.load(std::memory_order_acquire))));
             }
             if (pattern == "*" || pattern == "timeout")
             {
                 result.push_back(*RespValue::bulk_string("timeout"));
-                result.push_back(*RespValue::bulk_string(std::to_string(self->getTimeoutS())));
+                result.push_back(*RespValue::bulk_string(util::ConfigParser::FormatTime(
+                    std::chrono::microseconds(s_redis_server_timeout.load(std::memory_order_acquire)))));
             }
             if (pattern == "*" || pattern == "slowlog-log-slower-than" || pattern == "slowlog-*")
             {
                 result.push_back(*RespValue::bulk_string("slowlog-log-slower-than"));
-                result.push_back(*RespValue::bulk_string(
-                    std::to_string(s_slow_log_slower_than.load(std::memory_order_acquire))
-                ));
+                result.push_back(*RespValue::bulk_string(util::ConfigParser::FormatTime(
+                    std::chrono::microseconds(s_slow_log_slower_than.load(std::memory_order_acquire)))));
             }
             if (pattern == "*" || pattern == "slowlog-max-len" || pattern == "slowlog-*")
             {
                 result.push_back(*RespValue::bulk_string("slowlog-max-len"));
                 result.push_back(*RespValue::bulk_string(
-                    std::to_string(s_slow_log_max_len.load(std::memory_order_acquire))
-                ));
+                    std::to_string(s_slow_log_max_len.load(std::memory_order_acquire))));
             }
             if (pattern == "*" || pattern == "aof-enabled" || pattern == "aof-*")
             {
@@ -645,12 +648,13 @@ namespace blue
             {
                 result.push_back(*RespValue::bulk_string("aof-sync"));
                 result.push_back(*RespValue::bulk_string(
-                    redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire))));
+                    RedisServerConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire))));
             }
             if (pattern == "*" || pattern == "aof-max_file_size" || pattern == "aof-*")
             {
                 result.push_back(*RespValue::bulk_string("aof-max_file_size"));
-                result.push_back(*RespValue::bulk_string(std::to_string(s_aof_max_file_size.load(std::memory_order_acquire))));
+                result.push_back(*RespValue::bulk_string(
+                    util::ConfigParser::FormatSize(s_aof_max_file_size.load(std::memory_order_acquire))));
             }
             if (pattern == "*" || pattern == "aof-max_file_number" || pattern == "aof-*")
             {
@@ -661,7 +665,7 @@ namespace blue
             {
                 result.push_back(*RespValue::bulk_string("aof-max_buffer_size"));
                 result.push_back(*RespValue::bulk_string(
-                    std::to_string(s_aof_max_buffer_size.load(std::memory_order_acquire))));
+                    util::ConfigParser::FormatSize(s_aof_max_buffer_size.load(std::memory_order_acquire))));
             }
             if (pattern == "*" || pattern == "database")
             {
@@ -687,17 +691,13 @@ namespace blue
             }
             if (param == "slowlog-log-slower-than") // 慢查询的限制时长(超过这个时长记录慢查询)
             {
-                try
+                auto slower_than_val = util::ConfigParser::ParseTime(value);
+                if (slower_than_val.has_value())
                 {
-                    int64_t val = std::stoll(value);
-                    if (val < 0)
-                    {
-                        return RespValue::error("ERR value must be >= 0");
-                    }
-                    s_slow_log_slower_than.store(val,std::memory_order_release);
+                    s_slow_log_slower_than.store((*slower_than_val).count(), std::memory_order_release);
                     return RespValue::simple_string("OK");
                 }
-                catch (...)
+                else
                 {
                     return RespValue::error("ERR invalid integer value");
                 }
@@ -719,21 +719,18 @@ namespace blue
                     return RespValue::error("ERR invalid integer value");
                 }
             }
-            if (param == "aof-enabled") // 开启aof记录
+            if (param == "aof-enabled") // 是否开启aof记录，默认关闭
             {
-                if (value == "yes" || value == "1")
+                bool enabled_val = util::ConfigParser::ParseBool(value);
+                if (enabled_val)
                 {
                     s_aof_enabled.store(true, std::memory_order_release);
                     self->getAOF().initAOF();
                 }
-                else if (value == "no" || value == "0")
+                else
                 {
                     s_aof_enabled.store(false, std::memory_order_release);
                     self->getAOF().closeAOF();
-                }
-                else
-                {
-                    return RespValue::error("ERR invalid value");
                 }
                 return RespValue::simple_string("OK");
             }
@@ -741,7 +738,7 @@ namespace blue
             {
                 if (value == "always" || value == "everysec" || value == "no")
                 {
-                    s_aof_sync.store(redisServerAOFConfig::stringToSyncStrategy(value), std::memory_order_release);
+                    s_aof_sync.store(RedisServerConfig::stringToSyncStrategy(value), std::memory_order_release);
                     return RespValue::simple_string("OK");
                 }
                 return RespValue::error("ERR invalid sync mode");
@@ -752,27 +749,19 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid filename");
                 }
-                redisServerAOFConfig::aof_name = value;
-                s_aof_filename.store(redisServerAOFConfig::aof_name.c_str(), std::memory_order_release);
+                RedisServerConfig::aof_name = value;
+                s_aof_filename.store(RedisServerConfig::aof_name.c_str(), std::memory_order_release);
                 return RespValue::simple_string("OK");
             }
             if (param == "aof-max_file_size") // 每个aof文件大小
             {
-                int64_t val;
-                try
+                auto max_file_size = util::ConfigParser::ParseSize(value);
+                if (max_file_size.has_value())
                 {
-                    val = std::stoi(value);
-                    if (val < 1024 * 1024)
-                    {
-                        return RespValue::error("ERR max_file_size value too small");
-                    }
+                    s_aof_max_file_size.store(*max_file_size, std::memory_order_release);
+                    return RespValue::simple_string("OK");
                 }
-                catch (...)
-                {
-                    return RespValue::error("ERR invalid integer value");
-                }
-                s_aof_max_file_size.store(val, std::memory_order_release);
-                return RespValue::simple_string("OK");
+                return RespValue::error("ERR invalid integer value");
             }
             if (param == "aof-max_file_number") // 最多保留多少aof文件
             {
@@ -794,29 +783,21 @@ namespace blue
             }
             if (param == "aof-max_buffer_size") // aof缓冲区大小
             {
-                int64_t val;
-                try
+                auto max_buffer_size = util::ConfigParser::ParseSize(value);
+                if (max_buffer_size.has_value())
                 {
-                    val = std::stoll(value);
-                    if (val < 1024 * 1024)
-                    {
-                        return RespValue::error("ERR max_file_number value too small");
-                    }
+                    s_aof_max_buffer_size.store((*max_buffer_size), std::memory_order_release);
+                    return RespValue::simple_string("OK");
                 }
-                catch (...)
-                {
-                    return RespValue::error("ERR invalid integer value");
-                }
-                s_aof_max_buffer_size.store(val, std::memory_order_release);
-                return RespValue::simple_string("OK");
-            }
-            // 以下只允许管理员设置
-            if (!self->isAdmin(sock))
-            {
-                return RespValue::error("ERR authentication required");
+                return RespValue::error("ERR invalid integer value");
             }
             if (param == "maxclients") // 服务器最大支持的客户端数量
             {
+                // 只允许管理员设置
+                if (!self->isAdmin(sock))
+                {
+                    return RespValue::error("ERR authentication required");
+                }
                 try
                 {
                     int newmax = std::stoi(value);
@@ -828,7 +809,7 @@ namespace blue
                     {
                         return RespValue::error("ERR maxclients can't be less than current connections");
                     }
-                    self->setMaxClientCount(newmax);
+                    s_redis_server_maxClients.store(newmax, std::memory_order_release);
                     return RespValue::simple_string("OK");
                 }
                 catch (...)
@@ -838,19 +819,20 @@ namespace blue
             }
             if (param == "timeout") // 每个客户端会话的超时时长
             {
-                try
+                // 只允许管理员设置
+                if (!self->isAdmin(sock))
                 {
-                    int timeout = std::stoi(value);
-                    if (timeout < 0)
-                    {
-                        return RespValue::error("ERR invalid timeout value");
-                    }
-                    self->setTimeoutS(timeout);
+                    return RespValue::error("ERR authentication required");
+                }
+                auto timeout_val = util::ConfigParser::ParseTime(value);
+                if (timeout_val.has_value())
+                {
+                    s_redis_server_timeout.store((*timeout_val).count(), std::memory_order_release);
                     return RespValue::simple_string("OK");
                 }
-                catch (...)
+                else
                 {
-                    return RespValue::error("ERR invalid integer value");
+                    return RespValue::error("ERR invalid timeout value");
                 }
             }
             return RespValue::error("ERR Unsupported CONFIG parameter: " + param);
@@ -4014,14 +3996,14 @@ namespace blue
             // Client
             info += "# Client\r\n";
             info += "connections:" + std::to_string(self->getConnection()) + "\r\n";
-            info += "maxclient:" + std::to_string(self->getMaxClientCount()) + "\r\n";
+            info += "maxclient:" + std::to_string(s_redis_server_maxClients.load(std::memory_order_acquire)) + "\r\n";
             info += "reject_connections:" + std::to_string(self->getRejectConnection()) + "\r\n";
             info += "\r\n";
 
             // AOF
             info += "# AOF\r\n";
-            info += "aof_enabled:" + std::string(s_aof_enabled.load(std::memory_order_acquire) ? "1" : "0") + "\r\n";
-            info += "aof_sync:" + redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire)) + "\r\n";
+            info += "aof_enabled:" + std::to_string(s_aof_enabled.load(std::memory_order_acquire)) + "\r\n";
+            info += "aof_sync:" + RedisServerConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire)) + "\r\n";
             info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
             info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
             info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
@@ -4050,7 +4032,7 @@ namespace blue
                 info += "role:slave\r\n";
                 info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
                 info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
-                info += "master_link_status:" + std::string(self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down") + "\r\n";
+                info += "master_link_status:" + std::to_string(self->getReplication().getReplState() == self->getReplication().getOnline()) + "\r\n";
                 info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
             }
 
@@ -4094,15 +4076,15 @@ namespace blue
                 {
                     info += "# Client\r\n";
                     info += "connections:" + std::to_string(self->getConnection()) + "\r\n";
-                    info += "maxclient:" + std::to_string(self->getMaxClientCount()) + "\r\n";
+                    info += "maxclient:" + std::to_string(s_redis_server_maxClients.load(std::memory_order_acquire)) + "\r\n";
                     info += "reject_connections:" + std::to_string(self->getRejectConnection()) + "\r\n";
                     info += "\r\n";
                 }
                 else if (tem == "AOF")
                 {
                     info += "# AOF\r\n";
-                    info += "aof_enabled:" + std::string(s_aof_enabled.load(std::memory_order_acquire) ? "1" : "0") + "\r\n";
-                    info += "aof_sync:" + redisServerAOFConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire)) + "\r\n";
+                    info += "aof_enabled:" + std::to_string(s_aof_enabled.load(std::memory_order_acquire)) + "\r\n";
+                    info += "aof_sync:" + RedisServerConfig::syncStrategyToString(s_aof_sync.load(std::memory_order_acquire)) + "\r\n";
                     info += "aof_current_file:" + self->getAOF().getCurrentFileName() + "\r\n";
                     info += "aof_file_index:" + std::to_string(self->getAOF().getCurrentFileIdx()) + "\r\n";
                     info += "aof_current_size:" + std::to_string(self->getAOF().getCurrentFileSize()) + "\r\n";
@@ -4133,7 +4115,7 @@ namespace blue
                         info += "role:slave\r\n";
                         info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
                         info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
-                        info += "master_link_status:" + std::string(self->getReplication().getReplState() == self->getReplication().getOnline() ? "up" : "down") + "\r\n";
+                        info += "master_link_status:" + std::to_string(self->getReplication().getReplState() == self->getReplication().getOnline()) + "\r\n";
                         info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
                     }
 
