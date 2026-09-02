@@ -112,37 +112,76 @@ namespace blue
          */
         std::array<std::array<DataShard, SHARD_COUNT>, DB_COUNT> &getDBs() { return m_dbs; }
 
-        // ========== 统计 ==========
+        /**
+         * @brief 获取当前执行命令数量原子变量引用
+         */
         std::atomic<uint32_t> &getCommands() { return m_commands; }
 
+        /**
+         * @brief 获取当前执行命令的数量
+         */
         uint32_t getCommandsCount() const { return m_commands.load(std::memory_order_acquire); }
 
+        /**
+         * @brief 执行命令数量自增
+         */
         void incrementCommands() { m_commands.fetch_add(1, std::memory_order_acq_rel); }
 
-        // ========== 状态 ==========
+        /**
+         * @brief 服务器是否停止原子变量引用
+         */
         std::atomic<bool> &getShutdown() { return m_shutdown; }
 
+        /**
+         * @brief 服务器是否设置了shutdown
+         */
         bool isShutdown() const { return m_shutdown.load(std::memory_order_acquire); }
 
+        /**
+         * @brief 设置shutdown原子变量
+         */
         void setShutdown(bool val) { m_shutdown.store(val, std::memory_order_release); }
 
-        // ========== 持久化 ==========
+        /**
+         * @brief 获取最新一次前台RDB保存时间的原子变量引用
+         */
         std::atomic<time_t> &getLastSaveTime() { return m_last_time; }
 
+        /**
+         * @brief 获取最新一次前台RDB保存时间
+         */
         time_t getLastSaveTime() const { return m_last_time.load(std::memory_order_acquire); }
 
+        /**
+         * @brief 设置最新一次前台RDB保存时间
+         */
         void setLastSaveTime(time_t t) { m_last_time.store(t, std::memory_order_release); }
 
+        /**
+         * @brief 获取最新一次后台RDB保存时间的原子变量引用
+         */
         std::atomic<bool> &getBgSaveRunning() { return m_bgsave_running; }
 
+        /**
+         * @brief 后台RDB保存是否正在进行中
+         */
         bool isBgSaveRunning() const { return m_bgsave_running.load(std::memory_order_acquire); }
 
+        /**
+         * @brief 设置是否进行后台RDB保存
+         */
         void setBgSaveRunning(bool val) { m_bgsave_running.store(val, std::memory_order_release); }
 
-        // ========== 管理员 ==========
+        /**
+         * @brief 获取管理员Socket
+         */
         MSocket::MSocketWPtr &getAdminSocket() { return m_admin_sock; }
 
+        /**
+         * @brief 设置管理员Socket
+         */
         void setAdminSocket(MSocket::MSocketWPtr sock) { m_admin_sock = sock; }
+
         /**
          * @brief 是否是管理员
          * @param sock 判断sock是否是管理员
@@ -153,22 +192,45 @@ namespace blue
             return admin && admin == sock;
         }
 
-        // ========== 模块访问 ==========
+        /**
+         * @brief 获取发布和订阅模块对象引用
+         */
         SubscriptionModule &getSubscription() { return m_subscription; }
 
+        /**
+         * @brief 获取慢查询模块对象引用
+         */
         SlowLogModule &getSlowLog() { return m_slowLog; }
 
+        /**
+         * @brief 获取监控模块对象引用
+         */
         MonitorModule &getMonitor() { return m_monitor; }
 
+        /**
+         * @brief 获取AOF持久化模块对象引用
+         */
         AOFModule &getAOF() { return m_aof; }
 
+        /**
+         * @brief 获取主从复制模块对象引用
+         */
         ReplicationModule &getReplication() { return m_replication; }
 
-        // ========== Monitor 推送 ==========
+        /**
+         * @brief 获取是否推送monitor原子变量引用
+         */
         std::atomic<bool> &getPushMonitor() { return m_push_monitor; }
 
+        /**
+         * @brief 是否推送monitor
+         * @return bool(true表示推送)
+         */
         bool isPushMonitor() const { return m_push_monitor.load(std::memory_order_acquire); }
 
+        /**
+         * @brief 设置pushMonitor
+         */
         void setPushMonitor(bool val) { m_push_monitor.store(val, std::memory_order_release); }
 
         /**
@@ -256,7 +318,7 @@ namespace blue
         uint64_t getKeyVersion(const std::string &key, MSocket::MSocketPtr sock)
         {
             auto &shard = getShard(key, sock);
-            // std::shared_lock<std::shared_mutex> lock(shard.mutex);
+            std::shared_lock<std::shared_mutex> lock(shard.mutex);
 
             auto it = shard.store.find(key);
             if (it != shard.store.end())
