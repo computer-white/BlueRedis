@@ -28,6 +28,7 @@
 #include <random>
 #include <string>
 #include <limits>
+#include "blue/memory_pool.h"
 
 namespace blue
 {
@@ -35,30 +36,92 @@ namespace blue
     class SkipList
     {
     public:
+        static constexpr int MAX_LEVEL = 16;
+        static constexpr double P = 0.25;
         struct Node
         {
             K key;
             V val;
-            std::vector<Node *> forward; // 链表的next
-            std::vector<int> span;       // 跨度：到下一个节点的距离
-            Node(K k, V v, int level)
-                : key(k), val(v), forward(level, nullptr), span(level, 0) {}
+            Node *forward[MAX_LEVEL]; // 链表的next
+            int span[MAX_LEVEL];      // 跨度：到下一个节点的距离
+            Node(const K &k = K(), const V &v = V())
+                : key(k), val(v)
+            {
+                for (int i = 0; i < MAX_LEVEL; ++i)
+                {
+                    forward[i] = nullptr;
+                    span[i] = 0;
+                }
+            }
+
+            ~Node()
+            {
+                for (int i = 0; i < MAX_LEVEL; ++i)
+                {
+                    if (forward[i])
+                    {
+                        free((void *)forward[i]);
+                    }
+                    span[i] = 0;
+                }
+            }
+
+            void reset()
+            {
+                for (int i = 0; i < MAX_LEVEL; ++i)
+                {
+                    forward[i] = nullptr;
+                    span[i] = 0;
+                }
+            }
         };
         using NodeType = Node;
 
     public:
+        /**
+         * @brief 构造函数（使用内存池）
+         */
         SkipList()
-            : m_head(new Node(K{}, V{}, MAX_LEVEL)),
-              m_level(1)
+            : m_pool(new MemoryPoolNoUnique<SkipList<K, V>::Node, 4096>()),
+              m_level(1),
+              m_size(0)
         {
-            m_head->forward.assign(MAX_LEVEL, nullptr);
+            // 分配头节点
+            if (m_pool)
+            {
+                m_head = m_pool->acquire();
+                if (m_head)
+                {
+                    // placement new 构造
+                    // 在m_head内存上分配对象Node
+                    new (m_head) Node();
+                }
+                else
+                {
+                    // 池为空，回退到 new
+                    m_head = new Node();
+                }
+            }
+            else
+            {
+                m_head = new Node();
+            }
+
+            if (m_head)
+            {
+                for (int i = 0; i < MAX_LEVEL; ++i)
+                {
+                    m_head->forward[i] = nullptr;
+                    m_head->span[i] = 0;
+                }
+            }
         }
 
         SkipList(const SkipList &) = delete;
         SkipList &operator=(const SkipList &) = delete;
 
         SkipList(SkipList &&other) noexcept
-            : m_head(other.m_head), m_level(other.m_level), m_size(other.m_size)
+            : m_pool(std::move(other.m_pool)), m_head(other.m_head), m_level(other.m_level), m_size(other.m_size)
         {
             other.m_head = nullptr;
             other.m_level = 1;
@@ -70,16 +133,10 @@ namespace blue
             if (this != &other) // 比较地址
             {
                 // 清理自己
-                Node *node = m_head->forward[0];
-                while (node)
-                {
-                    Node *next = node->forward[0];
-                    delete node;
-                    node = next;
-                }
-                delete m_head;
+                this->clear();
 
                 // 接管 other
+                m_pool = std::move(other.m_pool);
                 m_head = other.m_head;
                 m_level = other.m_level;
                 m_size = other.m_size;
@@ -93,18 +150,31 @@ namespace blue
 
         ~SkipList()
         {
+            this->clear();
+        }
+
+        /**
+         * @brief 清空所有节点
+         */
+        void clear()
+        {
             if (!m_head)
             {
                 return;
             }
+
             Node *node = m_head->forward[0];
             while (node)
             {
-                Node *nxt = node->forward[0];
-                delete node;
-                node = nxt;
+                Node *next = node->forward[0];
+                deallocateNode(node);
+                node = next;
             }
-            delete m_head;
+
+            deallocateNode(m_head);
+            m_head = nullptr;
+            m_level = 1;
+            m_size = 0;
         }
 
         /*
@@ -120,8 +190,8 @@ namespace blue
 
         void insert(const K &key, const V &val)
         {
-            std::vector<Node *> update(MAX_LEVEL, nullptr);
-            std::vector<int> rank(MAX_LEVEL, 0);
+            Node *update[MAX_LEVEL];
+            int rank[MAX_LEVEL];
             Node *curr = m_head;
             for (int i = m_level - 1; i >= 0; i--)
             {
@@ -142,7 +212,7 @@ namespace blue
             }
 
             int newlevel = randomLevel();
-            int old_level = m_level;            // 保存old_level,假如随机出来的new_level比old_level小，需要更新new_level到old_level的Span
+            int old_level = m_level; // 保存old_level,假如随机出来的new_level比old_level小，需要更新new_level到old_level的Span
             if (newlevel > m_level)
             {
                 for (int i = m_level; i < newlevel; i++)
@@ -154,7 +224,11 @@ namespace blue
                 m_level = newlevel;
             }
 
-            Node *node = new Node(key, val, newlevel);
+            Node *node = this->allocateNode(key, val);
+            if (!node)
+            {
+                node = new Node(key, val);
+            }
             for (int i = 0; i < newlevel; i++)
             {
                 node->forward[i] = update[i]->forward[i];
@@ -170,7 +244,7 @@ namespace blue
                     i = 1,那么update[1]->span[1] = 10->span[1] = 2,rank[0]不变=3,rank[i] = 一直累加到(10->span[i]),也就是10的排名=2
                     所以node->span[1] = 1,update[1]->span[1] = (3 - 2) + 1 = 2,也就是从10到17
                 */
-                node->span[i] = update[i]->span[i] - (rank[0] - rank[i]); 
+                node->span[i] = update[i]->span[i] - (rank[0] - rank[i]);
                 update[i]->span[i] = (rank[0] - rank[i]) + 1;
             }
 
@@ -183,15 +257,15 @@ namespace blue
 
         bool remove(const K &key)
         {
-            std::vector<Node *> update(MAX_LEVEL, nullptr);
-            std::vector<int> rank(MAX_LEVEL, 0);
+            Node *update[MAX_LEVEL];
+            int rank[MAX_LEVEL];
             Node *curr = m_head;
             for (int i = m_level - 1; i >= 0; i--)
             {
                 rank[i] = (i == m_level - 1) ? 0 : rank[i + 1];
                 while (curr->forward[i] && curr->forward[i]->key < key)
                 {
-                    rank[i] += curr->span[i];           // 拿到到目前i层的key的排名
+                    rank[i] += curr->span[i]; // 拿到到目前i层的key的排名
                     curr = curr->forward[i];
                 }
                 update[i] = curr; // 指向要删除位置的前一个位置
@@ -215,7 +289,7 @@ namespace blue
                 }
             }
 
-            delete curr;
+            this->deallocateNode(curr);
 
             while (m_level > 1 && m_head->forward[m_level - 1] == nullptr)
             {
@@ -279,9 +353,20 @@ namespace blue
             return -1;
         }
 
+        /**
+         * @brief 获取有序集合的大小
+         */
         size_t size() const { return m_size; }
+
+        /**
+         * @brief 判断是否为空
+         */
         bool empty() const { return m_size == 0; }
-        NodeType *begin() const { return m_head->forward[0]; }
+
+        /**
+         * @brief 获取头节点的第一个元素（用于遍历）
+         */
+        NodeType *begin() const { return m_head ? m_head->forward[0] : nullptr; }
 
     private:
         int randomLevel()
@@ -298,11 +383,51 @@ namespace blue
             return level;
         }
 
+        /**
+         * @brief 从内存池分配节点并构造
+         */
+        Node *allocateNode(const K &key, const V &val)
+        {
+            if (!m_pool)
+            {
+                return nullptr;
+            }
+
+            Node *node = m_pool->acquire();
+            if (node)
+            {
+                // placement new 构造对象
+                new (node) Node(key, val);
+            }
+            return node;
+        }
+
+        /**
+         * @brief 释放节点回内存池
+         */
+        void deallocateNode(Node *node)
+        {
+            if (!node)
+            {
+                return;
+            }
+
+            node->reset();
+
+            if (m_pool)
+            {
+                m_pool->release(node);
+            }
+            else
+            {
+                delete node;
+            }
+        }
+
     private:
-        static constexpr int MAX_LEVEL = 16;
-        static constexpr double P = 0.25;
-        Node *m_head;
-        int m_level; // 当前层级
+        MemoryPoolNoUnique<Node> *m_pool = nullptr;
+        Node *m_head = nullptr;
+        int m_level = 1; // 当前层级
         size_t m_size = 0;
     };
 
