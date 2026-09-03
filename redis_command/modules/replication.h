@@ -1,4 +1,4 @@
- /*
+/*
  * BlueRedis - High Performance Redis Server based on C++20 Coroutine
  * Copyright (C) 2026 blue
  *
@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
- /**
+/**
  * @file replication.h
  * @brief redis server 主从复制模块
  * @author blue
@@ -44,13 +44,14 @@ namespace blue
         ~ReplicationModule() { this->stopReplication(); }
 
         // 禁止拷贝
-        ReplicationModule(const ReplicationModule& ) = delete;
-        ReplicationModule& operator=(const ReplicationModule& ) = delete;
+        ReplicationModule(const ReplicationModule &) = delete;
+        ReplicationModule &operator=(const ReplicationModule &) = delete;
+
     public:
         /**
          * @brief 设置回调execute
          */
-        void setExecutor(ExecuteFunc func) { m_executor = func; }    
+        void setExecutor(ExecuteFunc func) { m_executor = func; }
 
         /**
          * @brief 设置服务器停止标识
@@ -115,7 +116,11 @@ namespace blue
         /**
          * @brief 从节点列表是否为空
          */
-        bool slavesEmpty() const noexcept { std::shared_lock<std::shared_mutex> lock(m_slaves_mutex); return m_slaves.empty(); }
+        bool slavesEmpty() const noexcept
+        {
+            std::shared_lock<std::shared_mutex> lock(m_slaves_mutex);
+            return m_slaves.empty();
+        }
 
         /**
          * @brief 输出slaves信息
@@ -156,46 +161,46 @@ namespace blue
         /**
          * @brief 写命令广播给从节点
          */
-        void broadcastToSlaves(const std::string& cmd);
+        void broadcastToSlaves(const std::string &cmd);
 
         /**
          * @brief 从内存加载 RDB 数据
          */
-        bool loadRDBFromMemory(const std::string& data);
+        bool loadRDBFromMemory(const std::string &data);
 
     private:
         struct ReplicationConfig
         {
-            bool is_master = true;          // 是否是主节点
-            std::string master_host;        // 主节点地址
-            uint16_t master_port;           // 主节点端口
-            std::string master_password;    // 主节点密码
-            int64_t repl_offset;            // 复制偏移量
-            std::string repl_id;            // 复制id
+            bool is_master = true;       // 是否是主节点
+            std::string master_host;     // 主节点地址
+            uint16_t master_port;        // 主节点端口
+            std::string master_password; // 主节点密码
+            int64_t repl_offset;         // 复制偏移量
+            std::string repl_id;         // 复制id
         };
         enum RelpState : uint8_t
         {
-            REPL_STATE_NONE = 0,    // 未开始
-            REPL_STATE_CONNECTING,  // 连接中
-            REPL_STATE_HANDSHAKE,   // 握手
-            REPL_STATE_TRANSFER,    // 传输中
-            REPL_STATE_ONLINE       // 在线
+            REPL_STATE_NONE = 0,   // 未开始
+            REPL_STATE_CONNECTING, // 连接中
+            REPL_STATE_HANDSHAKE,  // 握手
+            REPL_STATE_TRANSFER,   // 传输中
+            REPL_STATE_ONLINE      // 在线
         };
 
     private:
-        ReplicationConfig m_repl_config;
+        ReplicationConfig m_repl_config; // 主从复制配置信息(后序需要将其分离出去，目前其不具备多线程安全)
 
         // 从节点连接
-        std::shared_ptr<MSocket> m_repl_sock;
-        std::atomic<RelpState> m_repl_state{REPL_STATE_NONE};
-        std::thread m_relp_thread;
+        std::shared_ptr<MSocket> m_repl_sock;                 // 作为从节点，连接到主节点时，连接成功时的SocketPtr
+        std::atomic<RelpState> m_repl_state{REPL_STATE_NONE}; // 主从复制状态
+        std::thread m_relp_thread;                            // 主从复制循环线程
 
         // 从节点列表
-        mutable std::shared_mutex m_slaves_mutex;
-        std::vector<MSocket::MSocketWPtr> m_slaves;
+        mutable std::shared_mutex m_slaves_mutex;   // 从节点列表读写互斥变量
+        std::vector<MSocket::MSocketWPtr> m_slaves; // 从节点列表
     private:
         // 服务器停止
-        std::atomic<bool> m_server_stop{false};
+        std::atomic<bool> m_server_stop{false}; // 服务器停止标识
 
         // 复制命令队列
         struct ReplCommand
@@ -203,15 +208,13 @@ namespace blue
             std::vector<RespValue> args;
         };
 
-        std::mutex m_repl_queue_mutex;
-        std::queue<ReplCommand> m_repl_queue;
-        std::condition_variable m_repl_queue_cv;
-        std::atomic<bool> m_repl_queue_stop{false};
-        std::atomic<bool> m_consumer_started{false};
+        std::mutex m_repl_queue_mutex;               // 复制队列互斥变量
+        std::queue<ReplCommand> m_repl_queue;        // 主从复制进入在线模式时，接收到主节点的写命令队列
+        std::condition_variable m_repl_queue_cv;     // 队列条件变量，搭配unique_lock
+        std::atomic<bool> m_repl_queue_stop{false};  // 复制队列停止标识
+        std::atomic<bool> m_consumer_started{false}; // 消费者协程开启原子标识
 
         // 回调
-        ExecuteFunc m_executor;
-        
-
+        ExecuteFunc m_executor; // 执行命令的回调函数
     };
 }

@@ -72,10 +72,13 @@ namespace blue
         BLUE_LOG_INFO(g_logger) << "Stopping replication";
 
         m_repl_state.store(REPL_STATE_NONE, std::memory_order_release);
+        // 设置processReplQueue停止标识
         m_repl_queue_stop.store(true, std::memory_order_release);
-        m_consumer_started.store(false, std::memory_order_release);
+        // 通知所有等待的线程
         m_repl_queue_cv.notify_all();
 
+        // 先停止供应商
+        // 停止复制线程
         if (m_repl_sock)
         {
             m_repl_sock->close();
@@ -87,11 +90,19 @@ namespace blue
             m_relp_thread.join();
         }
 
-        // 清空队列
-        std::lock_guard<std::mutex> lock(m_repl_queue_mutex);
-        while (!m_repl_queue.empty())
+        // 等待消费者协程停止
+        while (m_consumer_started.load(std::memory_order_acquire))
         {
-            m_repl_queue.pop();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        {
+            // 清空消费者协程可能残留的任务队列
+            std::lock_guard<std::mutex> lock(m_repl_queue_mutex);
+            while (!m_repl_queue.empty())
+            {
+                m_repl_queue.pop();
+            }
         }
 
         BLUE_LOG_INFO(g_logger) << "Replication stopped";
@@ -125,7 +136,8 @@ namespace blue
             // 重试10次后直接退出
             if (retry_count == 10)
             {
-                stopReplication();
+                // stopReplication(); // 哈哈哈，遇到问题了，不能在线程运行中的函数中调用一个包含join这个线程的函数，线程死锁
+                // 选择直接退出，如果后序有什么好的想法再来改
                 break;
             }
             retry_count++;
@@ -486,6 +498,12 @@ namespace blue
                                          { return !m_repl_queue.empty() ||
                                                   m_repl_queue_stop.load(std::memory_order_acquire) ||
                                                   m_server_stop.load(std::memory_order_acquire); });
+                
+                if (m_repl_queue_stop.load(std::memory_order_acquire) || 
+                    m_server_stop.load(std::memory_order_acquire))
+                {
+                    break;
+                }
 
                 if (!m_repl_queue.empty())
                 {
@@ -500,7 +518,14 @@ namespace blue
                 // 执行命令（不记录 AOF, 不推送Monitor）
                 // BLUE_LOG_INFO(g_logger) << "has_cmd, m_executor: " << (m_executor ? "exists" : "null");
 
-                m_executor(std::move(cmd.args), temp_sock, false);
+                try
+                {
+                    m_executor(std::move(cmd.args), temp_sock, false);
+                }
+                catch (const std::exception &e)
+                {
+                    BLUE_LOG_ERROR(g_logger) << "Executor threw exception: " << e.what();
+                }
             }
 
             // 挂起,让出cpu
@@ -508,6 +533,7 @@ namespace blue
         }
 
         BLUE_LOG_INFO(g_logger) << "Replication queue consumer stopped";
+        m_consumer_started.store(false, std::memory_order_release);     // 消费者协程停止
         co_return;
     }
 
@@ -533,9 +559,16 @@ namespace blue
         {
             if (cmd.type == RespValue::Type::ARRAY && !cmd.arr.empty())
             {
-                // 执行命令（不记录 AOF，不推送Monitor）
-                m_executor(std::move(cmd.arr), temp_sock, false);
-                count++;
+                try
+                {
+                    // 执行命令（不记录 AOF，不推送Monitor）
+                    m_executor(std::move(cmd.arr), temp_sock, false);
+                    count++;
+                }
+                catch (const std::exception &e)
+                {
+                    BLUE_LOG_ERROR(g_logger) << "Executor threw exception: " << e.what();
+                }
             }
         }
 
