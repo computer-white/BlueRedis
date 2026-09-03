@@ -45,19 +45,6 @@
 
 namespace blue
 {
-    extern std::atomic<RedisServerConfig::AOFSyncStrategy> s_aof_sync; // 保存策略,always(0), everysec(1), no(2)
-    extern std::atomic<const char *> s_aof_filename;                   // 文件模板名
-    extern std::atomic<size_t> s_aof_max_file_size;                    // 每个文件最大大小
-    extern std::atomic<size_t> s_aof_max_buffer_size;                  // aof异步写入文件的最大缓冲区大小
-    extern std::atomic<bool> s_aof_enabled;                            // 是否开启aof
-    extern std::atomic<int> s_aof_max_file_number;                     // 保留aof文件数量
-
-    extern std::atomic<int64_t> s_slow_log_slower_than; // 阈值（微秒），默认10ms
-    extern std::atomic<size_t> s_slow_log_max_len;      // 慢查询缓存最大保存条数
-
-    extern std::atomic<uint64_t> s_redis_server_timeout;            // 每个客户端与服务器最大的待机时长
-    extern std::atomic<uint32_t> s_redis_server_maxClients;         // 最大客户端数量
-
     template <typename T>
     class CommandHandlerTable
     {
@@ -642,7 +629,7 @@ namespace blue
             if (pattern == "*" || pattern == "aof-filename" || pattern == "aof-*")
             {
                 result.push_back(*RespValue::bulk_string("aof-filename"));
-                result.push_back(*RespValue::bulk_string(s_aof_filename.load(std::memory_order_acquire)));
+                result.push_back(*RespValue::bulk_string(*s_aof_filename.load(std::memory_order_acquire)));
             }
             if (pattern == "*" || pattern == "aof-sync" || pattern == "aof-*")
             {
@@ -749,8 +736,7 @@ namespace blue
                 {
                     return RespValue::error("ERR invalid filename");
                 }
-                RedisServerConfig::aof_name = value;
-                s_aof_filename.store(RedisServerConfig::aof_name.c_str(), std::memory_order_release);
+                s_aof_filename.store(std::make_shared<const std::string>(value), std::memory_order_release);
                 return RespValue::simple_string("OK");
             }
             if (param == "aof-max_file_size") // 每个aof文件大小

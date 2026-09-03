@@ -36,6 +36,24 @@
 // 数据库和redis配置
 namespace blue
 {
+    // aof
+    extern std::atomic<RedisServerConfig::AOFSyncStrategy> s_aof_sync;     // 保存策略,always(0), everysec(1), no(2)
+    extern std::atomic<std::shared_ptr<const std::string>> s_aof_filename; // 文件模板名
+    extern std::atomic<size_t> s_aof_max_file_size;                        // 每个文件最大大小
+    extern std::atomic<size_t> s_aof_max_buffer_size;                      // aof异步写入文件的最大缓冲区大小
+    extern std::atomic<int> s_aof_max_file_number;                         // 保留aof文件数量
+    extern std::atomic<bool> s_aof_enabled;                                // 是否开启aof
+    // slowlog
+    extern std::atomic<int64_t> s_slow_log_slower_than; // 阈值（微秒），默认10ms
+    extern std::atomic<size_t> s_slow_log_max_len;      // 慢查询缓存最大保存条数
+    // redis
+    extern std::atomic<uint64_t> s_redis_server_timeout;    // 每个客户端与服务器最大的待机时长
+    extern std::atomic<uint32_t> s_redis_server_maxClients; // 最大客户端数量
+
+    extern std::atomic<size_t> s_max_command_size;    // Resp命令解析器缓冲区最大大小(即解析器缓冲区可以接受的最大大小)
+    extern std::atomic<size_t> s_max_batch_size;      // 服务器批量响应大小阈值
+    extern std::atomic<size_t> s_max_exec_batch_size; // 服务器批量执行的命令条数(即客户端单次输入的命令最大个数)
+
     // log system config
     namespace logSystemConfig
     {
@@ -54,25 +72,25 @@ namespace blue
     namespace RedisServerConfig
     {
         // redis-cli admin
-        static blue::ConfigVar<std::string>::ConfigVarPtr 
-            g_admin_password = blue::Config::Lookup<std::string>("redis.admin.password", 
-                                                                "admin123", 
-                                                                "admin password");
+        static blue::ConfigVar<std::string>::ConfigVarPtr
+            g_admin_password = blue::Config::Lookup<std::string>("redis.admin.password",
+                                                                 "admin123",
+                                                                 "admin password");
         static blue::ConfigVar<RedisServerConfigDefine>::ConfigVarPtr
-            g_RedisServerConfigDefine_config_ptr = 
-            blue::Config::Lookup<RedisServerConfigDefine>("redis",
-                                                        RedisServerConfigDefine(),
-                                                        "redis server configurations");
+            g_RedisServerConfigDefine_config_ptr =
+                blue::Config::Lookup<RedisServerConfigDefine>("redis",
+                                                              RedisServerConfigDefine(),
+                                                              "redis server configurations");
 
         static blue::ConfigVar<AOFConfigDefine>::ConfigVarPtr
             g_AOFDefine_config_ptr = blue::Config::Lookup<AOFConfigDefine>("redis.aof",
                                                                            AOFConfigDefine(),
                                                                            "redis AOF configurations");
-        
+
         static blue::ConfigVar<SlowLogConfigDefine>::ConfigVarPtr
             g_SlowLogDefine_config_ptr = blue::Config::Lookup<SlowLogConfigDefine>("redis.slowlog",
-                                                                                    SlowLogConfigDefine(),
-                                                                                    "redis SlowLog search configurations");
+                                                                                   SlowLogConfigDefine(),
+                                                                                   "redis SlowLog search configurations");
     }
 
     // 这里是对于http模块中使用到的数据库和redis的配置

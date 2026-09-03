@@ -25,13 +25,7 @@
 namespace blue
 {
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
-    extern std::atomic<RedisServerConfig::AOFSyncStrategy> s_aof_sync; // 保存策略,always(0), everysec(1), no(2)
-    extern std::atomic<const char *> s_aof_filename;                   // 文件模板名
-    extern std::atomic<size_t> s_aof_max_file_size;                    // 每个文件最大大小
-    extern std::atomic<size_t> s_aof_max_buffer_size;                  // aof异步写入文件的最大缓冲区大小
-    extern std::atomic<int> s_aof_max_file_number;                     // 保留aof文件数量
-    extern std::atomic<bool> s_aof_enabled;                            // 是否开启aof
-
+    
     void AOFModule::initAOF()
     {
         if (!s_aof_enabled.load(std::memory_order_acquire))
@@ -331,9 +325,9 @@ namespace blue
         static const std::string prefix = "/var/lib/blueRedis/";
         if (index == 1)
         {
-            return prefix + s_aof_filename.load(std::memory_order_acquire);
+            return prefix + *s_aof_filename.load(std::memory_order_acquire);
         }
-        return prefix + s_aof_filename.load(std::memory_order_acquire) + "." + std::to_string(index);
+        return prefix + *s_aof_filename.load(std::memory_order_acquire) + "." + std::to_string(index);
     }
 
     bool AOFModule::cleanupOldAOFs(const std::string &filename)

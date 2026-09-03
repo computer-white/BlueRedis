@@ -34,6 +34,9 @@ namespace blue
     // 从yaml文件加载出来的Redis Client Configuration
     struct RedisServerConfigDefine
     {
+        size_t max_command_size = 1024 * 1024;  // Resp命令解析器缓冲区最大大小(即解析器缓冲区可以接受的最大大小)
+        size_t max_batch_size = 256 * 1024;     // 服务器批量响应大小阈值
+        size_t max_exec_batch_size = 256;       // 服务器批量执行的命令条数(即客户端单次输入的命令最大个数)
         uint64_t timeout = 0;       // 客户端超时
         uint32_t maxClients = 1000; // 最大客户端数量
 
@@ -54,7 +57,77 @@ namespace blue
             YAML::Node node = YAML::Load(val);
             RedisServerConfigDefine res;
 
-            if (!node["macClients"].IsDefined())
+            if (!node["max_command_size"].IsDefined())
+            {
+                std::cerr << "Redis Server configuration error, max_command_size is null "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default value: "
+                          << res.max_command_size
+                          << std::endl;
+            }
+            else
+            {
+                std::string tmp_max_command_size_val = node["max_command_size"].as<std::string>();
+                auto max_command_size_val = util::ConfigParser::ParseSize(tmp_max_command_size_val);
+                if (max_command_size_val.has_value())
+                {
+                    res.max_command_size = *max_command_size_val;
+                }
+                else
+                {
+                    std::cerr << "Redis Server configuration error, max_command_size is invalid "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default value: "
+                          << res.max_command_size
+                          << std::endl;
+                }
+            }
+
+            if (!node["max_batch_size"].IsDefined())
+            {
+                std::cerr << "Redis Server configuration error, max_batch_size is null "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default value: "
+                          << res.max_batch_size
+                          << std::endl;
+            }
+            else
+            {
+                std::string tmp_max_batch_size = node["max_batch_size"].as<std::string>();
+                auto max_batch_size_val = util::ConfigParser::ParseSize(tmp_max_batch_size);
+                if (max_batch_size_val.has_value())
+                {
+                    res.max_batch_size = *max_batch_size_val;
+                }
+                else
+                {
+                    std::cerr << "Redis Server configuration error, max_batch_size is invalid "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default value: "
+                          << res.max_batch_size
+                          << std::endl;
+                }
+            }
+
+            if (!node["max_exec_batch_size"].IsDefined())
+            {
+                std::cerr << "Redis Server configuration error, max_exec_batch_size is null "
+                          << __FILE__ << " " << __LINE__ << "\nnode:\n"
+                          << node << "\n"
+                          << "I will use default value: "
+                          << res.max_exec_batch_size
+                          << std::endl;
+            }
+            else
+            {
+                res.max_exec_batch_size = node["max_exec_batch_size"].as<size_t>();
+            }
+
+            if (!node["maxClients"].IsDefined())
             {
                 std::cerr << "Redis Server configuration error, maxClients is null "
                           << __FILE__ << " " << __LINE__ << "\nnode:\n"
@@ -65,7 +138,7 @@ namespace blue
             }
             else
             {
-                res.maxClients = node["macClients"].as<int32_t>();
+                res.maxClients = node["maxClients"].as<int32_t>();
             }
 
             if (!node["timeout"].IsDefined())
@@ -107,6 +180,9 @@ namespace blue
         std::string operator()(const RedisServerConfigDefine &lhs)
         {
             YAML::Node node;
+            node["max_command_size"] = util::ConfigParser::FormatSize(lhs.max_command_size);
+            node["max_batch_size"] = util::ConfigParser::FormatSize(lhs.max_batch_size);
+            node["max_exec_batch_size"] = lhs.max_exec_batch_size;
             node["maxClients"] = lhs.maxClients;
             node["timeout"] = util::ConfigParser::FormatTime(std::chrono::microseconds(lhs.timeout));
             std::stringstream ss;

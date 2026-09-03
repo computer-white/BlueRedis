@@ -29,6 +29,25 @@
 ### 存储文件路径(需要提前创建，并且需要让当前项目所属用户具有相应权限)
     日志存放在/var/log/blueRedis/logs_dir/
     AOF持久文件和RDB持久文件放在/var/lib/blueRedis/
+    配置文件在/etc/blueRedis/redis_cof/blueredis.yml
+
+### 配置文件中的一些参数说明
+#### /etc/blueRedis/redis_cof/blueredis.yml"
+```bash
+    redis.max_command_size: 1M # 表示程序中的RESP命令解析器缓冲区最大大小
+    redis.max_batch_size: 256K # 服务器批量响应大小阈值
+    redis.max_exec_batch_size: 256 # 服务器批量执行的命令条数(即客户端单次输入的命令最大个数)
+    redis.timeout: 60s # 服务器与客户端之间最长接收的待机时长
+    redis.maxClients: 10000 # 服务器最大接收的客户端连接
+    redis.admin.password: admin # 服务器管理员密码(可以单独放到一个文件通过设置权限来保证安全，也可以选择不设置直接使用ctrl + c来关闭服务器)
+    redis.aof.aof_enabled: false # 服务器是否开启AOF写命令追加保存
+    redis.aof.aof_filename: "appendonly.aof" # 服务器AOF文件名
+    redis.aof.aof_max_buffer_size: 10M # 服务器AOF写入文件的最大缓冲区大小
+    redis.aof.aof_max_file_size: 10M # AOF持久化文件的最大大小
+    redis.aof.aof_max_file_number: 10 # AOF持久化文件轮转文件数量(文件最多保存多少)
+    redis.slowlog.slow_log_slower_than: 10ms # 规定执行时长大于10ms的记录为慢日志
+    redis.slowlog.slow_log_max_len: 256 # 慢日志缓存数组最大长度
+```
 ## 依赖
 bash
 ## 编译器

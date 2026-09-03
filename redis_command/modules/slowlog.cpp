@@ -15,13 +15,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include "blue/configinit.h"
 #include "slowlog.h"
 
 namespace blue
 {
-    extern std::atomic<int64_t> s_slow_log_slower_than; // 阈值（微秒），默认10ms
-    extern std::atomic<size_t> s_slow_log_max_len;      // 慢查询缓存最大保存条数
-
     void SlowLogModule::syncSlowLogs()
     {
         std::unique_lock<std::shared_mutex> lock(m_slow_logs_cache_mutex);

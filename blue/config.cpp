@@ -38,7 +38,7 @@ namespace blue
     {
         if (!prefix.empty())
         {
-            if (prefix.find_first_not_of("abcdefghijklmnopqrstuvwxyz._012345678") != std::string::npos)
+            if (prefix.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._012345678") != std::string::npos)
             {
                 BLUE_LOG_ERROR(BLUE_LOG_MASSAGE_ROOT()) << "Config invalid name : " << prefix << ":" << node;
                 return;

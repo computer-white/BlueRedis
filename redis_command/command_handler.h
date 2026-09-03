@@ -37,6 +37,7 @@
 #include "blue/resp_parser.h"
 #include "blue/asyncio.h"
 #include "blue/await.h"
+#include "blue/configinit.h"
 #include "server_data.h"
 #include "generator.h"
 #include "command/command_handler_table.h"
@@ -210,11 +211,11 @@ namespace blue
         // BLUE_LOG_INFO(xx::g_logger) << "local address : " <<  sock->getLocalAddress()->toString();
 
         RespStreamParser parser;                     // 解析器
-        const size_t MAX_COMMAND_SIZE = 1024 * 1024; // 解析缓冲区最大大小
-        const size_t BATCH_SIZE = 256 * 1024;        // 批量响应大小阈值
+        // const size_t MAX_COMMAND_SIZE = 1024 * 1024; // 解析缓冲区最大大小
+        // const size_t BATCH_SIZE = 256 * 1024;        // 批量响应大小阈值
 
         std::string batch_response;
-        batch_response.reserve(BATCH_SIZE);
+        batch_response.reserve(s_max_batch_size.load(std::memory_order_acquire()));
         int cmd_count = 0;
 
         // 回复函数
@@ -291,7 +292,7 @@ namespace blue
                 cmd_count++;
                 m_server->incrementCommands();
 
-                if (batch_response.size() >= BATCH_SIZE)
+                if (batch_response.size() >= s_max_batch_size.load(std::memory_order_acquire()))
                 {
                     co_await send_response(batch_response);
                     co_await std::suspend_always{};
@@ -312,7 +313,7 @@ namespace blue
             }
 
             // 检查缓冲区大小
-            if (parser.bufferSize() > MAX_COMMAND_SIZE)
+            if (parser.bufferSize() > s_max_command_size.load(std::memory_order_acquire()))
             {
                 BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
                                              << "] 命令过大，关闭连接";
@@ -360,15 +361,12 @@ namespace blue
         // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
         // BLUE_LOG_INFO(xx::g_logger) << "local address : " <<  sock->getLocalAddress()->toString();
 
-        RespStreamParser parser;                            // 解析器
-        const size_t MAX_COMMAND_SIZE = 1024 * 1024;        // 解析缓冲区最大大小
-        const size_t BATCH_SIZE = 256 * 1024;               // 批量响应大小阈值
-        const size_t EXEC_BATCH_SIZE = 256;                 // 批量执行大小阈值
-        std::vector<std::vector<RespValue>> batch_commands; // 批量命令数组
-        batch_commands.reserve(EXEC_BATCH_SIZE);
+        RespStreamParser parser(s_max_command_size.load(std::memory_order_acquire)); // 解析器
+        std::vector<std::vector<RespValue>> batch_commands;                          // 批量命令数组
+        batch_commands.reserve(s_max_exec_batch_size.load(std::memory_order_acquire));
 
         std::string batch_response;
-        batch_response.reserve(BATCH_SIZE * 2);
+        batch_response.reserve(s_max_batch_size.load(std::memory_order_acquire) * 2);
         int cmd_count = 0;
 
         blue::AutoRespValue response;
@@ -408,10 +406,10 @@ namespace blue
                 batch_response += RespValue::encode(resp);
             }
             commands.clear();
-            commands.reserve(EXEC_BATCH_SIZE);
+            commands.reserve(s_max_exec_batch_size.load(std::memory_order_acquire));
 
             // 如果响应达到阈值，立即发送
-            if (batch_response.size() >= BATCH_SIZE)
+            if (batch_response.size() >= s_max_batch_size.load(std::memory_order_acquire))
             {
                 co_await send_response(batch_response);
 
@@ -524,7 +522,7 @@ namespace blue
                     batch_commands.push_back(std::move(copy_arr));
 
                     // 达到阈值直接执行
-                    if (batch_commands.size() >= EXEC_BATCH_SIZE)
+                    if (batch_commands.size() >= s_max_exec_batch_size.load(std::memory_order_acquire))
                     {
                         co_await execute_and_encode(batch_commands);
                     }
@@ -586,7 +584,7 @@ namespace blue
             }
 
             // 检查缓冲区大小
-            if (parser.bufferSize() > MAX_COMMAND_SIZE)
+            if (parser.bufferSize() > s_max_command_size.load(std::memory_order_acquire))
             {
                 BLUE_LOG_ERROR(xx::g_logger) << "[client " << sock->getSocketfd()
                                              << "] 命令过大，关闭连接";

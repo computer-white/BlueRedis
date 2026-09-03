@@ -26,7 +26,7 @@ namespace blue
 {
     // redis server AOF configuration
     std::atomic<RedisServerConfig::AOFSyncStrategy> s_aof_sync{RedisServerConfig::AOFSyncStrategy::EVERYSEC};
-    std::atomic<const char *> s_aof_filename{"appendonly.aof"};
+    std::atomic<std::shared_ptr<const std::string>> s_aof_filename{std::make_shared<const std::string>("appendonly.aof")};
     std::atomic<size_t> s_aof_max_file_size{1024};
     std::atomic<size_t> s_aof_max_buffer_size{1024 * 1024};
     std::atomic<bool> s_aof_enabled{false};
@@ -39,6 +39,10 @@ namespace blue
     // redis server configuration
     std::atomic<uint64_t> s_redis_server_timeout{0};       // 每个客户端与服务器最大的待机时长
     std::atomic<uint32_t> s_redis_server_maxClients{1000}; // 最大客户端数量
+
+    std::atomic<size_t> s_max_command_size{1024 * 1024};  // Resp命令解析器缓冲区最大大小(即解析器缓冲区可以接受的最大大小)
+    std::atomic<size_t> s_max_batch_size{256 * 1024};     // 服务器批量响应大小阈值
+    std::atomic<size_t> s_max_exec_batch_size{256};       // 服务器批量执行的命令条数(即客户端单次输入的命令最大个数)
 
     struct InitConfig
     {
@@ -152,8 +156,7 @@ namespace blue
                     // enabled
                     s_aof_enabled.store(new_val.aof_enabled, std::memory_order_release);
                     // filename
-                    RedisServerConfig::aof_name = new_val.aof_filename;
-                    s_aof_filename.store(RedisServerConfig::aof_name.c_str(), std::memory_order_release);
+                    s_aof_filename.store(std::make_shared<const std::string>(new_val.aof_filename), std::memory_order_release);
                     // max_buffer_size
                     s_aof_max_buffer_size.store(new_val.aof_max_buffer_size, std::memory_order_release);
                     // max_file_size
@@ -188,6 +191,12 @@ namespace blue
                     s_redis_server_timeout.store(new_val.timeout, std::memory_order_release);
                     // maxClient
                     s_redis_server_maxClients.store(new_val.maxClients, std::memory_order_release);
+                    // max_command_size
+                    s_max_command_size.store(new_val.max_command_size, std::memory_order_release);
+                    // max_batch_size
+                    s_max_batch_size.store(new_val.max_batch_size, std::memory_order_release);
+                    // max_exec_batch_size
+                    s_max_exec_batch_size.store(new_val.max_exec_batch_size, std::memory_order_release);
                     BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
                         << " Update Redis Server Configuration Successful! ";
                 });
