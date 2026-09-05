@@ -17,6 +17,7 @@
  */
 #include "blue/log.h"
 #include "blue/io_manager.h"
+#include "blue/configinit.h"
 #include "replication.h"
 
 namespace blue
@@ -24,7 +25,8 @@ namespace blue
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
     void ReplicationModule::startReplication()
     {
-        if (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_ONLINE)
+        // 只要上一个主从复制没有结束，就不能开启新的
+        if (!m_repl_stop.load(std::memory_order_acquire))
         {
             return;
         }
@@ -35,6 +37,7 @@ namespace blue
 
         m_repl_state.store(REPL_STATE_CONNECTING, std::memory_order_release);
         m_repl_queue_stop.store(false, std::memory_order_release);
+        m_repl_stop.store(false, std::memory_order_release);
 
         // 让上次的复制线程回来,然后启动新的
         if (m_relp_thread.joinable())
@@ -60,10 +63,6 @@ namespace blue
             BLUE_LOG_INFO(g_logger) << "IOManager found: " << iom;
             iom->schedule(this->processReplQueue());
             BLUE_LOG_INFO(g_logger) << "Replication queue consumer scheduled";
-            // blue::IOManager::GetThis()->schedule([this]() -> Task<void>
-            //                                      {
-            //     co_await this->processReplQueue();
-            //     co_return; });
         }
     }
 
@@ -71,7 +70,7 @@ namespace blue
     {
         BLUE_LOG_INFO(g_logger) << "Stopping replication";
 
-        m_repl_state.store(REPL_STATE_NONE, std::memory_order_release);
+        m_repl_stop.store(true, std::memory_order_release);
         // 设置processReplQueue停止标识
         m_repl_queue_stop.store(true, std::memory_order_release);
         // 通知所有等待的线程
@@ -120,17 +119,13 @@ namespace blue
         BLUE_LOG_INFO(g_logger) << "Replication Loop start";
         RespStreamParser parser;
         int retry_count = 0;
-        while (m_repl_state.load(std::memory_order_acquire) != REPL_STATE_NONE && !m_server_stop.load(std::memory_order_acquire))
+        while (!m_repl_stop.load(std::memory_order_acquire) && !m_server_stop.load(std::memory_order_acquire))
         {
+            // 已经处于在线模式，就等待结束复制或服务器停止
             if (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_ONLINE)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
                 continue;
-            }
-
-            if (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_NONE)
-            {
-                break;
             }
 
             // 重试10次后直接退出
@@ -185,7 +180,7 @@ namespace blue
             sock->setNoBlocking();
             sock->setConnection(); // 会标记sock fd为已经连接上，并拿到本端和远端地址
             BLUE_LOG_INFO(g_logger) << "Connected to master, fd=" << sock->getSocketfd();
-            m_repl_sock = sock;     // 引用计数加一
+            m_repl_sock = sock; // 引用计数加一
 
             // 握手
             m_repl_state.store(REPL_STATE_HANDSHAKE, std::memory_order_release);
@@ -240,116 +235,20 @@ namespace blue
             // 格式: $<length>\r\n<data>
             m_repl_state.store(REPL_STATE_TRANSFER, std::memory_order_release);
 
-            char buf[8192];
-            std::string rdb_data;
-            bool reading_length = true;
-            size_t rdb_length = 0;
-            size_t rdb_received = 0;
-            bool rdb_error = false;
-
-            while (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_TRANSFER)
+            // 有错误，重新连接
+            if (!loadRDBFromMemory(sock) && m_repl_state.load(std::memory_order_acquire) == REPL_STATE_RETRY)
             {
-                ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf) - 1, 0);
-                if (ret <= 0)
-                {
-                    if (ret == 0)
-                    {
-                        BLUE_LOG_ERROR(g_logger) << "Master closed connection during RDB transfer";
-                    }
-                    else if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    {
-                        // BLUE_LOG_DEBUGE(g_logger) << "errno = EAGIN";
-                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                        continue;
-                    }
-                    else
-                    {
-                        BLUE_LOG_ERROR(g_logger) << "recv error: " << strerror(errno);
-                    }
-                    rdb_error = true;
-                    break;
-                }
-
-                buf[ret] = '\0';
-                std::string data(buf, ret);
-                // BLUE_LOG_INFO(g_logger) << "data: " << data;
-
-                if (reading_length)
-                {
-                    if (data[0] == '$')
-                    {
-                        size_t pos = data.find("\r\n");
-                        if (pos != std::string::npos)
-                        {
-                            try
-                            {
-                                rdb_length = std::stoull(data.substr(1, pos - 1));
-                            }
-                            catch (...)
-                            {
-                                BLUE_LOG_ERROR(g_logger) << "Invalid RDB length";
-                                rdb_error = true;
-                                break;
-                            }
-                            rdb_data = data.substr(pos + 2);
-                            rdb_received = rdb_data.size();
-                            reading_length = false;
-
-                            BLUE_LOG_INFO(g_logger) << "RDB length: " << rdb_length;
-
-                            if (rdb_received >= rdb_length)
-                            {
-                                break; // 数据完整
-                            }
-                        }
-                        else
-                        {
-                            // 数据不完整继续接收
-                            continue;
-                        }
-                    }
-                    else
-                    {
-                        BLUE_LOG_ERROR(g_logger) << "Invalid RDB format, expected '$', got '" << data[0] << "'";
-                        rdb_error = true;
-                        break;
-                    }
-                }
-                else
-                {
-                    rdb_data += data;
-                    rdb_received += ret;
-                    // 完整数据
-                    if (rdb_received >= rdb_length)
-                    {
-                        break;
-                    }
-                }
-            }
-
-            // 有错误或不完整数据
-            if (rdb_error || rdb_received < rdb_length)
-            {
-                BLUE_LOG_ERROR(g_logger) << "RDB transfer failed";
                 sock->close();
                 m_repl_sock.reset();
+                m_repl_state.store(REPL_STATE_CONNECTING, std::memory_order_release);
                 std::this_thread::sleep_for(std::chrono::seconds(5));
                 continue;
             }
 
-            if (!rdb_data.empty())
+            // 加载完没有错误可能是停止了主从复制或服务器停止了
+            if (m_repl_stop.load(std::memory_order_acquire) || m_server_stop.load(std::memory_order_acquire))
             {
-                BLUE_LOG_INFO(g_logger) << "RDB received: " << rdb_received << " bytes";
-                // 加载 RDB 数据
-                if (!loadRDBFromMemory(rdb_data))
-                {
-                    BLUE_LOG_ERROR(g_logger) << "Failed to load RDB data";
-                    sock->close();
-                    m_repl_sock.reset();
-                    std::this_thread::sleep_for(std::chrono::seconds(5));
-                    continue;
-                }
-                BLUE_LOG_INFO(g_logger) << "RDB loaded successfully";
+                break;
             }
 
             // 进入在线模式
@@ -359,9 +258,12 @@ namespace blue
             // 非阻塞接收数据
             std::string buffer;
             sock->setNoBlocking();
-            while (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_ONLINE && !m_server_stop.load(std::memory_order_acquire))
+            while (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_ONLINE &&
+                   !m_server_stop.load(std::memory_order_acquire) &&
+                   !m_repl_stop.load(std::memory_order_acquire))
             {
-                ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf), 0);
+                char buf[8192];
+                ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf), MSG_NOSIGNAL);
                 if (ret <= 0)
                 {
                     if (ret == 0)
@@ -498,8 +400,8 @@ namespace blue
                                          { return !m_repl_queue.empty() ||
                                                   m_repl_queue_stop.load(std::memory_order_acquire) ||
                                                   m_server_stop.load(std::memory_order_acquire); });
-                
-                if (m_repl_queue_stop.load(std::memory_order_acquire) || 
+
+                if (m_repl_queue_stop.load(std::memory_order_acquire) ||
                     m_server_stop.load(std::memory_order_acquire))
                 {
                     break;
@@ -533,48 +435,159 @@ namespace blue
         }
 
         BLUE_LOG_INFO(g_logger) << "Replication queue consumer stopped";
-        m_consumer_started.store(false, std::memory_order_release);     // 消费者协程停止
+        m_consumer_started.store(false, std::memory_order_release); // 消费者协程停止
         co_return;
     }
 
-    bool ReplicationModule::loadRDBFromMemory(const std::string &data)
+    Generator<std::string> ReplicationModule::recvRDBData(std::shared_ptr<MSocket> sock)
     {
-        BLUE_LOG_INFO(g_logger) << "Loading RDB from memory, size=" << data.size();
-
-        RespStreamParser parser;
-        if (!parser.feed(data))
+        std::string rdb_data;
+        bool reading_length = true;
+        size_t rdb_length = 0;
+        size_t rdb_received = 0;
+        bool rdb_error = false;
+        while (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_TRANSFER &&
+               !m_repl_stop.load(std::memory_order_acquire) &&
+                !m_server_stop.load(std::memory_order_acquire))
         {
-            BLUE_LOG_ERROR(g_logger) << "Failed to parse RDB data";
-            return false;
-        }
+            char buf[8 * 1024];
+            sock->setNoBlocking();
+            ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf) - 1, MSG_NOSIGNAL);
+            if (ret <= 0)
+            {
+                if (ret == 0)
+                {
+                    BLUE_LOG_ERROR(g_logger) << "Master closed connection during RDB transfer";
+                }
+                else if (errno == EAGAIN || errno == EWOULDBLOCK)
+                {
+                    // BLUE_LOG_DEBUGE(g_logger) << "errno = EAGIN";
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    continue;
+                }
+                else
+                {
+                    BLUE_LOG_ERROR(g_logger) << "recv error: " << strerror(errno);
+                }
+                rdb_error = true;
+                break;
+            }
 
+            buf[ret] = '\0';
+            std::string data(buf, ret);
+            // BLUE_LOG_INFO(g_logger) << "data: " << data;
+            
+            // 处理来自主节点的SYNC命令的回复
+            while (data.substr(0, 5) == "+OK\r\n") // 可能包含SYNC或AUTH命令的OK
+            {
+                // +OK\r\n
+                data = data.erase(0, 5);
+            }
+            
+            // BLUE_LOG_INFO(g_logger) << "removed '+OK', data: " << data;
+            bool stop = (data.find("EOF") != std::string::npos);
+            co_yield std::move(data);
+            if (stop)
+            {
+                break;
+            }
+        }
+        if (rdb_error)
+        {
+            m_repl_state.store(REPL_STATE_RETRY, std::memory_order_release);
+        }
+        BLUE_LOG_INFO(g_logger) << "recvRDBData finish!";
+    }
+
+    bool ReplicationModule::loadRDBFromMemory(std::shared_ptr<MSocket> sock)
+    {
         // 创建临时 socket 用于加载（不需要认证）
         auto temp_sock = MSocket::CreateTcpSocket();
         temp_sock->setClientlevel(1);
         temp_sock->setClientId(0);
 
         int count = 0;
-        RespValue cmd;
-        while (parser.next(cmd))
+        RespStreamParser parser(s_max_command_size.load(std::memory_order_acquire));
+        auto generator = this->recvRDBData(sock);
+        for (const auto &data : generator)
         {
-            if (cmd.type == RespValue::Type::ARRAY && !cmd.arr.empty())
+            std::cout << "111\n";
+            BLUE_LOG_INFO(g_logger) << "Loading RDB from memory, size=" << data.size();
+            BLUE_LOG_INFO(g_logger) << "feed";
+            if (!parser.feed(data))
             {
-                try
+                BLUE_LOG_ERROR(g_logger) << "Failed to parse RDB data";
+                return false;
+            }
+
+            RespValue cmd;
+            BLUE_LOG_INFO(g_logger) << "next";
+            while (parser.next(cmd))
+            {
+                BLUE_LOG_INFO(g_logger) << "next successful!";
+                if (cmd.type == RespValue::Type::ARRAY && !cmd.arr.empty())
                 {
-                    // 执行命令（不记录 AOF，不推送Monitor）
-                    m_executor(std::move(cmd.arr), temp_sock, false);
-                    count++;
-                }
-                catch (const std::exception &e)
-                {
-                    BLUE_LOG_ERROR(g_logger) << "Executor threw exception: " << e.what();
+                    try
+                    {
+                        BLUE_LOG_INFO(g_logger) << "executor";
+                        // 执行命令（不记录 AOF，不推送Monitor）
+                        m_executor(std::move(cmd.arr), temp_sock, false);
+                        BLUE_LOG_INFO(g_logger) << "count++";
+                        count++;
+                    }
+                    catch (const std::exception &e)
+                    {
+                        BLUE_LOG_ERROR(g_logger) << "Executor threw exception: " << e.what();
+                    }
                 }
             }
         }
-
         BLUE_LOG_INFO(g_logger) << "Loaded " << count << " commands from RDB";
+        if (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_RETRY)
+        {
+            return false;
+        }
         return true;
     }
+
+    // bool ReplicationModule::loadRDBFromMemory(const std::string &data, std::shared_ptr<MSocket> sock)
+    // {
+    //     BLUE_LOG_INFO(g_logger) << "Loading RDB from memory, size=" << data.size();
+
+    //     RespStreamParser parser(s_max_command_size.load(std::memory_order_acquire));
+    //     if (!parser.feed(data))
+    //     {
+    //         BLUE_LOG_ERROR(g_logger) << "Failed to parse RDB data";
+    //         return false;
+    //     }
+
+    //     // 创建临时 socket 用于加载（不需要认证）
+    //     auto temp_sock = MSocket::CreateTcpSocket();
+    //     temp_sock->setClientlevel(1);
+    //     temp_sock->setClientId(0);
+
+    //     int count = 0;
+    //     RespValue cmd;
+    //     while (parser.next(cmd))
+    //     {
+    //         if (cmd.type == RespValue::Type::ARRAY && !cmd.arr.empty())
+    //         {
+    //             try
+    //             {
+    //                 // 执行命令（不记录 AOF，不推送Monitor）
+    //                 m_executor(std::move(cmd.arr), temp_sock, false);
+    //                 count++;
+    //             }
+    //             catch (const std::exception &e)
+    //             {
+    //                 BLUE_LOG_ERROR(g_logger) << "Executor threw exception: " << e.what();
+    //             }
+    //         }
+    //     }
+
+    //     BLUE_LOG_INFO(g_logger) << "Loaded " << count << " commands from RDB";
+    //     return true;
+    // }
 
     void ReplicationModule::remove(MSocket::MSocketPtr sock)
     {
@@ -633,7 +646,7 @@ namespace blue
     size_t ReplicationModule::slavesCount()
     {
         std::unique_lock<std::shared_mutex> lock(m_slaves_mutex);
-        for (auto it = m_slaves.begin(); it != m_slaves.end(); )
+        for (auto it = m_slaves.begin(); it != m_slaves.end();)
         {
             if (it->expired())
             {

@@ -38,7 +38,7 @@ Task<void> runServer(const std::string host)
     bool ans = co_await comm->start();
     if (ans)
     {
-        BLUE_LOG_INFO(g_logger) << "Server started successfully on port 6666";
+        BLUE_LOG_INFO(g_logger) << "Server started successfully on " << host;
     }
     // 保持服务器运行，直到收到停止信号
     while (g_running.load(std::memory_order_acquire) && !comm->getIsStop())

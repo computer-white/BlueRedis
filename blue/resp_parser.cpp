@@ -417,7 +417,7 @@ namespace blue
 
     bool RespStreamParser::next(RespValue &out)
     {
-        if (parse_offset_ >= buffer_.size())
+        if (parse_offset_ > buffer_.size())
         {
             buffer_.clear();
             parse_offset_ = 0;

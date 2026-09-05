@@ -295,7 +295,7 @@ namespace blue
 
     // 数据来源
     template <typename Container>
-    auto from(Container &&cont)
+    inline auto from(Container &&cont)
     {
         using ValueType = std::remove_reference_t<Container>;
         using ItemType = typename ValueType::value_type;
@@ -311,7 +311,7 @@ namespace blue
     }
 
     template <typename T>
-    auto from(std::initializer_list<T> list)
+    inline auto from(std::initializer_list<T> list)
     {
         return Pipeline(list,
                         [](auto &&c) -> Generator<T>
@@ -325,7 +325,7 @@ namespace blue
 
     // 过滤
     template <typename Pred>
-    auto filter(Pred &&pred)
+    inline auto filter(Pred &&pred)
     {
         // 返回下一个操作
         return [pred = std::forward<Pred>(pred)]<typename S>(S source) -> Generator<typename S::value_type>
@@ -342,7 +342,7 @@ namespace blue
 
     // 将值转化为func(x)
     template <typename Func>
-    auto transform(Func &&func)
+    inline auto transform(Func &&func)
     {
         return [func = std::forward<Func>(func)]<typename S>(S source) -> Generator<decltype(func(std::declval<typename S::value_type>()))>
         {
@@ -355,7 +355,7 @@ namespace blue
 
     // 取前count个
     template <typename T = int>
-    auto take(T count)
+    inline auto take(T count)
     {
         return [count]<typename S>(S source) -> Generator<typename S::value_type>
         {
@@ -374,7 +374,7 @@ namespace blue
 
     // 跳过前count 个
     template <typename T = int>
-    auto drop(T count)
+    inline auto drop(T count)
     {
         return [count]<typename S>(S source) -> Generator<typename S::value_type>
         {
@@ -393,7 +393,7 @@ namespace blue
 
     // 按条件取元素
     template <typename Pred>
-    auto take_while(Pred pred)
+    inline auto take_while(Pred pred)
     {
         return [pred = std::forward<Pred>(pred)]<typename S>(S source) -> Generator<typename S::value_type>
         {
@@ -409,7 +409,7 @@ namespace blue
 
     // 按条件跳过元素
     template <typename Pred>
-    auto drop_while(Pred pred)
+    inline auto drop_while(Pred pred)
     {
         return [pred = std::forward<Pred>(pred)]<typename S>(S source) -> Generator<typename S::value_type>
         {
@@ -425,7 +425,7 @@ namespace blue
     }
 
     // 连续去重
-    auto distinct()
+    inline auto distinct()
     {
         return []<typename S>(S source) -> Generator<typename S::value_type>
         {
@@ -452,7 +452,7 @@ namespace blue
 
     // 归约
     template <typename T = int, typename Func>
-    auto reduce(T init, Func func)
+    inline auto reduce(T init, Func func)
     {
         return [init = std::move(init), func = std::forward<Func>(func)]<typename S>(S source)
         {
@@ -468,7 +468,7 @@ namespace blue
 
     // scan
     template <typename T = int, typename Func>
-    auto scan(T init, Func func)
+    inline auto scan(T init, Func func)
     {
         return [init = std::move(init), func = std::forward<Func>(func)]<typename S>(S source)
                    -> Generator<std::invoke_result_t<Func, T, typename S::value_type>>
@@ -485,7 +485,7 @@ namespace blue
 
     // count
     template <typename T = size_t>
-    auto count()
+    inline auto count()
     {
         return []<typename S>(S source)
         {
@@ -499,7 +499,7 @@ namespace blue
     }
 
     // 输出为vector
-    auto to_vector()
+    inline auto to_vector()
     {
         return []<typename S>(S source)
         {
@@ -514,7 +514,7 @@ namespace blue
     }
 
     // 输出为list
-    auto to_list()
+    inline auto to_list()
     {
         return []<typename S>(S source)
         {
@@ -530,7 +530,7 @@ namespace blue
 
     // 输出为unordered_map
     template <typename KeyFunc, typename ValueFunc>
-    auto to_unordered_map(KeyFunc keyf, ValueFunc valuef)
+    inline auto to_unordered_map(KeyFunc keyf, ValueFunc valuef)
     {
         return [keyfunc = std::forward<KeyFunc>(keyf),
                 valfunc = std::forward<ValueFunc>(valuef)]<typename S>(S &&source)
@@ -552,7 +552,7 @@ namespace blue
 
     // 支持自定义哈希和比较器
     template <typename KeyFunc, typename ValueFunc, typename Hash, typename KeyEqual = std::equal_to<>>
-    auto to_unordered_map(KeyFunc keyf, ValueFunc valuef, Hash hash, KeyEqual equal = {})
+    inline auto to_unordered_map(KeyFunc keyf, ValueFunc valuef, Hash hash, KeyEqual equal = {})
     {
         return [keyfunc = std::forward<KeyFunc>(keyf),
                 valfunc = std::forward<ValueFunc>(valuef),
@@ -579,7 +579,7 @@ namespace blue
 
     // 输出为map
     template <typename KeyFunc, typename ValueFunc, typename Compare = std::less<>>
-    auto to_map(KeyFunc keyfunc, ValueFunc valuef, Compare com = {})
+    inline auto to_map(KeyFunc keyfunc, ValueFunc valuef, Compare com = {})
     {
         return [keyfunc = std::forward<KeyFunc>(keyfunc),
                 valfunc = std::forward<ValueFunc>(valuef),

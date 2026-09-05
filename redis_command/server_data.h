@@ -45,6 +45,7 @@
 #include "modules/monitor.h"
 #include "modules/AOF.h"
 #include "modules/replication.h"
+#include "redis_command/generator.h"
 
 namespace blue
 {
@@ -252,7 +253,7 @@ namespace blue
         /**
          * @brief 生产RDB 消息供 replication 使用
          */
-        std::string generateRDB();
+        Generator<std::string> generateRDB();
 
         /**
          * @brief 扫描键（完整实现）
@@ -659,8 +660,9 @@ namespace blue
         }
     }
 
+    // 改用Generator流式推送RDB信息，防止数据过大，将内存撑爆并且可以充分享受协程+调度器优势
     template <typename T>
-    std::string ServerData<T>::generateRDB()
+    Generator<std::string> ServerData<T>::generateRDB()
     {
         std::string result;
         for (int db = 0; db < DB_COUNT; db++)
@@ -682,8 +684,8 @@ namespace blue
             }
 
             // SELECT db
-            result += "*2\r\n$6\r\nSELECT\r\n$" + std::to_string(std::to_string(db).size()) +
-                      "\r\n" + std::to_string(db) + "\r\n";
+            co_yield "*2\r\n$6\r\nSELECT\r\n$" + std::to_string(std::to_string(db).size()) +
+                "\r\n" + std::to_string(db) + "\r\n";
 
             for (auto &shard : m_dbs[db])
             {
@@ -692,11 +694,22 @@ namespace blue
                 // String
                 for (const auto &[key, value] : shard.store)
                 {
-                    // 简单处理
-                    result += "*3\r\n$3\r\nSET\r\n$" + std::to_string(key.size()) +
-                              "\r\n" + key + "\r\n$" + std::to_string(value.val.size()) +
-                              "\r\n" + value.val + "\r\n";
-                    // TODO 过期时间
+                    std::string entry = "*3\r\n$3\r\nSET\r\n$" + std::to_string(key.size()) +
+                                        "\r\n" + key + "\r\n$" + std::to_string(value.val.size()) +
+                                        "\r\n" + value.val + "\r\n";
+                    if (value.expire.has_value())
+                    {
+                        auto now = SteadyClock::now();
+                        auto remain = std::chrono::duration_cast<std::chrono::seconds>(
+                            value.expire.value() - now).count();
+                        if (remain > 0)
+                        {
+                            entry += "*2\r\n$2\r\nEX\r\n$" + std::to_string(std::to_string(remain).size()) + 
+                                    "\r\n" + std::to_string(remain) + "\r\n";
+                        }
+                    }
+
+                    co_yield std::move(entry);
                 }
 
                 // Hash
@@ -704,10 +717,11 @@ namespace blue
                 {
                     for (auto &[field, value] : fields)
                     {
-                        result += "*4\r\n$4\r\nHSET\r\n$" + std::to_string(key.size()) +
+                        std::string entry = "*4\r\n$4\r\nHSET\r\n$" + std::to_string(key.size()) +
                                   "\r\n" + key + "\r\n$" + std::to_string(field.size()) +
                                   "\r\n" + field + "\r\n$" + std::to_string(value.size()) +
                                   "\r\n" + value + "\r\n";
+                        co_yield std::move(entry);
                     }
                 }
 
@@ -716,9 +730,10 @@ namespace blue
                 {
                     for (auto &value : list)
                     {
-                        result += "*3\r\n$5\r\nRPUSH\r\n$" + std::to_string(key.size()) +
+                        std::string entry = "*3\r\n$5\r\nRPUSH\r\n$" + std::to_string(key.size()) +
                                   "\r\n" + key + "\r\n$" + std::to_string(value.size()) +
                                   "\r\n" + value + "\r\n";
+                        co_yield std::move(entry);
                     }
                 }
 
@@ -727,9 +742,10 @@ namespace blue
                 {
                     for (const auto &member : set)
                     {
-                        result += "*3\r\n$4\r\nSADD\r\n$" + std::to_string(key.size()) +
+                        std::string entry = "*3\r\n$4\r\nSADD\r\n$" + std::to_string(key.size()) +
                                   "\r\n" + key + "\r\n$" + std::to_string(member.size()) +
                                   "\r\n" + member + "\r\n";
+                        co_yield std::move(entry);
                     }
                 }
 
@@ -739,15 +755,16 @@ namespace blue
                     for (const auto &[member, score] : score_map)
                     {
                         std::string score_str = std::to_string(score);
-                        result += "*4\r\n$4\r\nZADD\r\n$" + std::to_string(key.size()) +
+                        std::string entry = "*4\r\n$4\r\nZADD\r\n$" + std::to_string(key.size()) +
                                   "\r\n" + key + "\r\n$" + std::to_string(score_str.size()) +
                                   "\r\n" + score_str + "\r\n$" + std::to_string(member.size()) +
                                   "\r\n" + member + "\r\n";
+                        co_yield std::move(entry);
                     }
                 }
             }
         }
-        return result;
+        co_yield "*1\r\n$3\r\nEOF\r\n";
     }
 
     // 通配符转正则

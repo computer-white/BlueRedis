@@ -4633,6 +4633,41 @@ namespace blue
         return RespValue::simple_string("OK");
     }
 
+    inline Task<void> sendRDBStreaming(MSocket::MSocketPtr sock, std::shared_ptr<ServerData<int>> self)
+    {
+        BLUE_LOG_INFO(xx::g_logger) << "Starting RDB streaming for slave fd="
+                                    << sock->getSocketfd();
+
+        try
+        {
+            auto generator = self->generateRDB();
+            // 逐块发送
+            for (const auto &chunk : generator)
+            {
+                ssize_t sent = co_await sock->send(chunk.data(), chunk.size(), MSG_NOSIGNAL);
+                if (sent <= 0)
+                {
+                    BLUE_LOG_WARN(xx::g_logger) << "Slave disconnected during RDB sync, fd="
+                                                << sock->getSocketfd();
+                    // 从从节点列表中移除
+                    self->getReplication().remove(sock);
+                    co_return;
+                }
+                BLUE_LOG_INFO(xx::g_logger) << "Send to slave " << sock->getSocketfd() << sent << "bytes";
+            }
+
+            // RDB 发送完成，协程正常结束
+            BLUE_LOG_INFO(xx::g_logger) << "RDB streaming completed for slave fd="
+                                        << sock->getSocketfd();
+        }
+        catch (const std::exception &e)
+        {
+            BLUE_LOG_ERROR(xx::g_logger) << "RDB streaming error: " << e.what();
+            self->getReplication().remove(sock);
+        }
+        co_return;
+    }
+
     template <typename T>
     AutoRespValue CommandHandlerTable<T>::handleSYNC(std::vector<RespValue> &args,
                                                      MSocket::MSocketPtr sock,
@@ -4655,26 +4690,34 @@ namespace blue
         // 主节点保存从节点连接
         self->getReplication().addSlaves(sock);
 
-        // 生成 RDB 数据并发送
-        std::string rdb_data = self->generateRDB(); // 拷贝一份
-
-        // 发送 RDB 格式: $<length>\r\n<data>
-        std::string response = "$" + std::to_string(rdb_data.size()) + "\r\n" + rdb_data;
-
-        // 非阻塞同步发送(在tcpServer中的startAccept中对sock fd设置了非阻塞)
-        ssize_t sent = ::send(sock->getSocketfd(), response.data(), response.size(), MSG_NOSIGNAL);
-        if (sent <= 0)
+        auto *iom = blue::IOManager::GetThis();
+        if (iom)
         {
-            BLUE_LOG_ERROR(xx::g_logger) << "Failed to send RDB to slave";
-
-            // 从从节点列表中删除从节点
-            self->getReplication().remove(sock);
-
-            // 返回失败给从节点
-            return RespValue::error("ERR failed to send RDB");
+            iom->schedule(sendRDBStreaming(sock,self));
         }
+        else
+        {
+            auto generator = self->generateRDB();
+            for (const auto &chunk : generator)
+            {
+                // 构建 RESP 格式：$<length>\r\n<data>\r\n
+                std::string resp_chunk = "$" + std::to_string(chunk.size()) + "\r\n" + chunk + "\r\n";
+                // 非阻塞同步发送(在tcpServer中的startAccept中对sock fd设置了非阻塞)
+                sock->setNoBlocking();
+                ssize_t sent = ::send(sock->getSocketfd(), resp_chunk.data(), resp_chunk.size(), MSG_NOSIGNAL);
+                if (sent <= 0)
+                {
+                    BLUE_LOG_ERROR(xx::g_logger) << "Failed to send RDB to slave";
 
-        BLUE_LOG_INFO(xx::g_logger) << "SYNC: RDB sent to slave, " << rdb_data.size() << " bytes";
+                    // 从从节点列表中删除从节点
+                    self->getReplication().remove(sock);
+
+                    // 返回失败给从节点
+                    return RespValue::error("ERR failed to send RDB");
+                }
+                BLUE_LOG_INFO(xx::g_logger) << "SYNC: RDB sent to slave, " << sent << " bytes";
+            }
+        }
         return RespValue::simple_string("OK");
     }
 }

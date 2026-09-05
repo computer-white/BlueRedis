@@ -31,6 +31,7 @@
 #include <mutex>
 #include <queue>
 #include "blue/msocket.h"
+#include "redis_command/generator.h"
 
 namespace blue
 {
@@ -163,10 +164,21 @@ namespace blue
          */
         void broadcastToSlaves(const std::string &cmd);
 
+        // /**
+        //  * @brief 从内存加载 RDB 数据
+        //  */
+        // bool loadRDBFromMemory(const std::string &data);
+
         /**
          * @brief 从内存加载 RDB 数据
          */
-        bool loadRDBFromMemory(const std::string &data);
+        bool loadRDBFromMemory(std::shared_ptr<MSocket> sock);
+
+    private:
+        /**
+         * @brief 流式接收RDB数据
+         */
+        Generator<std::string> recvRDBData(std::shared_ptr<MSocket> sock);
 
     private:
         struct ReplicationConfig
@@ -184,7 +196,8 @@ namespace blue
             REPL_STATE_CONNECTING, // 连接中
             REPL_STATE_HANDSHAKE,  // 握手
             REPL_STATE_TRANSFER,   // 传输中
-            REPL_STATE_ONLINE      // 在线
+            REPL_STATE_ONLINE,     // 在线
+            REPL_STATE_RETRY       // 重试
         };
 
     private:
@@ -194,6 +207,7 @@ namespace blue
         std::shared_ptr<MSocket> m_repl_sock;                 // 作为从节点，连接到主节点时，连接成功时的SocketPtr
         std::atomic<RelpState> m_repl_state{REPL_STATE_NONE}; // 主从复制状态
         std::thread m_relp_thread;                            // 主从复制循环线程
+        std::atomic<bool> m_repl_stop{true};                  // 主从复制停止表示
 
         // 从节点列表
         mutable std::shared_mutex m_slaves_mutex;   // 从节点列表读写互斥变量
