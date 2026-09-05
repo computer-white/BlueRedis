@@ -75,41 +75,6 @@ namespace blue
         void startReplication();
 
         /**
-         * @brief 设置is_master
-         */
-        void setisMaster(bool val) { m_repl_config.is_master = val; }
-
-        /**
-         * @brief 设置master_host
-         */
-        void setMasterHost(const std::string &val) { m_repl_config.master_host = val; }
-
-        /**
-         * @brief 设置master_port
-         */
-        void setMasterPort(uint16_t val) { m_repl_config.master_port = val; }
-
-        /**
-         * @brief 设置repl_offset
-         */
-        void setReplOffset(int64_t val) { m_repl_config.repl_offset = val; }
-
-        /**
-         * @brief 获取is_master
-         */
-        bool getisMaster() const noexcept { return m_repl_config.is_master; }
-
-        /**
-         * @brief 获取master_host
-         */
-        const std::string &getMasterHost() const noexcept { return m_repl_config.master_host; }
-
-        /**
-         * @brief 获取master_port
-         */
-        uint16_t getMasterPort() const noexcept { return m_repl_config.master_port; }
-
-        /**
          * @brief 添加从节点
          */
         void addSlaves(MSocket::MSocketPtr sock);
@@ -139,11 +104,6 @@ namespace blue
         uint8_t getReplState() const noexcept { return m_repl_state.load(std::memory_order_acquire); }
 
         /**
-         * @brief 获取当前复制偏移量
-         */
-        int64_t getReplOffset() const noexcept { return m_repl_config.repl_offset; }
-
-        /**
          * @brief 返回在线状态
          */
         uint8_t getOnline() const noexcept { return RelpState::REPL_STATE_ONLINE; }
@@ -164,11 +124,6 @@ namespace blue
          */
         void broadcastToSlaves(const std::string &cmd);
 
-        // /**
-        //  * @brief 从内存加载 RDB 数据
-        //  */
-        // bool loadRDBFromMemory(const std::string &data);
-
         /**
          * @brief 从内存加载 RDB 数据
          */
@@ -181,15 +136,6 @@ namespace blue
         Generator<std::string> recvRDBData(std::shared_ptr<MSocket> sock);
 
     private:
-        struct ReplicationConfig
-        {
-            bool is_master = true;       // 是否是主节点
-            std::string master_host;     // 主节点地址
-            uint16_t master_port;        // 主节点端口
-            std::string master_password; // 主节点密码
-            int64_t repl_offset;         // 复制偏移量
-            std::string repl_id;         // 复制id
-        };
         enum RelpState : uint8_t
         {
             REPL_STATE_NONE = 0,   // 未开始
@@ -201,8 +147,6 @@ namespace blue
         };
 
     private:
-        ReplicationConfig m_repl_config; // 主从复制配置信息(后序需要将其分离出去，目前其不具备多线程安全)
-
         // 从节点连接
         std::shared_ptr<MSocket> m_repl_sock;                 // 作为从节点，连接到主节点时，连接成功时的SocketPtr
         std::atomic<RelpState> m_repl_state{REPL_STATE_NONE}; // 主从复制状态

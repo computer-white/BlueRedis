@@ -17,7 +17,7 @@
  */
 /**
  * @file loadRedisClientConfig.h
- * @brief 从Yaml文件中加载Reduis AOF配置，并提供类型和string的转化
+ * @brief 从Yaml文件中加载Reduis 配置，并提供类型和string的转化
  * @author blue
  * @email homeheyang@outlook.com
  * @date 2026.9.1

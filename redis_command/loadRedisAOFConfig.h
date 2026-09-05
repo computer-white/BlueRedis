@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 /**
- * @file loadAOFConfig.h
+ * @file loadRedisAOFConfig.h
  * @brief 从Yaml文件中加载Reduis AOF配置，并提供类型和string的转化
  * @author blue
  * @email homeheyang@outlook.com

@@ -16,8 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 /**
- * @file loadaofconfig.h
- * @brief 从Yaml文件中加载Reduis AOF配置，并提供类型和string的转化
+ * @file loadRedisSlowLogConfig.h
+ * @brief 从Yaml文件中加载Reduis SlowLog配置，并提供类型和string的转化
  * @author blue
  * @email homeheyang@outlook.com
  * @date 2026.8.30

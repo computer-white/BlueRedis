@@ -32,6 +32,7 @@
 #include "redis_command/loadRedisAOFConfig.h"
 #include "redis_command/loadRedisSlowLogConfig.h"
 #include "redis_command/loadRedisClientConfig.h"
+#include "redis_command/loadRedisReplicationConfig.h"
 
 // 数据库和redis配置
 namespace blue
@@ -53,6 +54,14 @@ namespace blue
     extern std::atomic<size_t> s_max_command_size;    // Resp命令解析器缓冲区最大大小(即解析器缓冲区可以接受的最大大小)
     extern std::atomic<size_t> s_max_batch_size;      // 服务器批量响应大小阈值
     extern std::atomic<size_t> s_max_exec_batch_size; // 服务器批量执行的命令条数(即客户端单次输入的命令最大个数)
+
+    // replication
+    extern std::atomic<std::shared_ptr<const std::string>> s_repl_master_addr;     // 主节点地址
+    extern std::atomic<std::shared_ptr<const std::string>> s_repl_master_password; // 主节点密码
+    extern std::atomic<int64_t> s_repl_offset;                                     // 从节点主从复制进入在线模式后，从节点同步主节点的写命令数量
+    extern std::atomic<int32_t> s_repl_retry_count;                                // 从节点连接主节点，尝试连接次数，超过就退出复制循环(即复制线程结束)
+    extern std::atomic<uint16_t> s_repl_master_port;                               // 主节点端口
+    extern std::atomic<bool> s_repl_is_master;                                     // 是否是主节点
 
     // log system config
     namespace logSystemConfig
@@ -91,6 +100,11 @@ namespace blue
             g_SlowLogDefine_config_ptr = blue::Config::Lookup<SlowLogConfigDefine>("redis.slowlog",
                                                                                    SlowLogConfigDefine(),
                                                                                    "redis SlowLog search configurations");
+
+        static blue::ConfigVar<ReplicationConfigDefine>::ConfigVarPtr
+            g_ReplicationDefine_config_ptr = blue::Config::Lookup<ReplicationConfigDefine>("redis.replication",
+                                                                                           ReplicationConfigDefine(),
+                                                                                           "redis Replication module configurations");
     }
 
     // 这里是对于http模块中使用到的数据库和redis的配置

@@ -366,7 +366,7 @@ namespace blue
         {                                                              \
             std::string aof_cmds = self->getAOF().formatCommand(args); \
             self->getAOF().appendToAOF(aof_cmds);                      \
-            if (self->getReplication().getisMaster() &&                \
+            if (s_repl_is_master.load(std::memory_order_acquire) &&    \
                 !self->getReplication().slavesEmpty())                 \
             {                                                          \
                 self->getReplication().broadcastToSlaves(aof_cmds);    \
@@ -413,7 +413,7 @@ namespace blue
             self->getAOF().appendToAOF(aof_cmds);
 
             // 如果是主节点，广播给从节点
-            if (self->getReplication().getisMaster() && !(self->getReplication().slavesEmpty()))
+            if (s_repl_is_master.load(std::memory_order_acquire) && !(self->getReplication().slavesEmpty()))
             {
                 self->getReplication().broadcastToSlaves(aof_cmds);
             }
@@ -4001,7 +4001,7 @@ namespace blue
             // Replication
             info += "# Replication\r\n";
 
-            if (self->getReplication().getisMaster())
+            if (s_repl_is_master.load(std::memory_order_acquire))
             {
                 info += "role:master\r\n";
                 info += "connected_slaves:" + std::to_string(self->getReplication().slavesCount()) + "\r\n";
@@ -4016,10 +4016,10 @@ namespace blue
             else
             {
                 info += "role:slave\r\n";
-                info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
-                info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
+                info += "master_host:" + *s_repl_master_addr.load(std::memory_order_acquire) + "\r\n";
+                info += "master_port:" + std::to_string(s_repl_master_port.load(std::memory_order_acquire)) + "\r\n";
                 info += "master_link_status:" + std::to_string(self->getReplication().getReplState() == self->getReplication().getOnline()) + "\r\n";
-                info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
+                info += "slave_repl_offset:" + std::to_string(s_repl_offset.load(std::memory_order_acquire)) + "\r\n";
             }
 
             info += "\r\n";
@@ -4084,7 +4084,7 @@ namespace blue
                 {
                     info += "# Replication\r\n";
 
-                    if (self->getReplication().getisMaster())
+                    if (s_repl_is_master.load(std::memory_order_acquire))
                     {
                         info += "role:master\r\n";
                         info += "connected_slaves:" + std::to_string(self->getReplication().slavesCount()) + "\r\n";
@@ -4099,10 +4099,10 @@ namespace blue
                     else
                     {
                         info += "role:slave\r\n";
-                        info += "master_host:" + self->getReplication().getMasterHost() + "\r\n";
-                        info += "master_port:" + std::to_string(self->getReplication().getMasterPort()) + "\r\n";
+                        info += "master_host:" + *s_repl_master_addr.load(std::memory_order_acquire) + "\r\n";
+                        info += "master_port:" + std::to_string(s_repl_master_port.load(std::memory_order_acquire)) + "\r\n";
                         info += "master_link_status:" + std::to_string(self->getReplication().getReplState() == self->getReplication().getOnline()) + "\r\n";
-                        info += "slave_repl_offset:" + std::to_string(self->getReplication().getReplOffset()) + "\r\n";
+                        info += "slave_repl_offset:" + std::to_string(s_repl_offset.load(std::memory_order_acquire)) + "\r\n";
                     }
 
                     info += "\r\n";
@@ -4509,16 +4509,16 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of arguments for 'REPLICAOF'");
         }
-        const std::string &host = args[1].str;
+        const std::string &addr = args[1].str;
         const std::string &port_str = args[2].str;
 
         // REPLICAOF NO ONE 取消复制
-        if (host == "NO" && port_str == "ONE")
+        if (addr == "NO" && port_str == "ONE")
         {
-            if (!self->getReplication().getisMaster())
+            if (!s_repl_is_master.load(std::memory_order_acquire))
             {
                 self->getReplication().stopReplication();
-                self->getReplication().setisMaster(true);
+                s_repl_is_master.store(true, std::memory_order_acquire);
                 BLUE_LOG_INFO(xx::g_logger) << "Replication stopped, now master";
             }
             return RespValue::simple_string("OK");
@@ -4539,24 +4539,24 @@ namespace blue
         }
 
         // 如果已经是从节点且连接到同一个主节点，忽略
-        if (!self->getReplication().getisMaster() &&
-            self->getReplication().getMasterHost() == host &&
-            self->getReplication().getMasterPort() == port)
+        if (!s_repl_is_master.load(std::memory_order_acquire) &&
+            *s_repl_master_addr.load(std::memory_order_acquire) == addr &&
+            s_repl_master_port.load(std::memory_order_acquire) == port)
         {
             return RespValue::simple_string("OK");
         }
 
         // 停止旧的复制
-        if (!self->getReplication().getisMaster())
+        if (!s_repl_is_master.load(std::memory_order_acquire))
         {
             self->getReplication().stopReplication();
         }
 
         // 设置新的配置
-        self->getReplication().setisMaster(false);
-        self->getReplication().setMasterHost(host);
-        self->getReplication().setMasterPort(static_cast<uint16_t>(port));
-        self->getReplication().setReplOffset(0);
+        s_repl_is_master.store(false, std::memory_order_release);
+        s_repl_master_addr.store(std::make_shared<const std::string>(addr), std::memory_order_release);
+        s_repl_master_port.store(port, std::memory_order_release);
+        s_repl_offset.store(0, std::memory_order_release);
 
         // 启动复制
         self->getReplication().startReplication();
@@ -4578,16 +4578,16 @@ namespace blue
         {
             return RespValue::error("ERR wrong number of arguments for 'REPLICAOF'");
         }
-        const std::string &host = args[1].str;
+        const std::string &addr = args[1].str;
         const std::string &port_str = args[2].str;
 
         // REPLICAOF NO ONE 取消复制
-        if (host == "NO" && port_str == "ONE")
+        if (addr == "NO" && port_str == "ONE")
         {
-            if (!self->getReplication().getisMaster())
+            if (!s_repl_is_master.load(std::memory_order_acquire))
             {
                 self->getReplication().stopReplication();
-                self->getReplication().setisMaster(true);
+                s_repl_is_master.store(true, std::memory_order_acquire);
                 BLUE_LOG_INFO(xx::g_logger) << "Replication stopped, now master";
             }
             return RespValue::simple_string("OK");
@@ -4608,24 +4608,24 @@ namespace blue
         }
 
         // 如果已经是从节点且连接到同一个主节点，忽略
-        if (!self->getReplication().getisMaster() &&
-            self->getReplication().getMasterHost() == host &&
-            self->getReplication().getMasterPort() == port)
+        if (!s_repl_is_master.load(std::memory_order_acquire) &&
+            *s_repl_master_addr.load(std::memory_order_acquire) == addr &&
+            s_repl_master_port.load(std::memory_order_acquire) == port)
         {
             return RespValue::simple_string("OK");
         }
 
         // 停止旧的复制
-        if (!self->getReplication().getisMaster())
+        if (!s_repl_is_master.load(std::memory_order_acquire))
         {
             self->getReplication().stopReplication();
         }
 
         // 设置新的配置
-        self->getReplication().setisMaster(false);
-        self->getReplication().setMasterHost(host);
-        self->getReplication().setMasterPort(static_cast<uint16_t>(port));
-        self->getReplication().setReplOffset(0);
+        s_repl_is_master.store(false, std::memory_order_release);
+        s_repl_master_addr.store(std::make_shared<const std::string>(addr), std::memory_order_release);
+        s_repl_master_port.store(port, std::memory_order_release);
+        s_repl_offset.store(0, std::memory_order_release);
 
         // 启动复制
         self->getReplication().startReplication();
@@ -4680,7 +4680,7 @@ namespace blue
         }
 
         // 只有主节点接收SYNC命令
-        if (!(self->getReplication().getisMaster()))
+        if (!s_repl_is_master.load(std::memory_order_acquire))
         {
             return RespValue::error("ERR not master");
         }

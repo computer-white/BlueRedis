@@ -18,6 +18,7 @@
 #include "blue/log.h"
 #include "blue/io_manager.h"
 #include "blue/configinit.h"
+#include "blue/configinit.h"
 #include "replication.h"
 
 namespace blue
@@ -32,8 +33,8 @@ namespace blue
         }
 
         BLUE_LOG_INFO(g_logger) << "Starting replication to "
-                                << m_repl_config.master_host << ":"
-                                << m_repl_config.master_port;
+                                << s_repl_master_addr.load(std::memory_order_acquire) << ":"
+                                << s_repl_master_port.load(std::memory_order_acquire);
 
         m_repl_state.store(REPL_STATE_CONNECTING, std::memory_order_release);
         m_repl_queue_stop.store(false, std::memory_order_release);
@@ -48,11 +49,9 @@ namespace blue
         m_relp_thread = std::thread([this]()
                                     { this->replicationLoop(); });
 
-        // 启动消费者协程
-        // static bool consumer_started = false;
+        // 启动消费者协程;
         if (!m_consumer_started.exchange(true, std::memory_order_acq_rel))
         {
-            // consumer_started = true;
             BLUE_LOG_INFO(g_logger) << "Scheduling replication queue consumer";
             auto *iom = blue::IOManager::GetThis();
             if (!iom)
@@ -128,8 +127,8 @@ namespace blue
                 continue;
             }
 
-            // 重试10次后直接退出
-            if (retry_count == 10)
+            // 重试还是连不上后直接退出
+            if (retry_count == s_repl_retry_count.load(std::memory_order_acquire))
             {
                 // stopReplication(); // 哈哈哈，遇到问题了，不能在线程运行中的函数中调用一个包含join这个线程的函数，线程死锁
                 // 选择直接退出，如果后序有什么好的想法再来改
@@ -138,12 +137,14 @@ namespace blue
             retry_count++;
 
             // 连接主节点
+            const std::string master_addr = *s_repl_master_addr.load(std::memory_order_acquire);
+            const std::string master_port = std::to_string(s_repl_master_port.load(std::memory_order_acquire));
             BLUE_LOG_INFO(g_logger) << "Connecting to master "
-                                    << m_repl_config.master_host << ":"
-                                    << m_repl_config.master_port;
+                                    << master_addr << ":"
+                                    << master_port;
 
             m_repl_state.store(REPL_STATE_CONNECTING, std::memory_order_release);
-            std::string host_with_port = m_repl_config.master_host + ":" + std::to_string(m_repl_config.master_port);
+            std::string host_with_port = master_addr + ":" + master_port;
             auto addr = Address::LookupAnyIpAddress(host_with_port);
             if (!addr)
             {
@@ -183,140 +184,117 @@ namespace blue
             m_repl_sock = sock; // 引用计数加一
 
             // 握手
-            m_repl_state.store(REPL_STATE_HANDSHAKE, std::memory_order_release);
-            if (!m_repl_config.master_password.empty())
             {
+                m_repl_state.store(REPL_STATE_HANDSHAKE, std::memory_order_release);
                 // 构造消息
                 std::vector<RespValue> auth_args;
                 auth_args.push_back(*RespValue::bulk_string("AUTH"));
-                auth_args.push_back(*RespValue::bulk_string(m_repl_config.master_password));
-                std::string auth_cmd = RespValue::encode(*RespValue::array(std::move(auth_args)));
-
-                ssize_t send = ::send(sock->getSocketfd(), auth_cmd.data(), auth_cmd.size(), MSG_NOSIGNAL);
-                if (send <= 0)
+                if (!(s_repl_master_password.load(std::memory_order_acq_rel))->empty())
                 {
-                    BLUE_LOG_DEBUGE(g_logger) << "Failed to send AUTH";
-                    std::this_thread::sleep_for(std::chrono::seconds(5));
-                    continue;
-                }
-
-                char buf[128];
-                ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf), 0);
-                if (ret <= 0)
-                {
-                    BLUE_LOG_DEBUGE(g_logger) << "Failed to recv AUTH response";
-                    std::this_thread::sleep_for(std::chrono::seconds(5));
-                    continue;
-                }
-
-                std::string resp(buf, ret);
-                if (resp.find("+OK") == std::string::npos)
-                {
-                    BLUE_LOG_ERROR(g_logger) << "AUTH failed: " << resp;
-                    std::this_thread::sleep_for(std::chrono::seconds(5));
-                    continue;
-                }
-                BLUE_LOG_INFO(g_logger) << "AUTH successful";
-            }
-
-            // 发送SYNC命令（没有配置密码，所以这里需要携带密码发送）
-            const char *sync_cmd = "*2\r\n$4\r\nAUTH\r\n$9\r\nclient123\r\n*1\r\n$4\r\nSYNC\r\n";
-            ssize_t send = ::send(sock->getSocketfd(), sync_cmd, strlen(sync_cmd), MSG_NOSIGNAL);
-            if (send <= 0)
-            {
-                BLUE_LOG_DEBUGE(g_logger) << "Failed to send SYNC";
-                std::this_thread::sleep_for(std::chrono::seconds(5));
-                continue;
-            }
-
-            BLUE_LOG_INFO(g_logger) << "Send SYNC, wait for RDB...";
-
-            // 接收rdb回复
-            // 格式: $<length>\r\n<data>
-            m_repl_state.store(REPL_STATE_TRANSFER, std::memory_order_release);
-
-            // 有错误，重新连接
-            if (!loadRDBFromMemory(sock) && m_repl_state.load(std::memory_order_acquire) == REPL_STATE_RETRY)
-            {
-                sock->close();
-                m_repl_sock.reset();
-                m_repl_state.store(REPL_STATE_CONNECTING, std::memory_order_release);
-                std::this_thread::sleep_for(std::chrono::seconds(5));
-                continue;
-            }
-
-            // 加载完没有错误可能是停止了主从复制或服务器停止了
-            if (m_repl_stop.load(std::memory_order_acquire) || m_server_stop.load(std::memory_order_acquire))
-            {
-                break;
-            }
-
-            // 进入在线模式
-            m_repl_state.store(REPL_STATE_ONLINE, std::memory_order_release);
-            BLUE_LOG_INFO(g_logger) << "Replication online";
-
-            // 非阻塞接收数据
-            std::string buffer;
-            sock->setNoBlocking();
-            while (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_ONLINE &&
-                   !m_server_stop.load(std::memory_order_acquire) &&
-                   !m_repl_stop.load(std::memory_order_acquire))
-            {
-                char buf[8192];
-                ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf), MSG_NOSIGNAL);
-                if (ret <= 0)
-                {
-                    if (ret == 0)
-                    {
-                        BLUE_LOG_INFO(g_logger) << "Master closed connection";
-                        break;
-                    }
-                    if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    {
-                        // 没有数据，等待一下
-                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                        continue;
-                    }
-                    BLUE_LOG_ERROR(g_logger) << "recv error: " << strerror(errno);
-                    break;
-                }
-
-                // 解析
-                buffer.append(buf, ret);
-                // BLUE_LOG_INFO(g_logger) << "buffer: " << buffer;
-
-                RespStreamParser temp_parser;
-                if (temp_parser.feed(buffer))
-                {
-                    RespValue cmd;
-                    while (temp_parser.next(cmd))
-                    {
-                        // BLUE_LOG_INFO(g_logger) << "next successful";
-                        if (cmd.type == RespValue::Type::ARRAY && !cmd.arr.empty())
-                        {
-                            {
-                                // BLUE_LOG_INFO(g_logger) << "push to repl_queue";
-                                std::lock_guard<std::mutex> lock(m_repl_queue_mutex);
-                                m_repl_queue.push(ReplCommand{std::move(cmd.arr)});
-                            }
-                            // BLUE_LOG_INFO(g_logger) << "notify one";
-                            m_repl_queue_cv.notify_one();
-
-                            m_repl_config.repl_offset++;
-                        }
-                    }
+                    auth_args.push_back(*RespValue::bulk_string(*s_repl_master_password.load(std::memory_order_acquire)));
                 }
                 else
                 {
-                    if (buffer.size() > 1024 * 1024)
-                    {
-                        BLUE_LOG_ERROR(g_logger) << "Buffer too large, protocol error";
-                        break;
-                    }
-                    BLUE_LOG_ERROR(g_logger) << "will break, feed error";
+                    auth_args.push_back(*RespValue::bulk_string("client123"));
+                }
+                std::string auth_cmd = RespValue::encode(*RespValue::array(std::move(auth_args)));
+                std::vector<RespValue> sync_args;
+                sync_args.push_back(*RespValue::bulk_string("SYNC"));
+                std::string sync_cmd = RespValue::encode(*RespValue::array(std::move(sync_args)));
+                std::string cmd = auth_cmd + sync_cmd;
+                ssize_t send = ::send(sock->getSocketfd(), cmd.data(), cmd.size(), MSG_NOSIGNAL);
+                if (send <= 0)
+                {
+                    BLUE_LOG_DEBUGE(g_logger) << "Failed to send AUTH and SYNC";
+                    std::this_thread::sleep_for(std::chrono::seconds(5));
+                    continue;
+                }
+                BLUE_LOG_INFO(g_logger) << "Send SYNC, wait for RDB...";
+            }
+
+            // 流式接收RDB数据并同步到本节点
+            {
+                // 格式: $<length>\r\n<data>
+                m_repl_state.store(REPL_STATE_TRANSFER, std::memory_order_release);
+
+                // 有错误，重新连接
+                if (!loadRDBFromMemory(sock) && m_repl_state.load(std::memory_order_acquire) == REPL_STATE_RETRY)
+                {
+                    sock->close();
+                    m_repl_sock.reset();
+                    m_repl_state.store(REPL_STATE_CONNECTING, std::memory_order_release);
+                    std::this_thread::sleep_for(std::chrono::seconds(5));
+                    continue;
+                }
+
+                // 加载完没有错误可能是停止了主从复制或服务器停止了
+                if (m_repl_stop.load(std::memory_order_acquire) || m_server_stop.load(std::memory_order_acquire))
+                {
                     break;
                 }
             }
+
+            // 在线模式，持续接收来自主节点的广播写命令
+            {
+                // 进入在线模式
+                m_repl_state.store(REPL_STATE_ONLINE, std::memory_order_release);
+                BLUE_LOG_INFO(g_logger) << "Replication online";
+
+                // 非阻塞接收数据
+                sock->setNoBlocking();
+                RespStreamParser temp_parser;
+                while (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_ONLINE &&
+                    !m_server_stop.load(std::memory_order_acquire) &&
+                    !m_repl_stop.load(std::memory_order_acquire))
+                {
+                    char buf[8192];
+                    ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf), MSG_NOSIGNAL);
+                    if (ret <= 0)
+                    {
+                        if (ret == 0)
+                        {
+                            BLUE_LOG_INFO(g_logger) << "Master closed connection";
+                            break;
+                        }
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        {
+                            // 没有数据，等待一下
+                            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                            continue;
+                        }
+                        BLUE_LOG_ERROR(g_logger) << "recv error: " << strerror(errno);
+                        break;
+                    }
+
+                    std::string buffer(buf, ret);
+                    // BLUE_LOG_INFO(g_logger) << "buffer: " << buffer;
+                    // 解析命令
+                    if (temp_parser.feed(buffer))
+                    {
+                        RespValue cmd;
+                        while (temp_parser.next(cmd))
+                        {
+                            // BLUE_LOG_INFO(g_logger) << "next successful";
+                            if (cmd.type == RespValue::Type::ARRAY && !cmd.arr.empty())
+                            {
+                                {
+                                    // BLUE_LOG_INFO(g_logger) << "push to repl_queue";
+                                    std::lock_guard<std::mutex> lock(m_repl_queue_mutex);
+                                    m_repl_queue.push(ReplCommand{std::move(cmd.arr)});
+                                }
+                                // BLUE_LOG_INFO(g_logger) << "notify one";
+                                m_repl_queue_cv.notify_one();
+                            }
+                        }
+                    }
+                    else
+                    {
+                        BLUE_LOG_ERROR(g_logger) << "feed error, buffer.size(): " << buffer.size() << "overflow";
+                        break;
+                    }
+                }
+            }
+
             // 断开连接，等待重连
             sock->close();
             m_repl_sock.reset();
@@ -423,6 +401,7 @@ namespace blue
                 try
                 {
                     m_executor(std::move(cmd.args), temp_sock, false);
+                    s_repl_offset.fetch_add(1, std::memory_order_acq_rel);
                 }
                 catch (const std::exception &e)
                 {
@@ -448,7 +427,7 @@ namespace blue
         bool rdb_error = false;
         while (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_TRANSFER &&
                !m_repl_stop.load(std::memory_order_acquire) &&
-                !m_server_stop.load(std::memory_order_acquire))
+               !m_server_stop.load(std::memory_order_acquire))
         {
             char buf[8 * 1024];
             sock->setNoBlocking();
@@ -476,14 +455,14 @@ namespace blue
             buf[ret] = '\0';
             std::string data(buf, ret);
             // BLUE_LOG_INFO(g_logger) << "data: " << data;
-            
+
             // 处理来自主节点的SYNC命令的回复
             while (data.substr(0, 5) == "+OK\r\n") // 可能包含SYNC或AUTH命令的OK
             {
                 // +OK\r\n
                 data = data.erase(0, 5);
             }
-            
+
             // BLUE_LOG_INFO(g_logger) << "removed '+OK', data: " << data;
             bool stop = (data.find("EOF") != std::string::npos);
             co_yield std::move(data);
@@ -544,45 +523,6 @@ namespace blue
         return true;
     }
 
-    // bool ReplicationModule::loadRDBFromMemory(const std::string &data, std::shared_ptr<MSocket> sock)
-    // {
-    //     BLUE_LOG_INFO(g_logger) << "Loading RDB from memory, size=" << data.size();
-
-    //     RespStreamParser parser(s_max_command_size.load(std::memory_order_acquire));
-    //     if (!parser.feed(data))
-    //     {
-    //         BLUE_LOG_ERROR(g_logger) << "Failed to parse RDB data";
-    //         return false;
-    //     }
-
-    //     // 创建临时 socket 用于加载（不需要认证）
-    //     auto temp_sock = MSocket::CreateTcpSocket();
-    //     temp_sock->setClientlevel(1);
-    //     temp_sock->setClientId(0);
-
-    //     int count = 0;
-    //     RespValue cmd;
-    //     while (parser.next(cmd))
-    //     {
-    //         if (cmd.type == RespValue::Type::ARRAY && !cmd.arr.empty())
-    //         {
-    //             try
-    //             {
-    //                 // 执行命令（不记录 AOF，不推送Monitor）
-    //                 m_executor(std::move(cmd.arr), temp_sock, false);
-    //                 count++;
-    //             }
-    //             catch (const std::exception &e)
-    //             {
-    //                 BLUE_LOG_ERROR(g_logger) << "Executor threw exception: " << e.what();
-    //             }
-    //         }
-    //     }
-
-    //     BLUE_LOG_INFO(g_logger) << "Loaded " << count << " commands from RDB";
-    //     return true;
-    // }
-
     void ReplicationModule::remove(MSocket::MSocketPtr sock)
     {
         std::unique_lock<std::shared_mutex> lock(m_slaves_mutex);
@@ -627,7 +567,7 @@ namespace blue
                         result += "ip=" + ip_addr->getIp() + ",";
                         result += "port=" + std::to_string(ip_addr->getPort()) + ",";
                         result += "state=online,";
-                        result += "offset=" + std::to_string(m_repl_config.repl_offset) + ",";
+                        result += "offset=" + std::to_string(s_repl_offset.load(std::memory_order_acquire)) + ",";
                         result += "lag=0\r\n";
                     }
                 }

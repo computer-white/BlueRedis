@@ -26,7 +26,8 @@ namespace blue
 {
     // redis server AOF configuration
     std::atomic<RedisServerConfig::AOFSyncStrategy> s_aof_sync{RedisServerConfig::AOFSyncStrategy::EVERYSEC};
-    std::atomic<std::shared_ptr<const std::string>> s_aof_filename{std::make_shared<const std::string>("appendonly.aof")};
+    std::atomic<std::shared_ptr<const std::string>> s_aof_filename{
+        std::make_shared<const std::string>("appendonly.aof")};
     std::atomic<size_t> s_aof_max_file_size{1024};
     std::atomic<size_t> s_aof_max_buffer_size{1024 * 1024};
     std::atomic<bool> s_aof_enabled{false};
@@ -40,9 +41,19 @@ namespace blue
     std::atomic<uint64_t> s_redis_server_timeout{0};       // 每个客户端与服务器最大的待机时长
     std::atomic<uint32_t> s_redis_server_maxClients{1000}; // 最大客户端数量
 
-    std::atomic<size_t> s_max_command_size{1024 * 1024};  // Resp命令解析器缓冲区最大大小(即解析器缓冲区可以接受的最大大小)
-    std::atomic<size_t> s_max_batch_size{256 * 1024};     // 服务器批量响应大小阈值
-    std::atomic<size_t> s_max_exec_batch_size{256};       // 服务器批量执行的命令条数(即客户端单次输入的命令最大个数)
+    std::atomic<size_t> s_max_command_size{1024 * 1024}; // Resp命令解析器缓冲区最大大小(即解析器缓冲区可以接受的最大大小)
+    std::atomic<size_t> s_max_batch_size{256 * 1024};    // 服务器批量响应大小阈值
+    std::atomic<size_t> s_max_exec_batch_size{256};      // 服务器批量执行的命令条数(即客户端单次输入的命令最大个数)
+
+    // replication
+    std::atomic<std::shared_ptr<const std::string>> s_repl_master_addr{
+        std::make_shared<const std::string>("127.0.0.1")}; // 主节点地址
+    std::atomic<std::shared_ptr<const std::string>> s_repl_master_password{
+        std::make_shared<const std::string>("client123")}; // 主节点密码
+    std::atomic<int64_t> s_repl_offset{0};                 // 从节点主从复制进入在线模式后，从节点同步主节点的写命令数量
+    std::atomic<int32_t> s_repl_retry_count{5};            // 从节点连接主节点，尝试连接次数，超过就退出复制循环(即复制线程结束)
+    std::atomic<uint16_t> s_repl_master_port{6667};        // 主节点端口
+    std::atomic<bool> s_repl_is_master{true};              // 是否是主节点
 
     struct InitConfig
     {
@@ -199,6 +210,27 @@ namespace blue
                     s_max_exec_batch_size.store(new_val.max_exec_batch_size, std::memory_order_release);
                     BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
                         << " Update Redis Server Configuration Successful! ";
+                });
+
+            RedisServerConfig::g_ReplicationDefine_config_ptr->addListener(
+                [](const ReplicationConfigDefine &old_val, const ReplicationConfigDefine &new_val)
+                {
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Redis Server Replication Configuration ";
+                    // is_master
+                    s_repl_is_master.store(new_val.is_master, std::memory_order_release);
+                    // master_addr
+                    s_repl_master_addr.store(std::make_shared<const std::string>(new_val.master_addr), std::memory_order_release);
+                    // master_port
+                    s_repl_master_port.store(new_val.master_port, std::memory_order_release);
+                    // master_password
+                    s_repl_master_password.store(std::make_shared<const std::string>(new_val.master_password), std::memory_order_release);
+                    // repl_offset
+                    s_repl_offset.store(new_val.repl_offset, std::memory_order_release);
+                    // retry_count
+                    s_repl_retry_count.store(new_val.retry_count, std::memory_order_release);
+                    BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Redis Server Replication Configuration Successful! ";
                 });
         }
     };
