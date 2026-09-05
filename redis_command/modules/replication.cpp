@@ -511,9 +511,7 @@ namespace blue
         auto generator = this->recvRDBData(sock);
         for (const auto &data : generator)
         {
-            std::cout << "111\n";
             BLUE_LOG_INFO(g_logger) << "Loading RDB from memory, size=" << data.size();
-            BLUE_LOG_INFO(g_logger) << "feed";
             if (!parser.feed(data))
             {
                 BLUE_LOG_ERROR(g_logger) << "Failed to parse RDB data";
@@ -521,18 +519,14 @@ namespace blue
             }
 
             RespValue cmd;
-            BLUE_LOG_INFO(g_logger) << "next";
             while (parser.next(cmd))
             {
-                BLUE_LOG_INFO(g_logger) << "next successful!";
                 if (cmd.type == RespValue::Type::ARRAY && !cmd.arr.empty())
                 {
                     try
                     {
-                        BLUE_LOG_INFO(g_logger) << "executor";
                         // 执行命令（不记录 AOF，不推送Monitor）
                         m_executor(std::move(cmd.arr), temp_sock, false);
-                        BLUE_LOG_INFO(g_logger) << "count++";
                         count++;
                     }
                     catch (const std::exception &e)
