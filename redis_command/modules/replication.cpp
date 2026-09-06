@@ -27,7 +27,8 @@ namespace blue
     void ReplicationModule::startReplication()
     {
         // 只要上一个主从复制没有结束，就不能开启新的
-        if (!m_repl_stop.load(std::memory_order_acquire))
+        if (!m_repl_stop.load(std::memory_order_acquire) &&
+            !m_repl_queue_stop.load(std::memory_order_acquire))
         {
             return;
         }
@@ -67,6 +68,11 @@ namespace blue
 
     void ReplicationModule::stopReplication()
     {
+        if (m_repl_stop.load(std::memory_order_acquire) &&
+            m_repl_queue_stop.load(std::memory_order_acquire))
+        {
+            return;
+        }
         BLUE_LOG_INFO(g_logger) << "Stopping replication";
 
         m_repl_stop.store(true, std::memory_order_release);
@@ -132,6 +138,7 @@ namespace blue
             {
                 // stopReplication(); // 哈哈哈，遇到问题了，不能在线程运行中的函数中调用一个包含join这个线程的函数，线程死锁
                 // 选择直接退出，如果后序有什么好的想法再来改
+                m_repl_state.store(REPL_STATE_NONE, std::memory_order_release);
                 break;
             }
             retry_count++;
@@ -244,8 +251,8 @@ namespace blue
                 sock->setNoBlocking();
                 RespStreamParser temp_parser;
                 while (m_repl_state.load(std::memory_order_acquire) == REPL_STATE_ONLINE &&
-                    !m_server_stop.load(std::memory_order_acquire) &&
-                    !m_repl_stop.load(std::memory_order_acquire))
+                       !m_server_stop.load(std::memory_order_acquire) &&
+                       !m_repl_stop.load(std::memory_order_acquire))
                 {
                     char buf[8192];
                     ssize_t ret = ::recv(sock->getSocketfd(), buf, sizeof(buf), MSG_NOSIGNAL);
