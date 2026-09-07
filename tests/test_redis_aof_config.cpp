@@ -22,6 +22,9 @@ int main()
     std::cout << "RedisServerConfigDefine:\n"
               << blue::RedisServerConfig::g_RedisServerConfigDefine_config_ptr->toString() << std::endl;
 
+    std::cout << "ReplicationConfig:\n"
+              << blue::RedisServerConfig::g_ReplicationDefine_config_ptr->toString() << std::endl;
+
     YAML::Node root = YAML::LoadFile("/etc/blueRedis/redis_cof/blueredis.yml");
     blue::Config::LoadFromYAML(root);
 
@@ -36,4 +39,7 @@ int main()
 
     std::cout << "RedisServerConfigDefine:\n"
               << blue::RedisServerConfig::g_RedisServerConfigDefine_config_ptr->toString() << std::endl;
+    
+    std::cout << "ReplicationConfig:\n"
+              << blue::RedisServerConfig::g_ReplicationDefine_config_ptr->toString() << std::endl;
 }
