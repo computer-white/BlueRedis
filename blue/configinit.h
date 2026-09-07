@@ -33,6 +33,7 @@
 #include "redis_command/loadRedisSlowLogConfig.h"
 #include "redis_command/loadRedisClientConfig.h"
 #include "redis_command/loadRedisReplicationConfig.h"
+#include "http/loadHttpParserConfig.h"
 
 // 数据库和redis配置
 namespace blue
@@ -105,6 +106,32 @@ namespace blue
             g_ReplicationDefine_config_ptr = blue::Config::Lookup<ReplicationConfigDefine>("redis.replication",
                                                                                            ReplicationConfigDefine(),
                                                                                            "redis Replication module configurations");
+    }
+
+    namespace http
+    {
+        extern std::atomic<size_t> s_http_request_buffer_size;    // http request 缓冲大小
+        extern std::atomic<size_t> s_http_request_max_body_size;  // http request max body size
+        extern std::atomic<size_t> s_http_response_buffer_size;   // http response 缓冲大小
+        extern std::atomic<size_t> s_http_response_max_body_size; // http response max body size
+
+        namespace HttpParserConfig
+        {
+            static blue::ConfigVar<HttpParserConfigDefine>::ConfigVarPtr
+                g_HttpRequestParserDefine_config_ptr = blue::Config::Lookup<HttpParserConfigDefine>("http.parser.request",
+                                                                                                    HttpParserConfigDefine(),
+                                                                                                    "http request Parser configurations");
+
+            static blue::ConfigVar<HttpParserConfigDefine>::ConfigVarPtr
+                g_HttpResponseParserDefine_config_ptr = blue::Config::Lookup<HttpParserConfigDefine>("http.parser.response",
+                                                                                                     HttpParserConfigDefine(),
+                                                                                                     "http response Parser configurations");
+        };
+
+        namespace HttpServerConfig
+        {
+
+        };
     }
 
     // 这里是对于http模块中使用到的数据库和redis的配置

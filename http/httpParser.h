@@ -334,11 +334,6 @@ namespace blue
              */
             std::shared_ptr<HttpRequest> getData() const noexcept { return m_data; }
 
-        public:
-            static uint64_t GetHttpRequestBufferSize();
-            static uint64_t GetHttpRequestMaxBodySize();
-            static void SetRequestBufferSize(size_t size);
-
         private:
             /**
              * @brief 解析cookie
@@ -656,11 +651,6 @@ namespace blue
              * @brief 获取解析后的内容
              */
             std::shared_ptr<HttpResponse> getData() const noexcept { return m_data; }
-
-        public:
-            static uint64_t GetHttpResponseBufferSize();
-            static uint64_t GetHttpResponseMaxBodySize();
-            static void SetResponseBufferSize(size_t size);
 
         private:
             /**

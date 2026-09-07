@@ -3,6 +3,7 @@
  * Copyright (C) 2026 blue
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
+#include <csignal>
 #include "blue/address.h"
 #include "http/httpserver.h"
 #include "blue/await.h"
@@ -10,6 +11,13 @@
 #include "blue/configinit.h"
 
 static blue::Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();
+
+std::atomic<bool> g_running{true};
+
+void signalHandler(int signum)
+{
+    g_running.store(false, std::memory_order_release);
+}
 blue::Task<void> test()
 {
     auto httpserver = std::make_shared<blue::http::HttpServer<int>>();
@@ -74,10 +82,11 @@ blue::Task<void> test()
     {
         BLUE_LOG_INFO(g_logger) << "start 成功";
     }
-     while (!httpserver->getIsStop())
+     while (g_running.load(std::memory_order_acquire) && !httpserver->getIsStop())
     {
         co_await blue::sleepFor(2);
     }
+    httpserver->ShutDownServer();
     BLUE_LOG_INFO(g_logger) << "httpserver stop";
     blue::IOManager::GetThis()->clear();
     co_return;
@@ -85,6 +94,8 @@ blue::Task<void> test()
 
 int main()
 {
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
     blue::http::blueHttpIniteConfig();
     blue::IOManager iom(2);
     iom.schedule(test());

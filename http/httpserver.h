@@ -70,6 +70,11 @@ namespace blue
              */
             void setDispatch(std::shared_ptr<ServletDispatch> dispatch) { m_dispatch = dispatch; }
 
+            /**
+             * @brief 关闭服务器
+             */
+            bool ShutDownServer();
+
         protected:
             /**
              * @brief 处理客户端和服务端的请求和响应
@@ -222,6 +227,8 @@ namespace blue
             std::string m_localIp = "";
             std::string m_localPort = "";
             std::shared_ptr<ServletDispatch> m_dispatch;
+        private:
+            std::vector<MSocket::MSocketWPtr> m_clients;
         };
 
     }

@@ -25,48 +25,6 @@
 
 static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
 
-static blue::ConfigVar<uint64_t>::ConfigVarPtr g_http_request_buffer_size =
-    blue::Config::Lookup<uint64_t>("http.request.buffer_size", 4 * 1024ull, "http request buffer size");
-
-static blue::ConfigVar<uint64_t>::ConfigVarPtr g_http_request_max_body_size =
-    blue::Config::Lookup<uint64_t>("http.request.max_body_size", 64 * 1024ull * 1024ull, "http request max body size");
-
-static blue::ConfigVar<uint64_t>::ConfigVarPtr g_http_response_buffer_size =
-    blue::Config::Lookup<uint64_t>("http.response.buffer_size", 4 * 1024ull, "http response buffer size");
-
-static blue::ConfigVar<uint64_t>::ConfigVarPtr g_http_response_max_body_size =
-    blue::Config::Lookup<uint64_t>("http.response.max_body_size", 64 * 1024ull * 1024ull, "http response max body size");
-
-static uint64_t s_http_request_buffer_size = 0;
-static uint64_t s_http_request_max_body_size = 0;
-
-static uint64_t s_http_response_buffer_size = 0;
-static uint64_t s_http_response_max_body_size = 0;
-
-struct __RequestSizeIniter__
-{
-    __RequestSizeIniter__()
-    {
-        s_http_request_buffer_size = g_http_request_buffer_size->getValue();
-        s_http_request_max_body_size = g_http_request_max_body_size->getValue();
-        s_http_response_buffer_size = g_http_response_buffer_size->getValue();
-        s_http_response_max_body_size = g_http_response_max_body_size->getValue();
-        g_http_request_buffer_size->addListener([](const uint64_t &old_val, const uint64_t &new_val)
-                                                { s_http_request_buffer_size = new_val; });
-
-        g_http_request_max_body_size->addListener([](const uint64_t &old_val, const uint64_t &new_val)
-                                                  { s_http_request_max_body_size = new_val; });
-
-        g_http_response_buffer_size->addListener([](const uint64_t &old_val, const uint64_t &new_val)
-                                                 { s_http_response_buffer_size = new_val; });
-
-        g_http_response_max_body_size->addListener([](const uint64_t &old_val, const uint64_t &new_val)
-                                                   { s_http_response_max_body_size = new_val; });
-    }
-};
-
-static __RequestSizeIniter__ __S_Request_Size_Initer__;
-
 // http 解析(llhttp)
 namespace blue
 {
@@ -141,24 +99,6 @@ namespace blue
                 }
             }
             return ans;
-        }
-
-        void HttpRequestParser::SetRequestBufferSize(size_t size)
-        {
-            if (size == 0)
-            {
-                size = g_http_request_buffer_size->getValue() * 2;
-            }
-            g_http_request_buffer_size->setValue(size);
-        }
-
-        uint64_t HttpRequestParser::GetHttpRequestBufferSize()
-        {
-            return s_http_request_buffer_size;
-        }
-        uint64_t HttpRequestParser::GetHttpRequestMaxBodySize()
-        {
-            return s_http_request_max_body_size;
         }
 
         HttpRequestParser::HttpRequestParser()
@@ -317,22 +257,6 @@ namespace blue
             m_curr_url.clear();
             m_curr_version.clear();
         }
-
-        /*
-            // 这些 llhttp 没做，需要你加工
-            - Cookie 解析成 key-value map  ok
-            - Multipart/form-data 解析文件
-            - Chunked 编码自动解码（llhttp 只识别的 chunk 边界，不解码）
-            - Content-Encoding 解压（gzip） ok
-            - URL 解码（%20 → 空格） ok (中文不支持)
-            - Header 大小写归一化  ok
-            - 连接管理（keep-alive 复用） ok (httpserver中)
-            - 超时控制（接收超时、解析超时） ok (hook设置超时)
-            - 请求体大小限制  ok (s_http_request_buffer_size设置默认大小,但支持热更新,可以说没有设置超大小后的处理)
-            - 恶意请求防护（慢速攻击等）
-            - 请求路由匹配  ok (servlet)
-            - 参数绑定（path、query、body 里提取参数 ok
-        */
 
         void HttpRequestParser::_parseQuery()
         {
@@ -648,25 +572,6 @@ namespace blue
         }
 
         /* response */
-
-        uint64_t HttpResponseParser::GetHttpResponseBufferSize()
-        {
-            return s_http_response_buffer_size;
-        }
-
-        uint64_t HttpResponseParser::GetHttpResponseMaxBodySize()
-        {
-            return s_http_response_max_body_size;
-        }
-
-        void HttpResponseParser::SetResponseBufferSize(size_t size)
-        {
-            if (size == 0)
-            {
-                size = g_http_response_buffer_size->getValue() * 2;
-            }
-            g_http_response_buffer_size->setValue(size);
-        }
 
         HttpResponseParser::HttpResponseParser()
         {

@@ -15,11 +15,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "blue/log.h"
-#include "blue/asyncio.h"
 #include "httpconnection.h"
 #include <string>
 #include <fcntl.h>
+#include "blue/log.h"
+#include "blue/asyncio.h"
+#include "blue/configinit.h"
 
 // http connnection
 namespace blue
@@ -65,13 +66,13 @@ namespace blue
                 return 0; });
             }
             parser->Init();
-            uint64_t responsebuffersize = HttpResponseParser::GetHttpResponseBufferSize();
             // 无脑vector 管理data
-            std::vector<char> vec_data(responsebuffersize);
+            std::vector<char> vec_data(s_http_response_buffer_size.load(std::memory_order_acquire));
             auto data = vec_data.data();
             size_t offset = 0;
             do
             {
+                size_t responsebuffersize = s_http_response_buffer_size.load(std::memory_order_acquire);
                 ssize_t n = co_await m_stream->read(data + offset, responsebuffersize - offset);
                 if (n == 0) // 对方主动关闭连接
                 {
@@ -107,13 +108,12 @@ namespace blue
                 // 数据不够放了
                 if (offset >= responsebuffersize)
                 {
-                    HttpResponseParser::SetResponseBufferSize(offset * 2); // 热更新
-                    size_t newsize = HttpResponseParser::GetHttpResponseBufferSize();
+                    s_http_response_buffer_size.store(responsebuffersize * 2, std::memory_order_release);
+                    responsebuffersize = s_http_response_buffer_size.load(std::memory_order_acquire);
 
                     // 无脑vector 管理data
-                    vec_data.resize(newsize);
+                    vec_data.resize(responsebuffersize);
                     data = vec_data.data();
-                    responsebuffersize = newsize;
                 }
             } while (true);
 

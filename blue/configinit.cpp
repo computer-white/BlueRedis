@@ -239,6 +239,48 @@ namespace blue
 
     namespace http
     {
+        std::atomic<size_t> s_http_request_buffer_size{1024 * 1024};  // http request 缓冲大小
+        std::atomic<size_t> s_http_request_max_body_size{5 * 1024};   // http request max body size
+        std::atomic<size_t> s_http_response_buffer_size{1024 * 1024}; // http response 缓冲大小
+        std::atomic<size_t> s_http_response_max_body_size{5 * 1024};  // http response max body size
+
+        struct InitHttpConfig
+        {
+            InitHttpConfig()
+            {
+                HttpParserConfig::g_HttpRequestParserDefine_config_ptr->addListener(
+                    [](const HttpParserConfigDefine &old_val, const HttpParserConfigDefine &new_val)
+                    {
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Http Request Parser Configuration ";
+                        // buffer_size
+                        s_http_request_buffer_size.store(new_val.buffer_size, std::memory_order_release);
+                        // max_body_size
+                        s_http_request_max_body_size.store(new_val.max_body_size, std::memory_order_release);
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Http Request Parser Configuration Successful! ";
+                    });
+
+                HttpParserConfig::g_HttpResponseParserDefine_config_ptr->addListener(
+                    [](const HttpParserConfigDefine &old_val, const HttpParserConfigDefine &new_val)
+                    {
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Http Response Parser Configuration ";
+                        // buffer_size
+                        s_http_response_buffer_size.store(new_val.buffer_size, std::memory_order_release);
+                        // max_body_size
+                        s_http_response_max_body_size.store(new_val.max_body_size, std::memory_order_release);
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                        << " Update Http Response Parser Configuration Successful! ";
+                    });
+            }
+        };
+
+        static InitHttpConfig bluehttpinit;
+    }
+
+    namespace http
+    {
         std::string s_db_host = "";                              // 数据库主机名
         std::string s_db_user = "";                              // 数据库user
         std::string s_db_database = "";                          // database

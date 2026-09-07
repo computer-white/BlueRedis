@@ -38,8 +38,8 @@ namespace blue
         static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
 
         // 全局连接池缓存
-        static std::map<std::string, HttpConnectionPool::HttpConnectionPoolPtr> s_pools;
         static http::HttpConnectionPool::MmutexType s_poolMutex;
+        static std::map<std::string, HttpConnectionPool::HttpConnectionPoolPtr> s_pools;
 
         extern std::string s_db_host;
         extern std::string s_db_user;
@@ -71,7 +71,7 @@ namespace blue
             // 2. 可选：设置 domain=localhost
             result += "; domain=localhost";
 
-            // 3. 删除 Secure 标记（因为你是 http，不是 https）
+            // 3. 删除 Secure 标记
             std::regex secure_re(R"(;\s*secure\b)", std::regex::icase);
             result = std::regex_replace(result, secure_re, "");
 
@@ -87,8 +87,27 @@ namespace blue
         }
 
         template <typename T>
+        bool HttpServer<T>::ShutDownServer()
+        {
+            for (auto wptr : m_clients)
+            {
+                if (wptr.expired())
+                {
+                    continue;
+                }
+                auto ptr = wptr.lock();
+                if (ptr)
+                {
+                    ptr->shutdown(SHUT_RDWR);
+                }
+            }
+            return true;
+        }
+
+        template <typename T>
         Task<void> HttpServer<T>::handleClient(MSocket::MSocketPtr sock)
         {
+            m_clients.push_back(sock);
             auto remoteAddress = std::dynamic_pointer_cast<IPAddress>(sock->getRemoteAddress());
             auto localAddress = std::dynamic_pointer_cast<IPAddress>(sock->getLocalAddress());
             _setIpAndPort(remoteAddress, m_remoteIP, m_remotePort);
@@ -300,7 +319,7 @@ namespace blue
                 {
                     m_dispatch->handle(requestPtr, responsePtr, session);
                 }
-                // 自动补全缺失的响应头
+                // 补全缺失的响应头
                 if (responsePtr->getHeader("Content-Type").empty())
                 {
                     responsePtr->setHeader("Content-Type", "text/html; charset=utf-8");

@@ -15,9 +15,10 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <string>
 #include "blue/log.h"
 #include "httpsession.h"
-#include <string>
+#include "blue/configinit.h"
 
 // session
 namespace blue
@@ -40,13 +41,13 @@ namespace blue
                 m_isFinish = true;
                 return 0; });
             parser->Init();
-            uint64_t requestbuffersize = HttpRequestParser::GetHttpRequestBufferSize();
             // 无脑vector 管理data
-            std::vector<char> vec_data(requestbuffersize);
+            std::vector<char> vec_data(s_http_request_buffer_size.load(std::memory_order_acquire));
             auto data = vec_data.data();
             size_t offset = 0;
             do
             {
+                uint64_t requestbuffersize = s_http_request_buffer_size.load(std::memory_order_acquire);
                 ssize_t n = co_await m_stream->read(data + offset, requestbuffersize - offset);
                 if (n == 0) // 客户端主动关闭连接
                 {
@@ -88,13 +89,12 @@ namespace blue
                 // 数据不够放了
                 if (offset >= requestbuffersize)
                 {
-                    HttpRequestParser::SetRequestBufferSize(offset * 2); // 热更新
-                    size_t newsize = HttpRequestParser::GetHttpRequestBufferSize();
+                    s_http_request_buffer_size.store(requestbuffersize * 2, std::memory_order_release); // 热更新
+                    requestbuffersize = s_http_request_buffer_size.load(std::memory_order_acquire);
 
                     // 无脑vector 管理data
-                    vec_data.resize(newsize);
+                    vec_data.resize(requestbuffersize);
                     data = vec_data.data();
-                    requestbuffersize = newsize;
                 }
             } while (true);
 
