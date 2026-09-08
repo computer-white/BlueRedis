@@ -244,43 +244,6 @@ namespace blue
         std::atomic<size_t> s_http_response_buffer_size{1024 * 1024}; // http response 缓冲大小
         std::atomic<size_t> s_http_response_max_body_size{5 * 1024};  // http response max body size
 
-        struct InitHttpConfig
-        {
-            InitHttpConfig()
-            {
-                HttpParserConfig::g_HttpRequestParserDefine_config_ptr->addListener(
-                    [](const HttpParserConfigDefine &old_val, const HttpParserConfigDefine &new_val)
-                    {
-                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
-                        << " Update Http Request Parser Configuration ";
-                        // buffer_size
-                        s_http_request_buffer_size.store(new_val.buffer_size, std::memory_order_release);
-                        // max_body_size
-                        s_http_request_max_body_size.store(new_val.max_body_size, std::memory_order_release);
-                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
-                        << " Update Http Request Parser Configuration Successful! ";
-                    });
-
-                HttpParserConfig::g_HttpResponseParserDefine_config_ptr->addListener(
-                    [](const HttpParserConfigDefine &old_val, const HttpParserConfigDefine &new_val)
-                    {
-                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
-                        << " Update Http Response Parser Configuration ";
-                        // buffer_size
-                        s_http_response_buffer_size.store(new_val.buffer_size, std::memory_order_release);
-                        // max_body_size
-                        s_http_response_max_body_size.store(new_val.max_body_size, std::memory_order_release);
-                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
-                        << " Update Http Response Parser Configuration Successful! ";
-                    });
-            }
-        };
-
-        static InitHttpConfig bluehttpinit;
-    }
-
-    namespace http
-    {
         std::string s_db_host = "";                              // 数据库主机名
         std::string s_db_user = "";                              // 数据库user
         std::string s_db_database = "";                          // database
@@ -289,119 +252,114 @@ namespace blue
         blue::DbManager::DbManagerPtr s_dbmanager_ptr = nullptr; // 数据库管理智能指针
 
         std::string s_redis_host = "";                                    // redis 主机
-        uint16_t s_redis_port = 6379;                                     // redis 端口
         std::string s_redis_password = "";                                // redis 密码
+        uint16_t s_redis_port = 6379;                                     // redis 端口
         blue::RedisManager::RedisManagerPtr s_redismanager_ptr = nullptr; // redis管理智能指针
 
-        uint64_t s_rate_limit = 0;        // redis限流数量
-        uint64_t s_rate_limit_expire = 0; // redis限流窗口大小
-        uint64_t s_cache_expire = 0;      // cache过期时间
-
-        uint64_t s_select_timeout = 0; // select 轮询超时时长
-
-        uint32_t s_httpconnpool_mxsize = 0; // httpconnnetion pool 连接池最大大小
+        uint64_t s_rate_limit = 0;          // redis限流数量
+        uint64_t s_rate_limit_expire = 0;   // redis限流窗口大小
+        uint64_t s_cache_expire = 0;        // cache过期时间
         size_t s_mysqlpool_mxsize = 0;      // mysql 连接池最大大小
+        uint32_t s_httpconnpool_mxsize = 0; // httpconnnetion pool 连接池最大大小
 
-        static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
-
-        void blueHttpIniteConfig()
+        struct InitHttpConfig
         {
-            // db
-            s_db_host = g_db_host->getValue();
-            s_db_user = g_db_user->getValue();
-            s_db_password = g_db_password->getValue();
-            s_db_database = g_db_database->getValue();
-            s_db_port = g_db_port->getValue();
-            s_dbmanager_ptr = blue::DbManager::Create(s_db_host, s_db_user, s_db_password, s_db_database, s_db_port);
-            if (!s_dbmanager_ptr)
+            InitHttpConfig()
             {
-                BLUE_LOG_ERROR(g_logger) << "Failed to create DbManager";
-            }
-            else
-            {
-                BLUE_LOG_INFO(g_logger) << "DbManager created";
-            }
-            g_db_host->addListener([](const std::string &old_val, const std::string &new_val)
-                                   {
-                s_db_host = new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port); });
-            //
-            g_db_user->addListener([](const std::string &old_val, const std::string &new_val)
-                                   {
-                s_db_user = new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port); });
-            //
-            g_db_password->addListener([](const std::string &old_val, const std::string &new_val)
-                                       {
-                s_db_password = new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port); });
-            //
-            g_db_database->addListener([](const std::string &old_val, const std::string &new_val)
-                                       {
-                s_db_database = new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port); });
-            //
-            g_db_port->addListener([](const uint16_t &old_val, const uint16_t &new_val)
-                                   {
-                s_db_port = new_val;
-                s_dbmanager_ptr = blue::DbManager::Create(s_db_host,s_db_user,s_db_password,s_db_database,s_db_port); });
-            // redis
-            s_redis_host = g_redis_host->getValue();
-            s_redis_password = g_redis_password->getValue();
-            s_redis_port = g_redis_port->getValue();
-            s_redismanager_ptr = blue::RedisManager::Create(s_redis_host, s_redis_port, s_redis_password);
-            if (!s_redismanager_ptr)
-            {
-                BLUE_LOG_ERROR(g_logger) << "Failed to create RedisManager";
-            }
-            else
-            {
-                BLUE_LOG_INFO(g_logger) << "RedisManager created";
-            }
-            //
-            g_redis_host->addListener([](const std::string &old_val, const std::string &new_val)
-                                      {
-                s_redis_host = new_val;
-                s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_password); });
+                HttpParserConfig::g_HttpRequestParserDefine_config_ptr->addListener(
+                    [](const HttpParserConfigDefine &old_val, const HttpParserConfigDefine &new_val)
+                    {
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Request Parser Configuration ";
+                        // buffer_size
+                        s_http_request_buffer_size.store(new_val.buffer_size, std::memory_order_release);
+                        // max_body_size
+                        s_http_request_max_body_size.store(new_val.max_body_size, std::memory_order_release);
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Request Parser Configuration Successful! ";
+                    });
 
-            //
-            g_redis_password->addListener([](const std::string &old_val, const std::string &new_val)
-                                          {
-                s_redis_password = new_val;
-                s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_password); });
-            //
-            g_redis_port->addListener([](const uint16_t &old_val, const uint16_t &new_val)
-                                      {
-                s_redis_port = new_val;
-                s_redismanager_ptr = blue::RedisManager::Create(s_redis_host,s_redis_port,s_redis_password); });
-            //
-            s_rate_limit = g_rate_limit->getValue();
-            s_rate_limit_expire = g_rate_limit_expire->getValue();
-            s_cache_expire = g_cache_expire->getValue();
-            //
-            g_rate_limit->addListener([](const uint64_t &old_val, const uint64_t &new_val)
-                                      { s_rate_limit = new_val; });
-            //
-            g_cache_expire->addListener([](const uint64_t &old_val, const uint64_t &new_val)
-                                        { s_cache_expire = new_val; });
-            //
-            g_rate_limit_expire->addListener([](const uint64_t &old_val, const uint64_t &new_val)
-                                             { s_rate_limit_expire = new_val; });
-            // select
-            s_select_timeout = g_select_timeout->getValue();
-            //
-            g_select_timeout->addListener([](const uint64_t &old_val, const uint64_t &new_val)
-                                          { s_select_timeout = new_val; });
-            // httpconnectionpool
-            s_httpconnpool_mxsize = g_httpconnpool_mxsize->getValue();
-            //
-            g_httpconnpool_mxsize->addListener([](const uint32_t &old_val, const uint32_t &new_val)
-                                               { s_httpconnpool_mxsize = new_val; });
-            // mysqlpool
-            s_mysqlpool_mxsize = g_mysqlpool_mxsize->getValue();
-            //
-            g_mysqlpool_mxsize->addListener([](const size_t &old_val, const size_t &new_val)
-                                            { s_mysqlpool_mxsize = new_val; });
-        }
-    }
-}
+                HttpParserConfig::g_HttpResponseParserDefine_config_ptr->addListener(
+                    [](const HttpParserConfigDefine &old_val, const HttpParserConfigDefine &new_val)
+                    {
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Response Parser Configuration ";
+                        // buffer_size
+                        s_http_response_buffer_size.store(new_val.buffer_size, std::memory_order_release);
+                        // max_body_size
+                        s_http_response_max_body_size.store(new_val.max_body_size, std::memory_order_release);
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Response Parser Configuration Successful! ";
+                    });
+
+                HttpServerConfig::g_HttpDbDefine_config_ptr->addListener(
+                    [](const HttpDbDefine &old_val, const HttpDbDefine &new_val)
+                    {
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Db Configuration ";
+                        // host
+                        s_db_host = new_val.db_host;
+                        // port
+                        s_db_port = new_val.db_port;
+                        // database
+                        s_db_database = new_val.db_database;
+                        // user
+                        s_db_user = new_val.db_user;
+                        // password
+                        s_db_password = new_val.db_password;
+                        // manager
+                        s_dbmanager_ptr = blue::DbManager::Create(s_db_host, s_db_user, s_db_password, s_db_database, s_db_port);
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Db Configuration Successful! ";
+                    });
+
+                HttpServerConfig::g_HttpRedisDefine_config_ptr->addListener(
+                    [](const HttpRedisDefine &old_val, const HttpRedisDefine &new_val)
+                    {
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Redis Configuration ";
+                        // redis_host
+                        s_redis_host = new_val.redis_host;
+                        // redis_password
+                        s_redis_password = new_val.redis_password;
+                        // redis_port
+                        s_redis_port = new_val.redis_port;
+                        // rate_limit
+                        s_rate_limit = new_val.rate_limit;
+                        // rate_limit_expire
+                        s_rate_limit_expire = new_val.rate_limit_expire;
+                        // cache_expire
+                        s_cache_expire = new_val.cache_expire;
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Redis Configuration Successful! ";
+                    });
+
+                // httpconnectionpool
+                s_httpconnpool_mxsize = HttpServerConfig::g_httpconnpool_mxsize->getValue();
+                HttpServerConfig::g_httpconnpool_mxsize->addListener(
+                    [](const uint32_t &old_val, const uint32_t &new_val)
+                    {
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Connection Pool Configuration ";
+                        s_httpconnpool_mxsize = new_val;
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Connection Pool Configuration Successful! ";
+                    });
+
+                // mysqlpool
+                s_mysqlpool_mxsize = HttpServerConfig::g_mysqlpool_mxsize->getValue();
+                HttpServerConfig::g_mysqlpool_mxsize->addListener(
+                    [](const size_t &old_val, const size_t &new_val)
+                    {
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Mysql Pool Configuration ";
+                        s_mysqlpool_mxsize = new_val;
+                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
+                            << " Update Http Mysql Pool Configuration Successful! ";
+                    });
+            }
+        };
+
+        static InitHttpConfig bluehttpinit;
+    } // namespace http
+} // namespace blue

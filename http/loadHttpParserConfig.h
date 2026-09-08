@@ -58,7 +58,7 @@ namespace blue
                         << __FILE__ << " " << __LINE__ << "\nnode:\n"
                         << node << "\n"
                         << "I will use default value: "
-                        << res.buffer_size
+                        << util::ConfigParser::FormatSize(res.buffer_size)
                         << std::endl;
             }
             else
@@ -75,7 +75,7 @@ namespace blue
                         << __FILE__ << " " << __LINE__ << "\nnode:\n"
                         << node << "\n"
                         << "I will use default value: "
-                        << res.buffer_size
+                        << util::ConfigParser::FormatSize(res.buffer_size)
                         << std::endl;
                 }
             }
@@ -86,7 +86,7 @@ namespace blue
                         << __FILE__ << " " << __LINE__ << "\nnode:\n"
                         << node << "\n"
                         << "I will use default value: "
-                        << res.max_body_size
+                        << util::ConfigParser::FormatSize(res.max_body_size)
                         << std::endl;
             }
             else
@@ -103,7 +103,7 @@ namespace blue
                         << __FILE__ << " " << __LINE__ << "\nnode:\n"
                         << node << "\n"
                         << "I will use default value: "
-                        << res.max_body_size
+                        << util::ConfigParser::FormatSize(res.max_body_size)
                         << std::endl;
                 }
             }

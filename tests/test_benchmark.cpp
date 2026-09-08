@@ -315,8 +315,6 @@ void print_summary(const std::vector<BenchResult> &results)
 
 int main()
 {
-    blue::http::blueHttpIniteConfig();
-
     unsigned int cpu_cores = std::thread::hardware_concurrency();
     int worker_threads = std::min(cpu_cores * 2, 16u);
     BLUE_LOG_INFO(g_logger) << "CPU Cores: " << cpu_cores << ", Worker Threads: " << worker_threads;

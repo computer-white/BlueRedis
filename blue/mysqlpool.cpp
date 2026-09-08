@@ -29,7 +29,9 @@ namespace blue
     {
         auto pool = std::shared_ptr<MySQLPool>(new MySQLPool());
         if (!pool->_init(host, user, password, database, port, pool_size))
+        {
             return nullptr;
+        }
         return pool;
     }
 
@@ -78,18 +80,43 @@ namespace blue
         m_pool.pop_front();
         m_idle.fetch_sub(1,std::memory_order_acq_rel);
         // 检查连接是否有效
-        if (!conn->ping())
+        if (!conn || !conn->ping())
         {
             BLUE_LOG_WARN(g_logger) << "MySQL connection lost, creating new one";
-            // 这里简化处理，实际应该重新创建连接
+            // 存在但是Ping不通
+            if (conn)
+            {
+                MYSQL* mysql = mysql_init(nullptr);
+                if (!mysql)
+                {
+                    BLUE_LOG_ERROR(g_logger) << "mysql_init failed";
+                    return nullptr;
+                }
+                
+                if (!mysql_real_connect(mysql, conn->get()->host, conn->get()->user,
+                                        conn->get()->passwd, conn->get()->db,
+                                        conn->get()->port, nullptr, 0))
+                {
+                    BLUE_LOG_ERROR(g_logger) << "mysql_connect failed: " << mysql_error(mysql);
+                    mysql_close(mysql);
+                    return nullptr;
+                }
+                
+                mysql_set_character_set(mysql, "utf8mb4");
+                auto new_conn = std::make_shared<MySQLConnection>(mysql);
+                if (new_conn)
+                {
+                    return new_conn;
+                }
+            }
+            return nullptr;
         }
-        
         return conn;
     }
 
     void MySQLPool::releaseConnection(MySQLConnection::MySQLConnectionPtr conn)
     {
-        MmutexType::lockSco lock(m_mutex);
+        std::unique_lock<std::mutex> lock(m_mutex);
         m_pool.push_back(conn);
         m_idle.fetch_add(1, std::memory_order_acq_rel);
         m_cv.notify_one();

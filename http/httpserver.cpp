@@ -22,6 +22,7 @@
 #include "blue/log.h"
 #include "blue/dbmanager.h"
 #include "blue/redismanager.h"
+#include "blue/configinit.h"
 #include "proxy/rate_limiter.h"
 #include "proxy/tunnel.h"
 #include "proxy/url_rewriter.h"
@@ -40,24 +41,6 @@ namespace blue
         // 全局连接池缓存
         static http::HttpConnectionPool::MmutexType s_poolMutex;
         static std::map<std::string, HttpConnectionPool::HttpConnectionPoolPtr> s_pools;
-
-        extern std::string s_db_host;
-        extern std::string s_db_user;
-        extern std::string s_db_database;
-        extern std::string s_db_passward;
-        extern uint16_t s_db_port;
-        extern blue::DbManager::DbManagerPtr s_dbmanager_ptr;
-
-        extern std::string s_redis_host;
-        extern uint16_t s_redis_port;
-        extern std::string s_redis_passward;
-        extern blue::RedisManager::RedisManagerPtr s_redismanager_ptr;
-
-        extern uint64_t s_rate_limit;
-        extern uint64_t s_rate_limit_expire;
-        extern uint64_t s_cache_expire;
-
-        extern uint64_t s_select_timeout;
 
         // 修改cookie的domain
         static std::string fix_cookie_domain(const std::string &set_cookie)

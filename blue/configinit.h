@@ -34,6 +34,8 @@
 #include "redis_command/loadRedisClientConfig.h"
 #include "redis_command/loadRedisReplicationConfig.h"
 #include "http/loadHttpParserConfig.h"
+#include "http/loadHttpDbConfig.h"
+#include "http/loadHttpRedisConfig.h"
 
 // 数据库和redis配置
 namespace blue
@@ -68,14 +70,12 @@ namespace blue
     namespace logSystemConfig
     {
         static blue::ConfigVar<LogRotateDefine>::ConfigVarPtr
-            g_logRotateDefine_config_ptr = blue::Config::Lookup<LogRotateDefine>("logrotate",
-                                                                                 LogRotateDefine(),
-                                                                                 "logrotate configuration");
+            g_logRotateDefine_config_ptr = blue::Config::Lookup<LogRotateDefine>(
+                "logrotate", LogRotateDefine(), "logrotate configuration");
 
         static blue::ConfigVar<std::set<LogDefine>>::ConfigVarPtr
-            g_logDefine_config_ptr = blue::Config::Lookup<std::set<LogDefine>>("logs",
-                                                                               std::set<LogDefine>(),
-                                                                               "logs LogDefine");
+            g_logDefine_config_ptr = blue::Config::Lookup<std::set<LogDefine>>(
+                "logs", std::set<LogDefine>(), "logs LogDefine");
     }
 
     // redis server AOF config
@@ -83,29 +83,24 @@ namespace blue
     {
         // redis-cli admin
         static blue::ConfigVar<std::string>::ConfigVarPtr
-            g_admin_password = blue::Config::Lookup<std::string>("redis.admin.password",
-                                                                 "admin123",
-                                                                 "admin password");
+            g_admin_password = blue::Config::Lookup<std::string>(
+                "redis.admin.password", "admin123", "admin password");
         static blue::ConfigVar<RedisServerConfigDefine>::ConfigVarPtr
             g_RedisServerConfigDefine_config_ptr =
-                blue::Config::Lookup<RedisServerConfigDefine>("redis",
-                                                              RedisServerConfigDefine(),
-                                                              "redis server configurations");
+                blue::Config::Lookup<RedisServerConfigDefine>(
+                    "redis", RedisServerConfigDefine(), "redis server configurations");
 
         static blue::ConfigVar<AOFConfigDefine>::ConfigVarPtr
-            g_AOFDefine_config_ptr = blue::Config::Lookup<AOFConfigDefine>("redis.aof",
-                                                                           AOFConfigDefine(),
-                                                                           "redis AOF configurations");
+            g_AOFDefine_config_ptr = blue::Config::Lookup<AOFConfigDefine>(
+                "redis.aof", AOFConfigDefine(), "redis AOF configurations");
 
         static blue::ConfigVar<SlowLogConfigDefine>::ConfigVarPtr
-            g_SlowLogDefine_config_ptr = blue::Config::Lookup<SlowLogConfigDefine>("redis.slowlog",
-                                                                                   SlowLogConfigDefine(),
-                                                                                   "redis SlowLog search configurations");
+            g_SlowLogDefine_config_ptr = blue::Config::Lookup<SlowLogConfigDefine>(
+                "redis.slowlog", SlowLogConfigDefine(), "redis SlowLog search configurations");
 
         static blue::ConfigVar<ReplicationConfigDefine>::ConfigVarPtr
-            g_ReplicationDefine_config_ptr = blue::Config::Lookup<ReplicationConfigDefine>("redis.replication",
-                                                                                           ReplicationConfigDefine(),
-                                                                                           "redis Replication module configurations");
+            g_ReplicationDefine_config_ptr = blue::Config::Lookup<ReplicationConfigDefine>(
+                "redis.replication", ReplicationConfigDefine(), "redis Replication module configurations");
     }
 
     namespace http
@@ -115,76 +110,54 @@ namespace blue
         extern std::atomic<size_t> s_http_response_buffer_size;   // http response 缓冲大小
         extern std::atomic<size_t> s_http_response_max_body_size; // http response max body size
 
+        // 不需要使用atomic,这些变量在程序中是只读的,跟上面redis相关配置不一样,他们还可以被用户登录进入服务器使用命令修改,所以要使用原子变量
+        extern std::string s_db_host;
+        extern std::string s_db_user;
+        extern std::string s_db_database;
+        extern std::string s_db_passward;
+        extern uint16_t s_db_port;
+        extern blue::DbManager::DbManagerPtr s_dbmanager_ptr;
+
+        extern std::string s_redis_host;
+        extern uint16_t s_redis_port;
+        extern std::string s_redis_password;
+        extern blue::RedisManager::RedisManagerPtr s_redismanager_ptr;
+
+        extern uint64_t s_rate_limit;
+        extern uint64_t s_rate_limit_expire;
+        extern uint64_t s_cache_expire;
+
         namespace HttpParserConfig
         {
             static blue::ConfigVar<HttpParserConfigDefine>::ConfigVarPtr
-                g_HttpRequestParserDefine_config_ptr = blue::Config::Lookup<HttpParserConfigDefine>("http.parser.request",
-                                                                                                    HttpParserConfigDefine(),
-                                                                                                    "http request Parser configurations");
+                g_HttpRequestParserDefine_config_ptr = blue::Config::Lookup<HttpParserConfigDefine>(
+                    "http.parser.request", HttpParserConfigDefine(), "http request Parser configurations");
 
             static blue::ConfigVar<HttpParserConfigDefine>::ConfigVarPtr
-                g_HttpResponseParserDefine_config_ptr = blue::Config::Lookup<HttpParserConfigDefine>("http.parser.response",
-                                                                                                     HttpParserConfigDefine(),
-                                                                                                     "http response Parser configurations");
+                g_HttpResponseParserDefine_config_ptr = blue::Config::Lookup<HttpParserConfigDefine>(
+                    "http.parser.response", HttpParserConfigDefine(), "http response Parser configurations");
         };
 
         namespace HttpServerConfig
         {
+            static blue::ConfigVar<HttpDbDefine>::ConfigVarPtr
+                g_HttpDbDefine_config_ptr = blue::Config::Lookup<HttpDbDefine>(
+                    "http.db", HttpDbDefine(), "http Db configurations");
 
+            static blue::ConfigVar<HttpRedisDefine>::ConfigVarPtr
+                g_HttpRedisDefine_config_ptr = blue::Config::Lookup<HttpRedisDefine>(
+                    "http.redis", HttpRedisDefine(), "http Redis configurations");
+
+            // httpconnectionpool size
+            static blue::ConfigVar<uint32_t>::ConfigVarPtr
+                g_httpconnpool_mxsize = blue::Config::Lookup<uint32_t>(
+                    "httpconnectionpool.maxsize", 10, "http connectionpool maxsize");
+
+            // mysqlpool size
+            static blue::ConfigVar<size_t>::ConfigVarPtr
+                g_mysqlpool_mxsize = blue::Config::Lookup<size_t>(
+                    "httpmysqlpool.maxsize", 10, "http mysqlpool maxsize");
         };
-    }
-
-    // 这里是对于http模块中使用到的数据库和redis的配置
-    // 相关数据库配置
-    static blue::ConfigVar<std::string>::ConfigVarPtr g_db_host =
-        blue::Config::Lookup<std::string>("db.host", "localhost", "db host");
-
-    static blue::ConfigVar<std::string>::ConfigVarPtr g_db_user =
-        blue::Config::Lookup<std::string>("db.user", "blue", "db user");
-
-    static blue::ConfigVar<std::string>::ConfigVarPtr g_db_password =
-        blue::Config::Lookup<std::string>("db.password", "", "db password");
-
-    static blue::ConfigVar<std::string>::ConfigVarPtr g_db_database =
-        blue::Config::Lookup<std::string>("db.database", "blue_proxy", "db database");
-
-    static blue::ConfigVar<uint16_t>::ConfigVarPtr g_db_port =
-        blue::Config::Lookup<uint16_t>("db.port", 3306, "db port");
-
-    // 相关redis配置
-    static blue::ConfigVar<std::string>::ConfigVarPtr g_redis_host =
-        blue::Config::Lookup<std::string>("redis.host", "127.0.0.1", "redis host");
-
-    static blue::ConfigVar<uint16_t>::ConfigVarPtr g_redis_port =
-        blue::Config::Lookup<uint16_t>("redis.port", 6379, "redis port");
-
-    static blue::ConfigVar<std::string>::ConfigVarPtr g_redis_password =
-        blue::Config::Lookup<std::string>("redis.password", "", "redis password");
-
-    static blue::ConfigVar<uint64_t>::ConfigVarPtr g_rate_limit =
-        blue::Config::Lookup<uint64_t>("redis.rate_limit", 100, "redis rate limit");
-
-    static blue::ConfigVar<uint64_t>::ConfigVarPtr g_rate_limit_expire =
-        blue::Config::Lookup<uint64_t>("redis.rate_limit_expire", 60, "redis rate limit expire");
-
-    static blue::ConfigVar<uint64_t>::ConfigVarPtr g_cache_expire =
-        blue::Config::Lookup<uint64_t>("redis.cache_expire", 60, "redis cache expire");
-
-    // select超时设置(配置里面是ms)
-    static blue::ConfigVar<uint64_t>::ConfigVarPtr g_select_timeout =
-        blue::Config::Lookup<uint64_t>("select.timeout", 1000, "select timeout");
-
-    // httpconnectionpool size
-    static blue::ConfigVar<uint32_t>::ConfigVarPtr g_httpconnpool_mxsize =
-        blue::Config::Lookup<uint32_t>("httpconnectionpool.maxsize", 10, "http connectionpool maxsize");
-
-    // mysqlpool size
-    static blue::ConfigVar<size_t>::ConfigVarPtr g_mysqlpool_mxsize =
-        blue::Config::Lookup<size_t>("httpmysqlpool.maxsize", 10, "http mysqlpool maxsize");
-
-    namespace http
-    {
-        void blueHttpIniteConfig(); // 初始化函数,使用代理时必须先初始化mysql和redis
     }
 }
 

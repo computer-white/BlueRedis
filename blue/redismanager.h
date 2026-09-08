@@ -40,7 +40,8 @@ namespace blue
     {
     public:
         using RedisManagerPtr = std::shared_ptr<RedisManager>;
-        using MmutexType = Mmutex;
+        using MmutexType = MRWmutex;
+
     public:
         /**
          * @brief 创建 Redis 连接
@@ -49,9 +50,9 @@ namespace blue
          * @param password 密码，可选
          * @return 管理器实例
          */
-        static RedisManager::RedisManagerPtr Create(const std::string& host = "127.0.0.1",
-                        uint16_t port = 6379,
-                        const std::string& password = "");
+        static RedisManager::RedisManagerPtr Create(const std::string &host = "127.0.0.1",
+                                                    uint16_t port = 6379,
+                                                    const std::string &password = "");
         ~RedisManager();
 
         /**
@@ -61,35 +62,35 @@ namespace blue
          * @param expire_sec 过期时间（秒），0 表示永不过期
          * @return 成功返回 true
          */
-        bool set(const std::string& key, const std::string& value, int expire_sec = 0);
+        bool set(const std::string &key, const std::string &value, int expire_sec = 0);
 
         /**
          * @brief 获取键的值
          * @param key 键
          * @return 值，不存在返回空字符串
          */
-        std::string get(const std::string& key);
+        std::string get(const std::string &key);
 
         /**
          * @brief 删除键
          * @param key 键
          * @return 删除成功返回 true
          */
-        bool del(const std::string& key);
+        bool del(const std::string &key);
 
         /**
          * @brief 检查键是否存在
          * @param key 键
          * @return 存在返回 true
          */
-        bool exists(const std::string& key);
+        bool exists(const std::string &key);
 
         /**
          * @brief 自增计数
          * @param key 键
          * @return 自增后的值，失败返回 -1
          */
-        long long incr(const std::string& key);
+        long long incr(const std::string &key);
 
         /**
          * @brief 设置过期时间
@@ -97,15 +98,14 @@ namespace blue
          * @param seconds 秒数
          * @return 成功返回 true
          */
-        bool expire(const std::string& key, int seconds);
+        bool expire(const std::string &key, int seconds);
 
     private:
         RedisManager() = default;
-        bool _connect(const std::string& host, uint16_t port, const std::string& password);
+        bool _connect(const std::string &host, uint16_t port, const std::string &password);
 
-        redisContext* m_redis = nullptr;
         MmutexType m_mutex;
-
+        redisContext *m_redis = nullptr;
     };
 }
 

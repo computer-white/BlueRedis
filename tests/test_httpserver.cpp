@@ -96,7 +96,6 @@ int main()
 {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
-    blue::http::blueHttpIniteConfig();
     blue::IOManager iom(2);
     iom.schedule(test());
     iom.wait_all();

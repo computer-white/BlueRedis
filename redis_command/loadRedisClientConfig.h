@@ -63,7 +63,7 @@ namespace blue
                           << __FILE__ << " " << __LINE__ << "\nnode:\n"
                           << node << "\n"
                           << "I will use default value: "
-                          << res.max_command_size
+                          << util::ConfigParser::FormatSize(res.max_command_size)
                           << std::endl;
             }
             else
@@ -80,7 +80,7 @@ namespace blue
                           << __FILE__ << " " << __LINE__ << "\nnode:\n"
                           << node << "\n"
                           << "I will use default value: "
-                          << res.max_command_size
+                          << util::ConfigParser::FormatSize(res.max_command_size)
                           << std::endl;
                 }
             }
@@ -91,7 +91,7 @@ namespace blue
                           << __FILE__ << " " << __LINE__ << "\nnode:\n"
                           << node << "\n"
                           << "I will use default value: "
-                          << res.max_batch_size
+                          << util::ConfigParser::FormatSize(res.max_batch_size)
                           << std::endl;
             }
             else
@@ -108,7 +108,7 @@ namespace blue
                           << __FILE__ << " " << __LINE__ << "\nnode:\n"
                           << node << "\n"
                           << "I will use default value: "
-                          << res.max_batch_size
+                          << util::ConfigParser::FormatSize(res.max_batch_size)
                           << std::endl;
                 }
             }
@@ -147,7 +147,7 @@ namespace blue
                           << __FILE__ << " " << __LINE__ << "\nnode:\n"
                           << node << "\n"
                           << "I will use default value(Zero means no restrictions): "
-                          << res.timeout
+                          << util::ConfigParser::FormatTime(std::chrono::microseconds(res.timeout))
                           << std::endl;
             }
             else
@@ -164,7 +164,7 @@ namespace blue
                           << __FILE__ << " " << __LINE__ << "\nnode:\n"
                           << node << "\n"
                           << "I will use default value(Zero means no restrictions): "
-                          << res.timeout
+                          << util::ConfigParser::FormatTime(std::chrono::microseconds(res.timeout))
                           << std::endl;
                 }
             }

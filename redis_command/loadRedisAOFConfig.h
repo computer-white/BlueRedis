@@ -75,7 +75,7 @@ namespace blue
         // AOF
         size_t aof_max_buffer_size = 1024 * 1024;    // aof异步写入文件的最大缓冲区大小
         size_t aof_max_file_size = 1024;             // 每个文件最大大小
-        int aof_max_file_number = 5;              // 保留5个aof文件
+        int aof_max_file_number = 5;                 // 保留5个aof文件
         bool aof_enabled = false;                    // 是否开启aof
         std::string aof_filename = "appendonly.aof"; // 文件模板名
         RedisServerConfig::AOFSyncStrategy aof_sync =
@@ -94,8 +94,8 @@ namespace blue
         {
             os << "aof_enabled: " << lhs.aof_enabled
                << "aof_filename: " << lhs.aof_filename << "\n"
-               << "aof_max_file_size: " << lhs.aof_max_file_size << "\n"
-               << "aof_max_file_number: " << lhs.aof_max_file_number << "\n"
+               << "aof_max_file_size: " << util::ConfigParser::FormatSize(lhs.aof_max_file_size) << "\n"
+               << "aof_max_file_number: " << util::ConfigParser::FormatSize(lhs.aof_max_file_number) << "\n"
                << "aof_sync: " << RedisServerConfig::syncStrategyToString(lhs.aof_sync);
             return os;
         }

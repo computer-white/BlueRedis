@@ -138,7 +138,6 @@ namespace blue
              */
             bool _executePooled(const std::string& sql);
         private:
-            mutable MmutexType m_mutex;
             MySQLPool::MySQLPoolPtr m_pool;
             static Logger::LoggerPtr s_logger;
     };

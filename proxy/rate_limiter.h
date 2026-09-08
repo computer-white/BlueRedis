@@ -44,15 +44,29 @@ namespace blue
                 return limiter;
             }
 
-            void setLimit(uint64_t val) { m_limit = val; }
-            void setExpire(uint64_t val) { m_expire = val; }
+            /**
+             * @brief 设置访问上限
+             */
+            void setLimit(uint64_t val) { m_limit.store(val, std::memory_order_release); }
 
+            /**
+             * @brief 设置限速窗口时间
+             */
+            void setExpire(uint64_t val) { m_expire.store(val, std::memory_order_release); }
+
+            /**
+             * @brief 检查ip是否在白名单,不在检查limit
+             */
             bool allow(const std::string &ip)
             {
+                std::shared_lock<std::shared_mutex> lock(m_mutex);
                 if (m_whitelist.contains(ip))
                 {
                     return true;
                 }
+                lock.unlock();
+
+                // TODO 多线程这里有问题，无法保证incr正确次数，后序再改
                 std::string key = "rate:" + ip;
                 long long count = blue::http::s_redismanager_ptr->incr(key);
                 if (count == 1)
@@ -63,14 +77,19 @@ namespace blue
                 return count <= m_limit;
             }
 
+            /**
+             * @brief 添加ip到白名单
+             */
             void addWhiteList(const std::string &ip)
             {
+                std::unique_lock<std::shared_mutex> lock(m_mutex);
                 m_whitelist.insert(ip);
             }
 
         private:
-            uint64_t m_limit;
-            uint64_t m_expire;
+            std::atomic<uint64_t> m_limit{0};
+            std::atomic<uint64_t> m_expire{0};
+            std::shared_mutex m_mutex;
             std::unordered_set<std::string> m_whitelist = {"127.0.0.1", "::1", "localhost"};
         };
     }

@@ -29,9 +29,9 @@
 #include <memory>
 #include <string>
 #include <list>
-#include "mthread.h"
-#include <condition_variable>
 #include <chrono>
+#include <condition_variable>
+#include "blue/mthread.h"
 
 // mysql 连接池
 namespace blue
@@ -88,7 +88,6 @@ namespace blue
     {
     public:
         using MySQLPoolPtr = std::shared_ptr<MySQLPool>;
-        using MmutexType = blue::Mmutex;
 
         /**
          * @brief 创建连接池
@@ -140,7 +139,7 @@ namespace blue
                 const std::string& password, const std::string& database,
                 uint16_t port, size_t pool_size);
         
-        MmutexType m_mutex;
+        std::mutex m_mutex;
         std::list<MySQLConnection::MySQLConnectionPtr> m_pool;
         std::condition_variable m_cv;
         size_t m_pool_size = 8;
