@@ -182,6 +182,7 @@ namespace blue
                 BLUE_LOG_ERROR(g_logger) << "connect failed: errno=" << errno
                                          << " (" << strerror(errno) << ")";
                 std::this_thread::sleep_for(std::chrono::seconds(5));
+                sock->close();
                 continue;
             }
             BLUE_LOG_INFO(g_logger) << "connection successful";
@@ -214,9 +215,11 @@ namespace blue
                 {
                     BLUE_LOG_DEBUGE(g_logger) << "Failed to send AUTH and SYNC";
                     std::this_thread::sleep_for(std::chrono::seconds(5));
+                    sock->close();
+                    m_repl_sock.reset();
                     continue;
                 }
-                BLUE_LOG_INFO(g_logger) << "Send SYNC, wait for RDB...";
+                BLUE_LOG_INFO(g_logger) << "Send SYNC, wait for RDB... to " << sock->getRemoteAddress()->toString();
             }
 
             // 流式接收RDB数据并同步到本节点
@@ -461,7 +464,7 @@ namespace blue
 
             buf[ret] = '\0';
             std::string data(buf, ret);
-            // BLUE_LOG_INFO(g_logger) << "data: " << data;
+            BLUE_LOG_INFO(g_logger) << "data: " << data;
 
             // 处理来自主节点的SYNC命令的回复
             while (data.substr(0, 5) == "+OK\r\n") // 可能包含SYNC或AUTH命令的OK

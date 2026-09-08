@@ -298,6 +298,7 @@ add_blue_test(test_log_rotate)
 add_blue_test(test_config)
 add_blue_test(test_log_rotate_config)
 add_blue_test(test_redis_aof_config)
+add_blue_test(test_cluster_node)
 
 # add_library(configinit_obj OBJECT blue/configinit.cpp)
 # add_executable(test_benchmark newtests/test_benchmark.cpp)
