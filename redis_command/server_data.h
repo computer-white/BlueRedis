@@ -73,18 +73,6 @@ namespace blue
                 return std::chrono::steady_clock::now() > expire.value();
             }
         };
-        // std::shared_mutex mutex;
-        // std::unordered_map<std::string, StoreData> store;
-        // // std::unordered_map<std::string, std::string> store;
-        // // std::unordered_map<std::string, TimePoint> expire;
-        // std::unordered_map<std::string, std::unordered_map<std::string, std::string>> hash;
-        // std::unordered_map<std::string, std::list<std::string>> lists;
-        // std::unordered_map<std::string, std::unordered_set<std::string>> sets;
-        // // key -> 跳表(ZSetKey{score + member} -> member)
-        // std::unordered_map<std::string, SkipList<ZSetKey, std::string>> zset;
-        // // key -> (member-> score)
-        // std::unordered_map<std::string, std::unordered_map<std::string, double>> zset_score;
-
         std::shared_mutex mutex;
         absl::flat_hash_map<std::string, StoreData> store;
         absl::flat_hash_map<std::string, absl::flat_hash_map<std::string, std::string>> hash;
@@ -93,7 +81,7 @@ namespace blue
         // key -> 跳表(ZSetKey{score + member} -> member)
         absl::flat_hash_map<std::string, SkipList<ZSetKey, std::string>> zset;
         // key -> (member-> score)
-        absl::flat_hash_map<std::string, std::unordered_map<std::string, double>> zset_score;
+        absl::flat_hash_map<std::string, absl::flat_hash_map<std::string, double>> zset_score;
     };
 
     template <typename T>
@@ -543,13 +531,11 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                // shard.store[key] = DataShard::StoreData(value);
                 shard.store.insert_or_assign(key, DataShard::StoreData(value));
 
                 if (parts.size() >= 6)
                 {
                     int64_t expire_time = std::stoll(parts[5]);
-                    // shard.store[key].expire = TimePoint(std::chrono::nanoseconds(expire_time));
                     shard.store.insert_or_assign(key, DataShard::StoreData(value, TimePoint(std::chrono::nanoseconds(expire_time))));
                 }
             }
@@ -562,10 +548,8 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                absl::flat_hash_map<std::string, std::string> internal;
-                internal.insert_or_assign(field, value);
-                shard.hash.insert_or_assign(key, std::move(internal));
-                // shard.hash[key][field] = value;
+                auto [it, inserted] = shard.hash.try_emplace(key, absl::flat_hash_map<std::string, std::string>{});
+                it->second.insert_or_assign(field, value);
             }
             else if (type == "LIST" && parts.size() >= 5)
             {
@@ -575,10 +559,8 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                // shard.lists[key].push_back(value);
-                std::list<std::string> list;
-                list.push_back(value);
-                shard.lists.insert_or_assign(key, std::move(list));
+                auto [it, inserted] = shard.lists.try_emplace(key, std::list<std::string>{});
+                it->second.push_back(value);
             }
             else if (type == "SET" && parts.size() >= 5)
             {
@@ -588,10 +570,8 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                // shard.sets[key].insert(member);
-                std::unordered_set<std::string> set;
-                set.insert(member);
-                shard.sets.insert_or_assign(key, std::move(set));
+                auto [it, inserted] = shard.sets.try_emplace(key, std::unordered_set<std::string>{});
+                it->second.insert(member);
             }
             else if (type == "ZSET" && parts.size() >= 6)
             {
@@ -602,8 +582,13 @@ namespace blue
                 int shard_idx = getShardIndex(key);
                 auto &shard = target_db[shard_idx];
                 std::unique_lock lock(shard.mutex);
-                shard.zset_score[key][member] = score;
-                shard.zset[key].insert({score, member}, member);
+                // zset_score
+                auto [sit, sinserted] = shard.zset_score.try_emplace(key, absl::flat_hash_map<std::string, double>{});
+                sit->second.insert_or_assign(member, score);
+
+                // zset
+                auto [zit, zinserted] = shard.zset.try_emplace(key, SkipList<ZSetKey, std::string>{});
+                zit->second.insert({score, member}, member);
             }
         }
         BLUE_LOG_INFO(xx::g_logger) << "RDB loaded from " << filename;
