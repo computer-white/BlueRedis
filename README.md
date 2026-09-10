@@ -166,7 +166,8 @@ PONG
     # 管道模式测试
     redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -t set,get -P 32 -c 100 -n 1000000 -q
 # 结果
-### Pipe                   
+### Pipe
+```bash              
     blue@Plus:~/c_projects/newblue$ redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -c 100 -n 1000000 -t set,get,lpush,lpop,rpush,rpop,sadd,srem -P 8 -q
     WARNING: Could not fetch server CONFIG
     SET: 162548.77 requests per second, p50=4.775 msec                    
@@ -194,9 +195,11 @@ PONG
     LPUSH: 214132.77 requests per second, p50=14.679 msec                     
     RPUSH: 208376.75 requests per second, p50=14.775 msec                     
     LPOP: 197199.77 requests per second, p50=15.855 msec                     
-    RPOP: 198570.30 requests per second, p50=15.983 msec                     
-    SADD: 211237.84 requests per second, p50=14.951 msec 
+    RPOP: 198570.30 requests per second, p50=15.983 msec                   
+    SADD: 211237.84 requests per second, p50=14.951 msec
+```
 ### 非Pipe
+```bash
     blue@Plus:~/c_projects/newblue$ redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -c 100 -n 1000000 -t set,get,lpush,rpush,lpop,rpop,sadd,srem -q
     WARNING: Could not fetch server CONFIG
     SET: 69871.44 requests per second, p50=1.343 msec                   
@@ -205,7 +208,8 @@ PONG
     RPUSH: 69584.58 requests per second, p50=1.327 msec                   
     LPOP: 67015.15 requests per second, p50=1.271 msec                   
     RPOP: 70866.70 requests per second, p50=1.247 msec                    
-    SADD: 65828.45 requests per second, p50=1.391 msec 
+    SADD: 65828.45 requests per second, p50=1.391 msec
+```
 # 机器参数
 ```bash
 ===== CPU =====
@@ -246,17 +250,19 @@ Operating System: Ubuntu 22.04.5 LTS
     Architecture: x86-64
 ```
 # 关闭服务器
-## 1.使用管理员登录进去，输入shutdown
+### 1.使用管理员登录进去，输入shutdown
+```bash
     blue@Plus:~/c_projects/newblue$ redis-cli -p 6666
     127.0.0.1:6666> auth admin123
     OK
     127.0.0.1:6666> shutdown
     "OK - waiting for clients to disconnect"
     127.0.0.1:6666> exit
-## 2.直接按ctrl + c
+```
+### 2.直接按ctrl + c
     ctrl + c
 
 # 欢迎提交 Issue 和 Pull Request！
 
 # License
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE.md](LICENSE.md) file for details.
+### This project is licensed under the GNU General Public License v3.0 - see the [LICENSE.md](LICENSE.md) file for details.
