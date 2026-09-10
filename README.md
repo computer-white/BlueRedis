@@ -207,6 +207,7 @@ PONG
     RPOP: 70866.70 requests per second, p50=1.247 msec                    
     SADD: 65828.45 requests per second, p50=1.391 msec 
 # 机器参数
+```bash
 ===== CPU =====
 Architecture:                         x86_64
 CPU(s):                               16
@@ -243,6 +244,7 @@ snapfuse         67M   67M     0 100% /snap/core24/1643
 Operating System: Ubuntu 22.04.5 LTS                    
           Kernel: Linux 6.6.87.2-microsoft-standard-WSL2
     Architecture: x86-64
+```
 # 关闭服务器
 ## 1.使用管理员登录进去，输入shutdown
     blue@Plus:~/c_projects/newblue$ redis-cli -p 6666
