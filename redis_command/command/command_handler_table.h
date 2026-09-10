@@ -885,7 +885,6 @@ namespace blue
                 timepoint = SteadyClock::now() + std::chrono::milliseconds(milliseconds);
             }
         }
-        // shards.store[key] = DataShard::StoreData(val, timepoint);
         shards.store.insert_or_assign(key, DataShard::StoreData(val, timepoint));
         return RespValue::simple_string("OK");
     }
@@ -940,7 +939,6 @@ namespace blue
             const std::string &val = args[i + 1].str;
             auto &shards = self->getShard(key, sock);
             std::unique_lock<std::shared_mutex> lock(shards.mutex);
-            // shards.store[key] = DataShard::StoreData(val);
             shards.store.insert_or_assign(key, DataShard::StoreData(val));
         }
         return RespValue::simple_string("OK");
@@ -1003,7 +1001,6 @@ namespace blue
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
-            // shards.store[key] = DataShard::StoreData(val);
             shards.store.insert_or_assign(key, DataShard::StoreData(val));
             return RespValue::bulk_string(val);
         }
@@ -1029,7 +1026,6 @@ namespace blue
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
-            // shards.store[key] = DataShard::StoreData(val);
             shards.store.insert_or_assign(key, DataShard::StoreData(val));
         }
         else
@@ -1057,7 +1053,6 @@ namespace blue
         auto it = shards.store.find(key);
         if (it == shards.store.end())
         {
-            // shards.store[key] = DataShard::StoreData(val);
             shards.store.insert_or_assign(key, DataShard::StoreData(val));
             return RespValue::integer(1);
         }
@@ -1148,13 +1143,11 @@ namespace blue
                 return RespValue::error("ERR value is not a integer or out of range");
             }
             val++;
-            // it->second.val = std::to_string(val);
             shards.store.insert_or_assign(key, DataShard::StoreData(std::to_string(val), it->second.expire));
         }
         else
         {
             val++;
-            // shards.store[key] = DataShard::StoreData(std::to_string(val));
             shards.store.insert_or_assign(key, DataShard::StoreData(std::to_string(val)));
         }
         return RespValue::integer(val);
@@ -1195,13 +1188,11 @@ namespace blue
                 return RespValue::error("ERR value is not a integer or out of range");
             }
             val += increment;
-            // it->second.val = std::to_string(val);
             shards.store.insert_or_assign(key, DataShard::StoreData(std::to_string(val), it->second.expire));
         }
         else
         {
             val += increment;
-            // shards.store[key] = DataShard::StoreData(std::to_string(val));
             shards.store.insert_or_assign(key, DataShard::StoreData(std::to_string(val)));
         }
         return RespValue::integer(val);
@@ -1247,8 +1238,8 @@ namespace blue
         }
         if (it->second.is_expired())
         {
-            // lock.unlock();
-            std::unique_lock<std::shared_mutex> lock(shards.mutex);
+            lock.unlock();
+            std::unique_lock<std::shared_mutex> lock2(shards.mutex);
             shards.store.erase(key);
             return RespValue::integer(0);
         }
@@ -1842,8 +1833,9 @@ namespace blue
             {
                 new_list.push_front(args[i].str);
             }
+            size_t ans = new_list.size();
             shards.lists.insert_or_assign(key, std::move(new_list));
-            return RespValue::integer(args.size() - 2);
+            return RespValue::integer(ans);
         }
         auto &list = const_cast<std::list<std::string> &>(it->second);
         for (size_t i = 2; i < args.size(); i++)
@@ -1874,8 +1866,9 @@ namespace blue
             {
                 new_list.push_back(args[i].str);
             }
+            size_t ans = new_list.size();
             shards.lists.insert_or_assign(key, std::move(new_list));
-            return RespValue::integer(args.size() - 2);
+            return RespValue::integer(ans);
         }
         auto &lhs = const_cast<std::list<std::string> &>(it->second);
         for (size_t i = 2; i < args.size(); i++)
@@ -2080,6 +2073,10 @@ namespace blue
             return RespValue::null_bulk();
         }
         size_t size = it->second.size();
+        if (idx >= size)
+        {
+            return RespValue::null_bulk();
+        }
         if (idx < 0)
         {
             idx += size;
@@ -2126,6 +2123,10 @@ namespace blue
             return RespValue::null_bulk();
         }
         size_t size = it->second.size();
+        if (idx >= size)
+        {
+            return RespValue::null_bulk();
+        }
         if (idx < 0)
         {
             idx += size;
@@ -2162,18 +2163,24 @@ namespace blue
         }
         int src_idx = self->getShardIndex(source_key);
         int dest_idx = self->getShardIndex(dest_key);
-        if (src_idx > dest_idx)
+
+        int first = src_idx, second = dest_idx;
+        if (first > second)
         {
-            std::swap(src_idx, dest_idx);
+            std::swap(first, second);
         }
-        auto &src_shard = self->getShard(source_key, sock);
-        auto &dest_shard = self->getShard(dest_key, sock);
-        std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
+        auto &m_shards = self->getDBs()[sock->getClientId()];
+
+        std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
         if (src_idx != dest_idx)
         {
-            lock2 = std::unique_lock<std::shared_mutex>(dest_shard.mutex);
+            lock2 = std::unique_lock<std::shared_mutex>(m_shards[second].mutex);
         }
+
+        auto &src_shard = m_shards[src_idx];
+        auto &dest_shard = m_shards[dest_idx];
+
         auto src_it = src_shard.lists.find(source_key);
         if (src_it == src_shard.lists.end())
         {
@@ -2183,7 +2190,6 @@ namespace blue
         auto dest_it = dest_shard.lists.find(dest_key);
         if (dest_it == dest_shard.lists.end())
         {
-            // dest_shard.lists[dest_key] = std::list<std::string>();
             dest_shard.lists.insert_or_assign(dest_key, std::list<std::string>());
             dest_it = dest_shard.lists.find(dest_key);
         }
@@ -2213,18 +2219,24 @@ namespace blue
         }
         int src_idx = self->getShardIndex(source_key);
         int dest_idx = self->getShardIndex(dest_key);
-        if (src_idx > dest_idx)
+
+        int first = src_idx, second = dest_idx;
+        if (first > second)
         {
-            std::swap(src_idx, dest_idx);
+            std::swap(first, second);
         }
-        auto &src_shard = self->getShard(source_key, sock);
-        auto &dest_shard = self->getShard(dest_key, sock);
-        std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
+        auto &m_shards = self->getDBs()[sock->getClientId()];
+
+        std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
         if (src_idx != dest_idx)
         {
-            lock2 = std::unique_lock<std::shared_mutex>(dest_shard.mutex);
+            lock2 = std::unique_lock<std::shared_mutex>(m_shards[second].mutex);
         }
+
+        auto &src_shard = m_shards[src_idx];
+        auto &dest_shard = m_shards[dest_idx];
+
         auto src_it = src_shard.lists.find(source_key);
         if (src_it == src_shard.lists.end())
         {
@@ -2234,7 +2246,6 @@ namespace blue
         auto dest_it = dest_shard.lists.find(dest_key);
         if (dest_it == dest_shard.lists.end())
         {
-            // dest_shard.lists[dest_key] = std::list<std::string>();
             dest_shard.lists.insert_or_assign(dest_key, std::list<std::string>());
             dest_it = dest_shard.lists.find(dest_key);
         }
@@ -2328,13 +2339,10 @@ namespace blue
         for (size_t i = 2; i < args.size(); i++)
         {
             const std::string &member = args[i].str;
-            if (shards.sets[key].find(member) == shards.sets[key].end())
+            auto [_, res] = shards.sets[key].insert(member);
+            if (res)
             {
-                auto [_, res] = shards.sets[key].insert(member);
-                if (res)
-                {
-                    count++;
-                }
+                count++;
             }
         }
         return RespValue::integer(count);
@@ -2716,7 +2724,7 @@ namespace blue
                 results_set.insert(tem_member);
             }
         }
-        // lock.unlock();
+        lock.unlock();
         std::vector<RespValue> results;
         for (const auto &member : results_set)
         {
@@ -2744,19 +2752,24 @@ namespace blue
         const std::string &member = args[3].str;
         int src_shard_idx = self->getShardIndex(source_key);
         int dest_shard_idx = self->getShardIndex(destination_key);
-        if (src_shard_idx > dest_shard_idx)
-        {
-            std::swap(src_shard_idx, dest_shard_idx);
-        }
-        auto &src_shard = self->getShard(source_key, sock);
-        auto &dest_shard = self->getShard(destination_key, sock);
 
-        std::unique_lock<std::shared_mutex> lock1(src_shard.mutex);
+        int first = src_shard_idx, second = dest_shard_idx;
+        // 按顺序加锁
+        if (first > second)
+        {
+            std::swap(first, second);
+        }
+        auto &m_shards = self->getDBs()[sock->getClientId()];
+
+        std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
         if (src_shard_idx != dest_shard_idx)
         {
-            lock2 = std::unique_lock<std::shared_mutex>(dest_shard.mutex);
+            lock2 = std::unique_lock<std::shared_mutex>(m_shards[second].mutex);
         }
+
+        auto &src_shard = m_shards[src_shard_idx];
+        auto &dest_shard = m_shards[dest_shard_idx];
 
         auto src_it = src_shard.sets.find(source_key);
         if (src_it == src_shard.sets.end())
@@ -2767,7 +2780,6 @@ namespace blue
         auto dest_it = dest_shard.sets.find(destination_key);
         if (dest_it == dest_shard.sets.end())
         {
-            // dest_shard.sets[destination_key] = std::unordered_set<std::string>();
             dest_shard.sets.insert_or_assign(destination_key, std::unordered_set<std::string>());
             dest_it = dest_shard.sets.find(destination_key);
         }
@@ -2836,7 +2848,7 @@ namespace blue
             {
                 count++;
             }
-            score_map[member] = score;
+            score_map.insert_or_assign(member, score);
             ZSetKey newkey(score, member);
             skiplist.insert(newkey, member);
         }
@@ -3295,7 +3307,7 @@ namespace blue
         {
             if (args.size() != 2)
             {
-                return RespValue::error("ERR maybe need 'FLUSHAD CONFIRM");
+                return RespValue::error("ERR maybe need 'FLUSHDB CONFIRM");
             }
             std::string confirm = args[1].str;
             std::transform(confirm.begin(), confirm.end(), confirm.begin(), ::toupper);
@@ -3353,7 +3365,7 @@ namespace blue
         {
             if (args.size() != 2)
             {
-                return RespValue::error("ERR maybe need 'FLUSHADALL CONFIRM");
+                return RespValue::error("ERR maybe need 'FLUSHDBALL CONFIRM");
             }
             std::string confirm = args[1].str;
             std::transform(confirm.begin(), confirm.end(), confirm.begin(), ::toupper);
@@ -3374,7 +3386,7 @@ namespace blue
                 }
                 return RespValue::simple_string("OK");
             }
-            return RespValue::error("ERR authentication required, maybe need 'FLUSHADALL CONFIRM");
+            return RespValue::error("ERR authentication required, maybe need 'FLUSHDBALL CONFIRM");
         }
         return RespValue::error("ERR authentication required");
     }
@@ -4513,7 +4525,7 @@ namespace blue
         const std::string &port_str = args[2].str;
 
         // REPLICAOF NO ONE 取消复制
-        if (addr == "NO" && port_str == "ONE")
+        if ((addr == "NO" || addr == "no") && (port_str == "ONE" || port_str == "one"))
         {
             if (!s_repl_is_master.load(std::memory_order_acquire))
             {
@@ -4582,7 +4594,7 @@ namespace blue
         const std::string &port_str = args[2].str;
 
         // REPLICAOF NO ONE 取消复制
-        if (addr == "NO" && port_str == "ONE")
+        if ((addr == "NO" || addr == "no") && (port_str == "ONE" || port_str == "one"))
         {
             if (!s_repl_is_master.load(std::memory_order_acquire))
             {
@@ -4693,7 +4705,7 @@ namespace blue
         auto *iom = blue::IOManager::GetThis();
         if (iom)
         {
-            iom->schedule(sendRDBStreaming(sock,self));
+            iom->schedule(sendRDBStreaming(sock, self));
         }
         else
         {
