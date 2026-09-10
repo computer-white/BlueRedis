@@ -1,15 +1,13 @@
 # Blue - C++20 协程服务器框架
 
-基于 C++20 无栈协程的异步网络框架，支持 epoll 事件驱动、SSL/TLS、HTTP 客户端/服务端、连接池、异步日志轮转。
-目前扩展了redis
+基于 C++20 无栈协程的异步网络框架，支持 epoll 事件驱动、HTTP 客户端/服务端、连接池。
 
 ## 特性
 
-- **C++20 无栈协程** — `Task<T>`、`Scheduler`、`IOManager`，对称转移（Symmetric Transfer），零调度开销
-- **epoll 事件驱动** — 异步 I/O（`co_await Read/Write/Accept`）、定时器（`co_await sleepFor`）、SSL/TLS
-- **HTTP 客户端** — GET/POST、HTTPS、连接池（Keep-Alive 复用）、超时控制
-- **HTTP 服务端** — 基于 llhttp 的请求解析、Servlet 路由、反向代理
-- **异步日志** — 无锁 SPSC 队列 + 后台线程 + 按大小自动轮转
+- **C++20 无栈协程** — `Task<T>`、`Scheduler`、`IOManager`，对称转移（Symmetric Transfer）
+- **epoll 事件驱动** — 异步 I/O（`co_await Read/Write/Accept`）、定时器（`co_await sleepFor`）
+- **HTTP 客户端** — GET/POST、HTTPS、连接池（Keep-Alive 复用）
+- **HTTP 服务端** — 基于 llhttp 的请求解析、Servlet 路由
 - **配置系统** — YAML / JSON 热加载，支持配置变更回调
 - **redis** — 使用c++20协程的redis服务器
 
@@ -48,12 +46,14 @@
     redis.slowlog.slow_log_slower_than: 10ms # 规定执行时长大于10ms的记录为慢日志
     redis.slowlog.slow_log_max_len: 256 # 慢日志缓存数组最大长度
 ```
-## 依赖
-bash
+
 ## 编译器
+```bash
 sudo apt install g++-12
+```
 
 ## 库
+```bash
 sudo apt install libboost-iostreams-dev libboost-coroutine-dev libboost-context-dev
 sudo apt install libssl-dev libyaml-cpp-dev nlohmann-json3-dev
 sudo apt install libmysqlclient-dev libhiredis-dev
@@ -70,6 +70,7 @@ sudo apt install -y \
     libhiredis-dev \
     libyaml-cpp-dev \
     ragel
+```
 
 ## 支持命令
 <details> <summary><b>点击展开完整命令列表</b></summary>
@@ -160,11 +161,13 @@ PONG
 # 性能测试
 
 ## 命令
+```bash
     # 基础性能测试
     redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -t set,get -c 100 -n 100000
 
     # 管道模式测试
     redis-benchmark -h 127.0.0.1 -p 6666 -a client123 -t set,get -P 32 -c 100 -n 1000000 -q
+```
 # 结果
 ### Pipe
 ```bash              
