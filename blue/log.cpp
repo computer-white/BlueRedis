@@ -49,7 +49,6 @@ namespace blue
     }
     LogEventWrap::~LogEventWrap()
     {
-        // 把LogEvent自己写进去
         m_event_ptr->getLoggerptr()
             ->Log(m_event_ptr->getLevel(),
                   m_event_ptr);
@@ -72,19 +71,19 @@ namespace blue
         }
     };
 
-    // lever
-    class LeverFormatterItem : public LogFormatter::FormatterItem
+    // level
+    class LevelFormatterItem : public LogFormatter::FormatterItem
     {
     public:
-        LeverFormatterItem(const std::string &str = "") {}
-        ~LeverFormatterItem() = default;
+        LevelFormatterItem(const std::string &str = "") {}
+        ~LevelFormatterItem() = default;
         void format(std::ostream &os, std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event) override
         {
             os << EnumTraits<Level>::Getlevelstring(level);
         }
     };
 
-    // Elapse启动后的时间
+    // Elapse系统启动后到现在的时间
     class ElapseFormatterItem : public LogFormatter::FormatterItem
     {
     public:
@@ -235,7 +234,7 @@ namespace blue
         /*
         %d{%Y-%m-%d %H:%M:%S}%T%t%T%m%n
         %m: 消息体 -
-        %p: lever -
+        %p: level -
         %r: 启动后的时间 -
         %c: 日志名称 -
         %t: 线程id -
@@ -250,15 +249,8 @@ namespace blue
 
     void Logger::addAppender(LogAppender::LogAppenderPtr Appender)
     {
-        // 选择在Appeder没有formatter时使用logger的formatter,若不选择伴随有Appender中的formatter为空的风险
-        // MutexType::lockSco lock(m_mutex);
         if (!Appender->getformatter())
         {
-            // logger的formatter一开始就创建了，\
-            那么在通过LoggerManager新建立一个root时，会加入一个新的Appender\
-            如果Appender没有设置formatter这里就可以给Appender设置formatter
-            // Appender->m_formatter = this->m_formatter;
-
             std::atomic_store_explicit(&Appender->m_formatter, this->m_formatter, std::memory_order_release);
         }
         MutexType::WritelockSco lock(m_mutex);
@@ -272,7 +264,6 @@ namespace blue
         {
             if (*it == Appender)
             {
-                // MutexType::lockSco ll(Appender->m_mutex);
                 m_Appenders.erase(it);
                 break;
             }
@@ -300,10 +291,9 @@ namespace blue
         {
             node["formatter"] = formatter->getPattern();
         }
-        // 2. 复制 appender 列表（读锁保护）
         std::list<blue::LogAppender::LogAppenderPtr> appenders_copy;
         {
-            MutexType::ReadlockSco lock(m_mutex); // 这里后序可以改为sharted_lock<>
+            MutexType::ReadlockSco lock(m_mutex);
             appenders_copy = m_Appenders;         // 复制 shared_ptr，引用计数增加
         }
         if (!appenders_copy.empty())
@@ -322,38 +312,35 @@ namespace blue
         return ss.str();
     }
 
-    void Logger::setFormatter(LogFormatter::LogFormatterPtr rhs)
+    void Logger::setFormatter(LogFormatter::LogFormatterPtr val)
     {
 
-        std::atomic_store_explicit(&m_formatter, rhs, std::memory_order_release);
-
-        // 2. 复制 appender 列表（读锁保护）
+        std::atomic_store_explicit(&m_formatter, val, std::memory_order_release);
         std::list<blue::LogAppender::LogAppenderPtr> appenders_copy;
         {
-            MutexType::ReadlockSco lock(m_mutex); // 这里后序可以改为sharted_lock<>
+            MutexType::ReadlockSco lock(m_mutex);
             appenders_copy = m_Appenders;         // 复制 shared_ptr，引用计数增加
         }
-        // 将那些没有自己的formatter的Appender设置为更改后的,他们依赖于Logger的formatter
         for (auto &it : appenders_copy)
         {
             if (!it->gatHasformatter())
             {
-                it->setformatter(rhs);
+                it->setformatter(val);
             }
         }
     }
 
-    void Logger::setFormatter(const std::string &rhs)
+    void Logger::setFormatter(const std::string &lhs)
     {
         if (m_formatter->getHasError())
         {
             MutexType::WritelockSco lock(m_mutex);
             std::cerr << " Logger::setFormatter(const std::string& ) Error, name is "
-                      << m_name << " pattern is " << rhs << std::endl;
+                      << m_name << " pattern is " << lhs << std::endl;
             return;
         }
         blue::LogFormatter::LogFormatterPtr new_formatter =
-            std::make_shared<blue::LogFormatter>(rhs);
+            std::make_shared<blue::LogFormatter>(lhs);
         setFormatter(new_formatter);
     }
 
@@ -391,36 +378,6 @@ namespace blue
         }
     }
 
-    // logger的成员方法
-    void Logger::debug(LogEvent::LogEventPtr event)
-    {
-        Log(Level::DEBUG, event);
-    }
-
-    // logger的成员方法
-    void Logger::info(LogEvent::LogEventPtr event)
-    {
-        Log(Level::INFO, event);
-    }
-
-    // logger的成员方法
-    void Logger::warn(LogEvent::LogEventPtr event)
-    {
-        Log(Level::WARN, event);
-    }
-
-    // logger的成员方法
-    void Logger::error(LogEvent::LogEventPtr event)
-    {
-        Log(Level::ERROR, event);
-    }
-
-    // logger的成员方法
-    void Logger::fatal(LogEvent::LogEventPtr event)
-    {
-        Log(Level::FATAL, event);
-    }
-
     void Logger::Debug(const std::string &content)
     {
         auto self = shared_from_this();
@@ -429,7 +386,7 @@ namespace blue
                                                                     __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
 
         logevent->getstringstream() << content;
-        debug(logevent);
+        this->Log(Level::DEBUG, logevent);
     }
 
     void Logger::Info(const std::string &content)
@@ -440,7 +397,7 @@ namespace blue
                                                                     __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
 
         logevent->getstringstream() << content;
-        info(logevent);
+        this->Log(Level::INFO, logevent);
     }
 
     void Logger::Warn(const std::string &content)
@@ -451,7 +408,7 @@ namespace blue
                                                                     __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
 
         logevent->getstringstream() << content;
-        warn(logevent);
+        this->Log(Level::WARN, logevent);
     }
 
     void Logger::Error(const std::string &content)
@@ -462,7 +419,7 @@ namespace blue
                                                                     __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
 
         logevent->getstringstream() << content;
-        error(logevent);
+        this->Log(Level::ERROR, logevent);
     }
 
     void Logger::Fatal(const std::string &content)
@@ -473,7 +430,7 @@ namespace blue
                                                                     __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
 
         logevent->getstringstream() << content;
-        fatal(logevent);
+        this->Log(Level::FATAL, logevent);
     }
 
     void LogAppender::setformatter(LogFormatter::LogFormatterPtr formatter)
@@ -519,9 +476,8 @@ namespace blue
         auto formatter = std::atomic_load_explicit(&m_formatter,
                                                    std::memory_order_acquire);
 
-        // 格式化消息（在锁外执行，减少锁持有时间）
+        // 格式化消息
         std::string formatted = formatter->format(logger_ptr, level, event);
-        // 加锁保护文件写入
         this->writeToFile(formatted);
     }
 
@@ -669,11 +625,9 @@ namespace blue
         auto formatter = std::atomic_load_explicit(&m_formatter, std::memory_order_acquire);
         if (level != blue::Level::NOKNOW)
         {
-            // Getlevelstring是没有加锁
             node["level"] = EnumTraits<blue::Level>::Getlevelstring(level);
         }
 
-        // m_formatter一定有(要么是自己的，要么是父亲的)
         node["formatter"] = hasformatter ? formatter->getPattern() : formatter->getPattern() + " (father's)";
         std::stringstream ss;
         ss << node;
@@ -709,11 +663,9 @@ namespace blue
         auto formatter = std::atomic_load_explicit(&m_formatter, std::memory_order_acquire);
         if (level != blue::Level::NOKNOW)
         {
-            // Getlevelstring是没有加锁
             node["level"] = EnumTraits<blue::Level>::Getlevelstring(level);
         }
 
-        // m_formatter一定有(要么是自己的，要么是父亲的)
         node["formatter"] = hasformatter ? formatter->getPattern() : formatter->getPattern() + " (father's)";
         std::stringstream ss;
         ss << node;
@@ -727,7 +679,7 @@ namespace blue
     /*
         %d{%Y-%m-%d %H:%M:%S}%T%t%T%m%n
         %m: 消息体 -
-        %p: lever -
+        %p: level -
         %r: 启动后的时间 -
         %c: 日志名称 -
         %t: 线程id -
@@ -846,7 +798,7 @@ namespace blue
     }
 
                 XX(m, MessageFormatterItem),   // m:文本内容
-                XX(p, LeverFormatterItem),     // p:日志级别
+                XX(p, LevelFormatterItem),     // p:日志级别
                 XX(r, ElapseFormatterItem),    // r:程序到现在启动时间(ms)
                 XX(c, LogNameFormatterItem),   // c:日志名称
                 XX(t, ThreadIdFormatterItem),  // t:线程ID
@@ -859,7 +811,7 @@ namespace blue
 #undef XX
         };
 
-        for (auto &[str, fmt, type] : vec) // c++17结构化绑定
+        for (auto &[str, fmt, type] : vec)
         {
             if (type == 0)
             {
@@ -879,18 +831,6 @@ namespace blue
                 }
             }
         }
-
-        /*
-        %m: 消息体 -
-        %p: lever -
-        %r: 启动后的时间 -
-        %c: 日志名称 -
-        %t: 线程id -
-        %n: 回车换行
-        %d: 时间
-        %f: 文件名
-        %l: 行号
-        */
     }
 
     std::string LogFormatter::format(std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event)
@@ -905,7 +845,7 @@ namespace blue
 
     LoggerManager::LoggerManager()
     {
-        m_root.reset(new Logger); // 默认name为root,并且默认有一个正确的formatter格式
+        m_root.reset(new Logger);
         auto console_appender = std::make_shared<blue::StdoutLogAppender>();
         m_root->addAppender(console_appender);
     }

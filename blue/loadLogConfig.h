@@ -144,7 +144,7 @@ namespace blue
     struct LogAppenderDefine
     {
         int type = 0;                            // type = 1(file),type = 2(std)
-        blue::Level level = blue::Level::NOKNOW; // lever
+        blue::Level level = blue::Level::NOKNOW; // level
         std::string formatter;                   // formatter
         std::string file;                        // 文件名
         std::string name;                        // 输出目的地名称
@@ -165,7 +165,7 @@ namespace blue
     struct LogDefine
     {
         std::string name;                         // log的name
-        blue::Level level = blue::Level::NOKNOW;  // lever
+        blue::Level level = blue::Level::NOKNOW;  // level
         std::string formatter;                    // formatter
         std::vector<LogAppenderDefine> appenders; // appenders
         LogDefine() = default;

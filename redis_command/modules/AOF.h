@@ -114,7 +114,7 @@ namespace blue
         /**
          * @brief 判断文件是否是旧文件并执行删除，若最后文件名可使用返回true
          * @param filename 需要判断的文件名
-         * @return true 表示可以使用
+         *  true 表示可以使用
          */
         bool cleanupOldAOFs(const std::string &filename);
 
