@@ -110,7 +110,6 @@ set(LLHTTP_SRC
 # 设置源文件变量
 set(LIB_SRC 
     blue/address.cpp
-    blue/async_logger.cpp
     blue/config.cpp
     blue/configinit.cpp
     blue/bytearray.cpp
@@ -270,23 +269,16 @@ macro(add_blue_test test_name)
     endif()
 endmacro()
 
-add_blue_test(test_new_iomanager)
 add_blue_test(test_echo)
-add_blue_test(test_new_msocket)
-add_blue_test(test_compute)
 add_blue_test(test_tcpServer)
 add_blue_test(test_httpserver)
 add_blue_test(test_httpconnection)
-add_blue_test(test_benchmark)
 add_blue_test(test_debug)
-add_blue_test(test_asynclog)
-add_blue_test(test_resp)
 add_blue_test(test_commandHandler)
 add_blue_test(test_resp_parser)
 add_blue_test(test_redis_stress)
 add_blue_test(test_sharded_redis)
 add_blue_test(test_proxy_urlrewrite)
-add_blue_test(test_redis_stress_all)
 add_blue_test(test_redis_stress_new)
 add_blue_test(test_timeout)
 add_blue_test(test_generator)
@@ -296,7 +288,6 @@ add_blue_test(test_bytearray)
 add_blue_test(test_bytearrayBuffer)
 add_blue_test(test_log_rotate)
 add_blue_test(test_config)
-add_blue_test(test_log_rotate_config)
 add_blue_test(test_redis_aof_config)
 add_blue_test(test_cluster_node)
 

@@ -40,9 +40,6 @@ namespace blue
     // 获取线程Id
     pid_t GetThreadId();
 
-    // 获取协程ID
-    uint32_t GetFiberID();
-
     // 调用堆栈信息 返回到bt size : 调用堆栈行数,skip : 选择跳过多少行
     void Backtrace(std::vector<std::string> &bt, int size, int skip = 1);
 
