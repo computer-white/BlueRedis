@@ -15,14 +15,16 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <fcntl.h>
 #include <netinet/tcp.h>
-#include "fdmanager.h"
-#include "hook.h"
-#include "io_manager.h"
-#include "log.h"
-#include "macro.h"
-#include "msocket.h"
-#include "asyncio.h"
+#include "blue/fdmanager.h"
+#include "blue/io_manager.h"
+#include "blue/log.h"
+#include "blue/macro.h"
+#include "blue/msocket.h"
+#include "blue/asyncio.h"
 
 // socket 模块
 namespace blue
@@ -215,7 +217,7 @@ namespace blue
         }
         if (connfd >= 0)
         {
-            FdManagerPtr::GetInstance()->get(connfd,true);      // 没有了hook需要我们手动来设置
+            FdManagerPtr::GetInstance()->get(connfd,true);      // 需要我们手动来设置
         }
         if (newsockfd->_init(connfd))
         {
@@ -484,7 +486,7 @@ namespace blue
         }
         if (connfd >= 0)
         {
-            FdManagerPtr::GetInstance()->get(connfd,true);      // 没有了hook需要我们手动来设置
+            FdManagerPtr::GetInstance()->get(connfd,true);      // 需要我们手动来设置
         }
         if (newsockfd->_init(connfd))
         {

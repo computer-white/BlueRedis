@@ -19,9 +19,8 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/socket.h>
-#include "fdmanager.h"
-#include "log.h"
-#include "hook.h"
+#include "blue/fdmanager.h"
+#include "blue/log.h"
 
 // 文件描述符fd管理
 namespace blue
@@ -67,13 +66,12 @@ namespace blue
 
         if (m_isSocket)
         {
-            // 直接调用系统的不要去被hook了
-            int flags = fcntl_f(m_fd, F_GETFL, 0);
+            int flags = fcntl(m_fd, F_GETFL, 0);
             // 不包含非阻塞模式
             if (!(flags & O_NONBLOCK))
             {
                 // 设置为非阻塞模式
-                fcntl_f(m_fd, F_SETFL, flags | O_NONBLOCK);
+                fcntl(m_fd, F_SETFL, flags | O_NONBLOCK);
             }
             m_SysNonBlock = true;
         }
@@ -107,20 +105,20 @@ namespace blue
         return m_sendTimeout;
     }
 
-    FdManager::FdManager()
-    {
-    }
-
     FdCxt::FdCxtPtr FdManager::get(int fd, bool auto_create)
     {
         {
             MRWmutexType::ReadlockSco rlock(m_mutex);
             auto it = m_datas.find(fd);
             if (it != m_datas.end())
+            {
                 return it->second;
+            }
             // 不存在也不需要创建新的
             if (!auto_create)
+            {
                 return nullptr;
+            }
         }
         // 不存在,并且需要创建新的
         MRWmutexType::WritelockSco wlock(m_mutex);
@@ -130,7 +128,6 @@ namespace blue
             return it->second;
         }
 
-        // FdCxt::FdCxtPtr newFdcxt = std::make_shared<FdCxt>(fd);
         FdCxt::FdCxtPtr newFdcxt(new FdCxt(fd));
     
         m_datas[fd] = newFdcxt;

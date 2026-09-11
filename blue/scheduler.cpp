@@ -15,10 +15,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "scheduler.h"
-#include "log.h"
-#include "macro.h"
-#include "hook.h"
+#include "blue/scheduler.h"
+#include "blue/log.h"
+#include "blue/macro.h"
 
 namespace blue
 {

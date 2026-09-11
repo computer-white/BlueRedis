@@ -115,7 +115,6 @@ set(LIB_SRC
     blue/bytearray.cpp
     blue/dbmanager.cpp
     blue/fdmanager.cpp
-    blue/hook.cpp
     blue/log.cpp
     blue/msocket.cpp
     blue/msocketstream.cpp

@@ -144,7 +144,7 @@ namespace blue
          * @brief FdManger构造函数
          * @return
          */
-        FdManager();
+        FdManager() = default;
 
         /**
          * @brief 获取文件描述符对应的FdCxt指针
