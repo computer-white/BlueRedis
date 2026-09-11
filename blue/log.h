@@ -242,7 +242,7 @@ namespace blue
         void _init();
 
     private:
-        std::string m_pattern; // 日志输出格式
+        std::string m_pattern;                                  // 日志输出格式
         std::vector<FormatterItem::FormatterItemPtr> m_items;
         std::atomic<bool> m_HasError = {false};
     };
@@ -299,6 +299,7 @@ namespace blue
         std::atomic<bool> m_hasformatter = false;
     };
 
+    // 输出到控制台的appender
     class StdoutLogAppender : public LogAppender
     {
     public:
@@ -512,6 +513,130 @@ namespace blue
         LogFormatter::LogFormatterPtr m_formatter;          // 输出日志格式
     };
 
+    // 日志器
+    class Logger : public std::enable_shared_from_this<Logger>
+    {
+        friend class LoggerManager;
+
+    public:
+        using LoggerPtr = std::shared_ptr<Logger>;
+        using MutexType = blue::MRWmutex;
+
+        /**
+         * @brief 输出日志
+         * @param level 日志级别
+         * @param event 日志事件
+         * @return
+         * @note 无锁实现
+         */
+        void Log(Level level, LogEvent::LogEventPtr event);
+
+        /**
+         * @brief 日志构造函数
+         * @param name 日志的名称,默认为root
+         * @return
+         * @note level级别默认为DEBUG,会在构造时设置一个标准的formatter格式
+         */
+        Logger(const std::string &name = "root");
+
+        void Debug(const std::string &content);
+        void Info(const std::string &content);
+        void Warn(const std::string &content);
+        void Error(const std::string &content);
+        void Fatal(const std::string &content);
+
+        /**
+         * @brief 将日志信息转为yamlstring
+         * @return yamlstring
+         * @note 将日志名称，日志级别，日志格式，日志输出器内容以无锁形式写入到yaml节点
+         */
+        std::string toyamlString();
+
+        /**
+         * @brief 添加日志输出目的地
+         * @param Appender 需要添加的日志输出目的地智能指针
+         * @return 内部含有写锁
+         */
+        void addAppender(LogAppender::LogAppenderPtr Appender);
+
+        /**
+         * @brief 删除日志输出目的地
+         * @param Appender 需要删除的日志输出目的地智能指针
+         * @return 内部含有写锁
+         */
+        void delAppender(LogAppender::LogAppenderPtr Appender);
+
+        /**
+         * @brief 清除所有日志输出目的地
+         * @return
+         * @note 内部含有写锁
+         */
+        void clearAppender() noexcept;
+
+        /**
+         * @brief 获取日志级别
+         * @return
+         */
+        Level getlevel() const { return m_level.load(std::memory_order_acquire); }
+
+        /**
+         * @brief 设置日志级别
+         * @param val 需要设置的日志级别
+         * @return
+         */
+        void setlevel(Level val) { m_level.store(val, std::memory_order_release); }
+
+        /**
+         * @brief 获取日志名称
+         * @return
+         */
+        const std::string getname() const { return m_name; }
+
+        /**
+         * @brief 设置日志输出格式
+         * @param rhs 日志输出格式类智能指针
+         * @return
+         * @note 无锁实现，有读锁进行对appender的复制
+         */
+        void setFormatter(LogFormatter::LogFormatterPtr rhs);
+
+        /**
+         * @brief 设置formatter格式,按照string格式字符串
+         * @param rhs 日志输出格式字符串
+         * @return
+         * @note formatter有错误不给予设置,通过调用setFormatter的无锁版本实现
+         */
+        void setFormatter(const std::string &rhs);
+
+        /**
+         * @brief 获取日志输出格式类智能指针
+         * @return 日志输出格式类智能指针
+         * @note 无锁实现
+         */
+        LogFormatter::LogFormatterPtr getFormatter() const;
+
+    private:
+        // debug日志
+        void debug(LogEvent::LogEventPtr event);
+        // info日志
+        void info(LogEvent::LogEventPtr event);
+        // warn日志
+        void warn(LogEvent::LogEventPtr event);
+        // error日志
+        void error(LogEvent::LogEventPtr event);
+        // fatal日志 
+        void fatal(LogEvent::LogEventPtr event);
+
+    private:
+        mutable MutexType m_mutex;                          // 互斥变量
+        std::string m_name;                                 // 日志名称
+        std::list<LogAppender::LogAppenderPtr> m_Appenders; // Appender列表
+        std::atomic<Level> m_level;                         // 日志级别
+        LogFormatter::LogFormatterPtr m_formatter;          // 输出日志格式
+    }; // Logger
+
+    // logger管理类,生成root(默认name = "root",具有formatter格式,\
+通过logger的Appender方法来给没有formatter的Appender设置formatter)
     class LoggerManager
     {
     public:
