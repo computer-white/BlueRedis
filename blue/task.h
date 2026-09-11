@@ -52,7 +52,7 @@ namespace blue
         /**
          * @brief 对称转移：有父协程则直接跳转，否则挂起在 noop 上
          * @param caller 当前正在挂起的协程（子协程自身）
-         * @return 下一个要恢复的协程句柄
+         *  下一个要恢复的协程句柄
          */
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> caller) const noexcept
         {

@@ -46,20 +46,20 @@ namespace newblue
             /**
              * @brief 获取任务对应的事件内容
              * @param event 事件
-             * @return 任务对应的事件内容
+             *  任务对应的事件内容
              */
             EventContext &getEventContext(Event event);
 
             /**
              * @brief 清空任务
              * @param ec 事件内容的左值引用,清空这个事件内容
-             * @return
+             * 
              */
             void resetEventContext(EventContext &ec);
 
             /**
              * @brief 删除m_events中的event,并提交event事件对应的任务
-             * @return
+             * 
              */
             void triggerContext(Event event);
 
@@ -91,7 +91,7 @@ namespace newblue
         virtual void wait_all() override; // 等待所有任务完成
         /**
          * @brief 设置IOManager指针
-         * @return OManager指针
+         *  OManager指针
          */
         static IOManager *GetThis();
 

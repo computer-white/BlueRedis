@@ -213,7 +213,7 @@ namespace blue
 
         /**
          * @brief 是否推送monitor
-         * @return bool(true表示推送)
+         *  bool(true表示推送)
          */
         bool isPushMonitor() const { return m_push_monitor.load(std::memory_order_acquire); }
 
@@ -250,7 +250,7 @@ namespace blue
          * @param pattern 匹配模式
          * @param count 每次返回数量
          * @param keys 输出：匹配的键列表
-         * @return true 表示扫描完成，false 表示还有更多数据
+         *  true 表示扫描完成，false 表示还有更多数据
          */
         bool scanKeys(int db, ScanCursor &cursor, const std::string &pattern,
                       int count, std::vector<std::string> &keys);
@@ -340,13 +340,13 @@ namespace blue
 
         /**
          * @brief 获取当前连接数量
-         * @return 当前连接数量
+         *  当前连接数量
          */
         uint32_t getConnection() const noexcept { return m_tcpserver->getConnection(); }
 
         /**
          * @brief 获取当前拒绝连接数量
-         * @return 当前连接数量
+         *  当前连接数量
          */
         uint32_t getRejectConnection() const noexcept { return m_tcpserver->getRejectConnection(); }
 

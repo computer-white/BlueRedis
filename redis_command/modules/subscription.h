@@ -66,7 +66,7 @@ namespace blue
          * @brief 发布消息到频道
          * @param channel 频道名
          * @param message 消息内容
-         * @return 收到消息的订阅者数量
+         *  收到消息的订阅者数量
          */
         int publishMessage(const std::string &channel, const std::string &message);
 

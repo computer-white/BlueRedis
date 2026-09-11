@@ -41,7 +41,7 @@ namespace newblue
     public:
         /**
          * @brief 取消定时任务
-         * @return 成功返回 true 失败 false
+         *  成功返回 true 失败 false
          */
         bool cancel();
 
@@ -60,7 +60,7 @@ namespace newblue
          * @param cb 定时回调函数
          * @param recurring 是否设为循环定时器
          * @param manager TimerManager 指针
-         * @return
+         * 
          * @note 不允许隐式转换
          */
         explicit Timer(uint64_t ms, std::coroutine_handle<> h, std::function<void()> cb, bool recurring, TimerManager *manager);
@@ -68,7 +68,7 @@ namespace newblue
         /**
          * @brief 构造函数
          * @param expire 定时器过期时间点
-         * @return
+         * 
          * @note 不允许隐式转换
          */
         explicit Timer(TimePoint expire);
@@ -85,7 +85,7 @@ namespace newblue
         /**
          * @brief 按照过期时间创建定时器
          * @param expire 定时器过期时间点
-         * @return 定时器智能指针
+         *  定时器智能指针
          */
         static std::shared_ptr<Timer> Create_by_next(TimePoint expire);
 
@@ -96,7 +96,7 @@ namespace newblue
          * @param cb 定时回调函数
          * @param recurring 是否设为循环定时器
          * @param manager TimerManager 指针
-         * @return 定时器智能指针
+         *  定时器智能指针
          */
         static std::shared_ptr<Timer> Create_by_ms(uint64_t ms, std::coroutine_handle<> h,
                                                    std::function<void()> cb, bool recurring, TimerManager *manager);
@@ -112,7 +112,7 @@ namespace newblue
     private:
         /**
          * @brief 定时器比较器
-         * @return
+         * 
          */
         struct Comparator
         {
@@ -130,7 +130,7 @@ namespace newblue
     public:
         /**
          * @brief TimerManager构造函数
-         * @return
+         * 
          */
         TimerManager();
 
@@ -147,7 +147,7 @@ namespace newblue
          * @param h 被挂起的协程,ms后恢复协程
          * @param cb 定时回调函数
          * @param recurring 是否设为循环定时器
-         * @return
+         * 
          */
         Timer::TimerPtr addTimer(uint64_t ms, std::coroutine_handle<> h, std::function<void()> cb, bool recurring = false);
 
@@ -158,32 +158,32 @@ namespace newblue
          * @param cb 定时回调函数
          * @param weak_cond 条件
          * @param recurring 是否设为循环定时器
-         * @return
+         * 
          */
         Timer::TimerPtr addConditionTimer(uint64_t ms, std::coroutine_handle<> h, std::function<void()> cb, std::weak_ptr<void> weak_cond, bool recurring = false);
 
         /**
          * @brief 获取下一次任务的执行时间
-         * @return 下一次任务的执行时间
+         *  下一次任务的执行时间
          */
         uint64_t getNextTime();
 
         /**
          * @brief 执行过期的任务
-         * @return
+         * 
          */
         void processExpired();
 
         /**
          * @brief 是否有定时器
-         * @return 有返回true 否则 false
+         *  有返回true 否则 false
          */
         bool hasTimer();
 
     protected:
         /**
          * @brief 当某一任务被 新建，重置，刷新后,时间最小,那么需要调用此函数用于唤醒epoll_wait
-         * @return
+         * 
          */
         virtual void onTimerInsertedAtFront() = 0;
 
@@ -191,7 +191,7 @@ namespace newblue
         /**
          * @brief 当系统时间被修改后需要做出调整
          * @param noe 当前时间
-         * @return 修改了返回true 否则 false
+         *  修改了返回true 否则 false
          */
         bool detectClockRollover(Timer::TimePoint now);
 
