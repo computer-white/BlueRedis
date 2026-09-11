@@ -87,10 +87,14 @@ namespace blue
                 if (n < 0)
                 {
                     if (errno == EINTR)
+                    {
                         continue;
-                    // hook帮我们hook住了，如果没有数据了最后回来了回到hook重新去读了
+                    }
+                    // 极其难发生
                     if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    {
                         continue;
+                    }
                     co_return {HttpConnection::RecvStatus::ERROR, nullptr};
                 }
                 parser->Execute(data + offset, n);
