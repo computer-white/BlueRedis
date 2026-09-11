@@ -33,12 +33,6 @@ namespace blue
         return syscall(SYS_gettid);
     }
 
-    // 协程id
-    uint32_t GetFiberID()
-    {
-        return 0;
-    }
-
     // bt : 存放调用栈内容 size : 大小 skip : 跳过的行数(默认1,跳过一行)
     void Backtrace(std::vector<std::string> &bt, int size, int skip)
     {

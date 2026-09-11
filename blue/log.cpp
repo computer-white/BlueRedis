@@ -37,10 +37,9 @@ namespace blue
 
     LogEvent::LogEvent(std::shared_ptr<Logger> logger_ptr, Level level,
                        const char *file, uint64_t time, uint32_t line,
-                       uint32_t elapse, uint32_t threadId, uint32_t fiberId,
-                       const std::string &name)
+                       uint32_t elapse, uint32_t threadId, const std::string &name)
         : m_file(file), m_time(time), m_lines(line), m_elapse(elapse),
-          m_threadID(threadId), m_fiberID(fiberId), m_level(level), m_logger_ptr(logger_ptr),
+          m_threadID(threadId), m_level(level), m_logger_ptr(logger_ptr),
           m_threadname(name)
     {
     }
@@ -59,25 +58,6 @@ namespace blue
     std::stringstream &LogEventWrap::getstringstream()
     {
         return m_event_ptr->getstringstream();
-    }
-
-    void LogEvent::format(const char *fmt, ...)
-    {
-        va_list al;
-        va_start(al, fmt);
-        format(fmt, al);
-        va_end(al);
-    }
-
-    void LogEvent::format(const char *fmt, va_list al)
-    {
-        char *buf = nullptr;
-        int len = vasprintf(&buf, fmt, al);
-        if (len != -1)
-        {
-            m_stringstream << std::string(buf, len);
-            free(buf);
-        }
     }
 
     // 消息体
@@ -149,18 +129,6 @@ namespace blue
         void format(std::ostream &os, std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event) override
         {
             os << event->getThreadName();
-        }
-    };
-
-    // 协程id
-    class FiberFormatterItem : public LogFormatter::FormatterItem
-    {
-    public:
-        FiberFormatterItem(const std::string &str = "") {}
-        ~FiberFormatterItem() = default;
-        void format(std::ostream &os, std::shared_ptr<Logger> logger_ptr, Level level, LogEvent::LogEventPtr event) override
-        {
-            os << event->getFiberId();
         }
     };
 
@@ -276,8 +244,8 @@ namespace blue
         %f: 文件名
         %l: 行号
         */
-        // 设置解析格式 : 日期(%d)，线程名称(%N)，线程ID(%t)，协程ID(%F)，日志级别(%p)，日志名称(%c)，文件名(%f)，行号(%l)，文本内容(%m)，换行符(%n)
-        m_formatter.reset(new LogFormatter("%d{%Y-%m-%d %H:%M:%S}%T%t%T%N%T%F%T[%p]%T[%c]%T%f:%l%T%m%n")); // 调用LogFormatter构造函数，并调用init()
+        // 设置解析格式 : 日期(%d)，线程名称(%N)，线程ID(%t)，日志级别(%p)，日志名称(%c)，文件名(%f)，行号(%l)，文本内容(%m)，换行符(%n)
+        m_formatter.reset(new LogFormatter("%d{%Y-%m-%d %H:%M:%S}%T%t%T%N%T[%p]%T[%c]%T%f:%l%T%m%n")); // 调用LogFormatter构造函数，并调用init()
     }
 
     void Logger::addAppender(LogAppender::LogAppenderPtr Appender)
@@ -399,7 +367,6 @@ namespace blue
     void Logger::Log(Level level, LogEvent::LogEventPtr event)
     {
         auto curr_level = m_level.load(std::memory_order_acquire);
-        // 2. 复制 appender 列表（读锁保护）
         std::list<blue::LogAppender::LogAppenderPtr> appenders_copy;
         {
             MutexType::ReadlockSco lock(m_mutex);
@@ -415,15 +382,10 @@ namespace blue
                     it->log(self, level, event);
                 }
             }
-            else if (m_root && this != m_root.get())
-            {
-                // 如果这个logger没有自己的Appender,那么调用root的Log,也就是调用root的Appender
-                m_root->Log(level, event);
-            }
             else
             {
                 MutexType::WritelockSco lock(m_mutex);
-                std::cerr << " No appender configured for root logger! " << __FILE__
+                std::cerr << " No appender configured for this logger! " << __FILE__
                           << " " << __LINE__ << std::endl;
             }
         }
@@ -457,6 +419,61 @@ namespace blue
     void Logger::fatal(LogEvent::LogEventPtr event)
     {
         Log(Level::FATAL, event);
+    }
+
+    void Logger::Debug(const std::string &content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::DEBUG,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+
+        logevent->getstringstream() << content;
+        debug(logevent);
+    }
+
+    void Logger::Info(const std::string &content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::INFO,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+
+        logevent->getstringstream() << content;
+        info(logevent);
+    }
+
+    void Logger::Warn(const std::string &content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::WARN,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+
+        logevent->getstringstream() << content;
+        warn(logevent);
+    }
+
+    void Logger::Error(const std::string &content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::ERROR,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+
+        logevent->getstringstream() << content;
+        error(logevent);
+    }
+
+    void Logger::Fatal(const std::string &content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::FATAL,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+
+        logevent->getstringstream() << content;
+        fatal(logevent);
     }
 
     void LogAppender::setformatter(LogFormatter::LogFormatterPtr formatter)
@@ -613,7 +630,7 @@ namespace blue
 
     std::string FileoutLogAppender::getFilename(size_t idx) const
     {
-        static const char* perfix = "/var/log/blueRedis/logs_dir/";
+        static const char *perfix = "/var/log/blueRedis/logs_dir/";
         if (idx == 1)
         {
             return perfix + logSystemConfig::g_logRotateDefine_config_ptr->getValue().rotate_filename;
@@ -838,10 +855,9 @@ namespace blue
                 XX(f, FileNameFormatterItem),  // f:文件名
                 XX(l, LinesFormatterItem),     // l:行号
                 XX(T, TapFormatterItem),       // T:Tap键
-                XX(F, FiberFormatterItem),     // F:协程ID
                 XX(N, ThreadNameFormatterItem) // N:线程名称
 #undef XX
-            };
+        };
 
         for (auto &[str, fmt, type] : vec) // c++17结构化绑定
         {
@@ -862,8 +878,6 @@ namespace blue
                     m_items.push_back(it->second(fmt));
                 }
             }
-
-            // std::cerr << "(" << str << ") - (" << fmt << ") - (" << type << ")" << std::endl;
         }
 
         /*
@@ -886,21 +900,14 @@ namespace blue
         {
             it->format(ss, logger_ptr, level, event);
         }
-        // std::cerr << m_items.size() << std::endl;
         return ss.str();
     }
 
     LoggerManager::LoggerManager()
     {
-
         m_root.reset(new Logger); // 默认name为root,并且默认有一个正确的formatter格式
         auto console_appender = std::make_shared<blue::StdoutLogAppender>();
-        // addAppener已经加了锁
         m_root->addAppender(console_appender);
-        // 把创建的root放入m_logger
-        MutexType::WritelockSco lock(m_mutex);
-        m_logger[m_root->getname()] = m_root;
-        init();
     }
 
     Logger::LoggerPtr LoggerManager::getLogger(const std::string &name)
@@ -913,20 +920,17 @@ namespace blue
                 return it->second;
             }
         }
-        // 没有找到name对应的Logger,我们创建一个新的,然后让他输出到跟LoggerManager::m_rootr一样,直到它设置了他自己的Appender
-        Logger::LoggerPtr new_logger = std::make_shared<blue::Logger>(name);
+        MutexType::WritelockSco lock(m_mutex);
+        auto it = m_logger.find(name);
+        if (it != m_logger.end())
         {
-            MutexType::WritelockSco lock(m_mutex);
-            auto it = m_logger.find(name);
-            if (it != m_logger.end())
-            {
-                return it->second;
-            }
-            new_logger->m_root = m_root;
-            // 添加新的new_logger进入m_logger
-            m_logger[name] = new_logger;
-            return new_logger;
+            return it->second;
         }
+        Logger::LoggerPtr new_logger = std::make_shared<blue::Logger>(name);
+        auto new_appender = std::make_shared<StdoutLogAppender>();
+        new_logger->addAppender(new_appender);
+        m_logger[name] = new_logger;
+        return new_logger;
     }
 
     std::string LoggerManager::toyamlString()
@@ -941,7 +945,4 @@ namespace blue
         ss << node;
         return ss.str();
     }
-
-    void LoggerManager::init() {}
-
 }

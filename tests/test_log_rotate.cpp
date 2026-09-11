@@ -6,7 +6,13 @@
 #include <iostream>
 #include "blue/log.h"
 
-int main()
+void test()
+{
+    auto logger = blue::LoggerMgr::GetInstance()->getLogger("blue");
+    logger->Info("hello Blue");
+}
+
+void test_rotate()
 {
     auto g_logger = std::make_shared<blue::Logger>();
     auto appender = std::make_shared<blue::FileoutLogAppender>("blue.log");
@@ -17,5 +23,10 @@ int main()
         BLUE_LOG_INFO(g_logger) << "hello blue, this is a test file rotate";
     }
     std::cout << g_logger->toyamlString() << std::endl;
+}
+
+int main()
+{
+    test();
     return 0;
 }
