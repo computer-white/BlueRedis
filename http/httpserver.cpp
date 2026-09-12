@@ -137,11 +137,13 @@ namespace blue
                 // 若双方有一个是长连接就长连接
                 // 错误由recvRequest处理
                 auto [recvstatus, requestPtr] = co_await session->recvRequest();
+
                 if (recvstatus == http::HttpSession::RecvStatus::ERROR ||
                     recvstatus == http::HttpSession::RecvStatus::CLOSE)
                 {
                     break;
                 }
+
                 auto responsePtr = std::make_shared<HttpResponse>(requestPtr->getVersion(), (requestPtr->isKeepAlive() || temkeepAlive));
                 temkeepAlive = (requestPtr->isKeepAlive() || temkeepAlive);
                 BLUE_LOG_INFO(g_logger) << "requestPtrKeepAlive: " << requestPtr->isKeepAlive() << " m_keepAlive: " << m_keepAlive;
@@ -160,6 +162,7 @@ namespace blue
                     break;
                 }
 
+                // 文件
                 if (path == "/proxy.pac")
                 {
                     // FindProxyForURL 浏览器每次请求调用
@@ -208,9 +211,6 @@ namespace blue
                     }
                     co_await _forwardRequest(requestPtr, responsePtr, targeturl, false);
                 }
-
-                // ===== 正向代理 =====
-                // 正向代理：Host 不是 localhost，path 就是目标路径
                 else if (!host.empty() &&
                          host.find("localhost") == std::string::npos &&
                          host.find("127.0.0.1") == std::string::npos)
@@ -248,8 +248,6 @@ namespace blue
                     }
                     co_await _forwardRequest(requestPtr, responsePtr, targeturl, true);
                 }
-
-                // ===== 反向代理（路径前缀模式）=====
                 else if (path.find("/blue/") == 0)
                 {
                     size_t scheme_pos = path.find("http://");
@@ -320,9 +318,11 @@ namespace blue
                                         << " " << responsePtr->getBody().size() << "B "
                                         << requestPtr->getHeader("User-Agent");
             } while (temkeepAlive);
+
+            // 关闭连接
             session->close();
             TcpServer<T>::subConnection();
-            // 如果正在关闭且没有活跃连接，停止服务器
+
             if (m_shutdown.load(std::memory_order_acquire) && TcpServer<T>::getConnection() == 0)
             {
                 bool end = co_await TcpServer<T>::stop();
