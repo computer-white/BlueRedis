@@ -64,7 +64,6 @@ blue::Task<void> test_baidu()
 int main()
 {
     blue::IOManager iom(2);
-    iom.schedule(test_stream());
-    iom.schedule(test_baidu());
+    iom.scheduleMul(-1, test_stream(), test_baidu());
     iom.wait_all();
 }

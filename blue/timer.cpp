@@ -282,7 +282,7 @@ namespace blue
             }
 
             // 调度执行
-            auto *scheduler = Scheduler::GetThisUnsafe();
+            auto *scheduler = Scheduler::GetThis();
             if (scheduler)
             {
                 if (cb)
