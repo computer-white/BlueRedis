@@ -616,8 +616,8 @@ namespace blue
                     auto config_var = std::dynamic_pointer_cast<ConfigVar<T>>(it->second);
                     if (config_var)
                     {
-                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT()) << "Lookup name is ["
-                                                               << name << "] exists";
+                        // BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT()) << "Lookup name is ["
+                        //                                        << name << "] exists";
                         return config_var;
                     }
                     // 如果转化失败，说明类型不匹配，返回nullptr
@@ -642,8 +642,8 @@ namespace blue
                     auto config_var = std::dynamic_pointer_cast<ConfigVar<T>>(it->second);
                     if (config_var)
                     {
-                        BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT()) << "Lookup name is ["
-                                                               << name << "] exists";
+                        // BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT()) << "Lookup name is ["
+                        //                                        << name << "] exists";
                         return config_var;
                     }
                     // 如果转化失败，说明类型不匹配，返回nullptr

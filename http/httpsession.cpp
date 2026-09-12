@@ -41,7 +41,6 @@ namespace blue
                 m_isFinish = true;
                 return 0; });
             parser->Init();
-            // 无脑vector 管理data
             std::vector<char> vec_data(s_http_request_buffer_size.load(std::memory_order_acquire));
             auto data = vec_data.data();
             size_t offset = 0;
@@ -82,7 +81,9 @@ namespace blue
                         // CONNECT 请求已解析完成，返回 OK
                         co_return {HttpSession::RecvStatus::OK, parser->getData()};
                     }
-                    BLUE_LOG_ERROR(g_logger) << "http request 格式错误";
+                    BLUE_LOG_ERROR(g_logger) << "error: " << parser->getErrorName() 
+                                             << "error_pos: " << parser->getErrorPos()
+                                             << "error_reason: " << parser->getErrorReason();
                     co_return {HttpSession::RecvStatus::ERROR, nullptr};
                 }
                 if (m_isFinish)
@@ -96,7 +97,6 @@ namespace blue
                     s_http_request_buffer_size.store(requestbuffersize * 2, std::memory_order_release); // 热更新
                     requestbuffersize = s_http_request_buffer_size.load(std::memory_order_acquire);
 
-                    // 无脑vector 管理data
                     vec_data.resize(requestbuffersize);
                     data = vec_data.data();
                 }

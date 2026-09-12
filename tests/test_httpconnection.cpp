@@ -11,7 +11,7 @@
 
 static blue::Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();
 
-blue::Task<void> test()
+blue::Task<void> test_stream()
 {
     auto address = blue::Address::LookupAnyIpAddress("httpbin.org");
     if (!address)
@@ -47,22 +47,24 @@ blue::Task<void> test()
     }
     BLUE_LOG_INFO(g_logger) << "response : \n" << response->toString();
     BLUE_LOG_INFO(g_logger) << "response body size : " << response->getBody().size();
+}
 
-    // BLUE_LOG_INFO(g_logger) << "===============================================";
-    // auto retGet =  co_await blue::http::HttpConnection::DoGet("http://www.baidu.com",300);
-    // BLUE_LOG_INFO(g_logger) << "result : " << retGet->result
-    //                         << " error : " << retGet->error
-    //                         << " response : " << retGet->response->toString();
+blue::Task<void> test_baidu()
+{
+    BLUE_LOG_INFO(g_logger) << "===============================================";
+    auto retGet = co_await blue::http::HttpConnection::DoGet("http://www.baidu.com",300);
+    BLUE_LOG_INFO(g_logger) << "result : " << retGet->result
+                            << " reason : " << retGet->reason
+                            << " response : " << retGet->response->toString();
     
-    // BLUE_LOG_INFO(g_logger) << "===============================================";
-
-
+    BLUE_LOG_INFO(g_logger) << "===============================================";
 }
 
 
 int main()
 {
     blue::IOManager iom(2);
-    iom.schedule(test());
+    iom.schedule(test_stream());
+    iom.schedule(test_baidu());
     iom.wait_all();
 }

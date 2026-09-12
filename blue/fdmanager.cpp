@@ -30,19 +30,10 @@ namespace blue
     FdCxt::FdCxt(int fd)
         : m_isInit(false),
           m_isSocket(false),
-          m_SysNonBlock(false),
-          m_UserNonBlock(false),
           m_isClosed(false),
-          m_revTimeout(UINT64_MAX),
-          m_sendTimeout(UINT64_MAX),
           m_fd(fd)
     {
         init();
-    }
-
-    FdCxt::~FdCxt()
-    {
-        // BLUE_LOG_INFO(g_logger) << "FdCxt destructor, fd=" << m_fd << ", this=" << this;
     }
 
     bool FdCxt::init()
@@ -63,46 +54,8 @@ namespace blue
             m_isInit = true;
             m_isSocket = S_ISSOCK(buf.st_mode);
         }
-
-        if (m_isSocket)
-        {
-            int flags = fcntl(m_fd, F_GETFL, 0);
-            // 不包含非阻塞模式
-            if (!(flags & O_NONBLOCK))
-            {
-                // 设置为非阻塞模式
-                fcntl(m_fd, F_SETFL, flags | O_NONBLOCK);
-            }
-            m_SysNonBlock = true;
-        }
-        else
-        {
-            m_SysNonBlock = false;
-        }
-        m_UserNonBlock = false;
         m_isClosed = false;
         return m_isInit;
-    }
-
-    void FdCxt::setTimeout(int type, uint64_t val)
-    {
-        if (type == SO_RCVTIMEO)
-        {
-            m_revTimeout = val;
-        }
-        else
-        {
-            m_sendTimeout = val;
-        }
-    }
-
-    uint64_t FdCxt::getTimeout(int type)
-    {
-        if (type == SO_RCVTIMEO)
-        {
-            return m_revTimeout;
-        }
-        return m_sendTimeout;
     }
 
     FdCxt::FdCxtPtr FdManager::get(int fd, bool auto_create)
@@ -140,7 +93,6 @@ namespace blue
         auto it = m_datas.find(fd);
         if (it == m_datas.end())
         {
-            BLUE_LOG_INFO(g_logger) << "需要删除的文件fd不存在";
             return;
         }
         it->second->setClosed(true);

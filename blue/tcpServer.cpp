@@ -29,7 +29,7 @@ namespace blue
                                        (uint64_t)(60 * 1000 * 2), "tcp server read timeout");
 
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
-    
+
     template <typename T>
     TcpServer<T>::TcpServer(int level, int option_name, T option, IOManager *manager, IOManager *acceptmanager)
         : m_worker(manager),
@@ -46,10 +46,10 @@ namespace blue
     TcpServer<T>::~TcpServer()
     {
         BLUE_LOG_INFO(g_logger) << "~TcpServer";
-        m_isStop.store(true,std::memory_order_release);
+        m_isStop.store(true, std::memory_order_release);
         if (m_socks.empty())
         {
-            BLUE_LOG_INFO(g_logger) << "m_socks is empty";
+            return;
         }
         for (auto &sock : m_socks)
         {
@@ -82,12 +82,9 @@ namespace blue
                 fails.push_back(add);
                 continue;
             }
-            if (m_level != -1 && m_option_name != -1 
-                && m_option_name != SO_REUSEADDR 
-                && m_option_name != SO_REUSEPORT 
-                && m_option_name != (SO_REUSEADDR | SO_REUSEPORT))
+            if (m_level != -1 && m_option_name != -1 && m_option_name != SO_REUSEADDR && m_option_name != SO_REUSEPORT && m_option_name != (SO_REUSEADDR | SO_REUSEPORT))
             {
-                sock->setOption(m_level,m_option_name,m_option);
+                sock->setOption(m_level, m_option_name, m_option);
             }
             if (!sock->listen())
             {
@@ -122,17 +119,17 @@ namespace blue
             // 连接限制
             if (m_connections.load(std::memory_order_acquire) >= getMaxClientCount())
             {
-                BLUE_LOG_WARN(g_logger) << "Max clients reached: " << m_connections.load(std::memory_order_acquire) 
-                                    << "/" << getMaxClientCount();
+                BLUE_LOG_WARN(g_logger) << "Max clients reached: " << m_connections.load(std::memory_order_acquire)
+                                        << "/" << getMaxClientCount();
                 m_rejected_connections++;
-                co_await sleepFor(60);  // 等待一分钟再试
+                co_await sleepFor(60); // 等待一分钟再试
                 continue;
             }
             MSocket::MSocketPtr client = co_await sock->acceptT(500);
             if (client)
             {
-                BLUE_LOG_INFO(g_logger) << "accept new client, ptr=" << client.get() 
-                            << " fd=" << client->getSocketfd();
+                BLUE_LOG_INFO(g_logger) << "accept new client, ptr=" << client.get()
+                                        << " fd=" << client->getSocketfd();
                 client->setRecvTimeout(m_RecvTimeOut);
                 client->setNoBlocking();
                 m_worker->schedule(handleClient(client));
@@ -154,7 +151,7 @@ namespace blue
                     continue;
                 }
                 BLUE_LOG_ERROR(g_logger) << "tcp accept failed error : " << errno
-                                        << " strerror : " << strerror(errno);
+                                         << " strerror : " << strerror(errno);
 
                 co_await sleepFor(1);
             }
@@ -169,7 +166,7 @@ namespace blue
         {
             co_return true;
         }
-        m_isStop.store(false,std::memory_order_release);
+        m_isStop.store(false, std::memory_order_release);
         for (auto &sock : m_socks)
         {
             m_acceptworker->schedule(startAccept(sock));
@@ -184,11 +181,11 @@ namespace blue
         {
             co_return false;
         }
-        m_isStop.store(true,std::memory_order_release);
-        for (auto& sock : m_socks)
+        m_isStop.store(true, std::memory_order_release);
+        for (auto &sock : m_socks)
         {
             sock->cancelAll();
-            sock->shutdown(SHUT_RDWR);        // 关闭读写端不在接收连接
+            sock->shutdown(SHUT_RDWR); // 关闭读写端不在接收连接
             sock->close();
         }
         m_socks.clear();
@@ -200,18 +197,21 @@ namespace blue
     {
         BLUE_LOG_INFO(g_logger) << "handleClient : " << sock->toString();
         char buf[1024];
-        while (true) {
+        while (true)
+        {
             ssize_t n = co_await sock->recv(buf, sizeof(buf));
-            BLUE_LOG_INFO(g_logger) << "recv returned: n=" << n 
-                                    << " errno=" << errno 
+            BLUE_LOG_INFO(g_logger) << "recv returned: n=" << n
+                                    << " errno=" << errno
                                     << " strerror=" << strerror(errno);
-            if (n <= 0) {
+            if (n <= 0)
+            {
                 BLUE_LOG_INFO(g_logger) << "client closed, breaking";
                 break;
             }
             ssize_t sent = co_await sock->send(buf, n);
             BLUE_LOG_INFO(g_logger) << "send returned: sent=" << sent;
-            if (sent <= 0) break;
+            if (sent <= 0)
+                break;
         }
         sock->close();
         BLUE_LOG_INFO(g_logger) << "handleClient done";
