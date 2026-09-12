@@ -118,6 +118,16 @@ namespace blue
         const std::string &getName() const { return m_name; }
 
         /**
+         * @brief 提交一组协程任务
+         * @param thr 指定工作线程
+         */
+        template <typename... Args>
+        void scheduleMul(int thr, Args&&... args)
+        {
+            (schedule(std::forward<Args>(args), thr), ...);
+        }
+
+        /**
          * @brief 提交协程任务
          * @param task 一个返回Task<T>的函数,即协程
          * @param thr 指定工作线程
@@ -127,7 +137,9 @@ namespace blue
         {
             auto task_holder = std::make_shared<Task<T>>(std::move(task));
             if (!(*task_holder) || task_holder->done())
+            {
                 return;
+            }
 
             schedule([task_holder]() mutable
                      {
@@ -167,11 +179,6 @@ namespace blue
          * @brief 获取调度器指针(保证一定不为空)
          */
         static Scheduler *GetThis();
-
-        /**
-         * @brief 获取不安全调度器指针(可能没有初始化)
-         */
-        static Scheduler *GetThisUnsafe() { return t_Scheduler; }
 
         /**
          * @brief 获取当前线程索引

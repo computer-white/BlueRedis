@@ -129,7 +129,6 @@ namespace blue
                     return;
                 }
                 need_notify = queue->tasks.empty();
-                // queue->tasks.emplace(std::move(cb), thr);
                 queue->tasks.emplace_back(std::move(cb), thr);
                 queue->pending.fetch_add(1, std::memory_order_acq_rel);
             }
@@ -154,7 +153,6 @@ namespace blue
                     return;
                 }
                 need_notify = queue->tasks.empty();
-                // queue->tasks.emplace(std::move(cb), current_thread);
                 queue->tasks.emplace_back(std::move(cb), current_thread);
                 queue->pending.fetch_add(1, std::memory_order_acq_rel);
             }
@@ -174,7 +172,6 @@ namespace blue
                 return;
             }
             need_notify = m_queue.empty();
-            // m_queue.emplace(std::move(cb), -1);
             m_queue.emplace_back(std::move(cb),-1);
             m_pending.fetch_add(1, std::memory_order_acq_rel);
         }
@@ -248,7 +245,6 @@ namespace blue
                 {
                     BLUE_LOG_ERROR(g_logger) << "Unknown task error in thread " << myIndex;
                 }
-                // m_Schecv.notify_all(); // 在drainLocalQueue中通知
                 m_running.fetch_sub(1,std::memory_order_acq_rel);
                 m_Schecv.notify_all();
                 continue;
@@ -356,7 +352,7 @@ namespace blue
 
     int Scheduler::GetThreadCount()
     {
-        Scheduler *sched = GetThisUnsafe();
+        Scheduler *sched = GetThis();
         return sched ? static_cast<int>(sched->m_threadCount) : 0;
     }
 
