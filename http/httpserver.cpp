@@ -454,7 +454,7 @@ namespace blue
             else
             {
                 response->setStatus(blue::http::HttpStatus::BAD_GATEWAY);
-                response->setBody("forward failed: " + result->error);
+                response->setBody("forward failed reason: " + result->reason);
             }
             co_return;
         }
@@ -1028,16 +1028,16 @@ namespace blue
                 std::string method_str = http::HttpMethodToChars(request->getMethod());
                 int status_code = 0;
                 int body_size = 0;
-                std::string error_msg;
+                std::string reason_msg;
 
                 if (result->response)
                 {
                     status_code = (int)result->response->getStatus();
                     body_size = result->response->getBody().size();
                 }
-                if (!result->error.empty())
+                if (!result->reason.empty())
                 {
-                    error_msg = result->error;
+                    reason_msg = result->reason;
                 }
 
                 s_dbmanager_ptr->logRequest(m_remoteIP,
@@ -1045,7 +1045,7 @@ namespace blue
                                             targeturl, UrlPtr->getHost(),
                                             status_code, body_size,
                                             request->getHeader("User-Agent"),
-                                            duration, isForwardProxy, false, error_msg);
+                                            duration, isForwardProxy, false, reason_msg);
             }
         }
 

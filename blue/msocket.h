@@ -74,7 +74,7 @@ namespace blue
          * @param option_len 被操作选项的长度指针,例如socklen_t*
          * @return 成功返回true
          */
-        bool _getOption(int level, int option_name, void *option_val, socklen_t *option_len);
+        bool _getOption(int level, int option_name, void *option_val, socklen_t *option_len) const;
 
         /**
          * @brief  设置socket选项的私有方法
@@ -180,7 +180,7 @@ namespace blue
          * @return 成功时返回true 失败返回 false
          */
         template <typename T>
-        bool getOption(int level, int option_name, T &option)
+        bool getOption(int level, int option_name, T &option) const
         {
             unsigned int length = sizeof(T);
             return _getOption(level, option_name, &option, (socklen_t *)&length);

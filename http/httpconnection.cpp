@@ -29,16 +29,6 @@ namespace blue
     {
         static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
 
-        std::string HttpResult::toString() const
-        {
-            std::stringstream ss;
-            ss << "[HttpResult result : " << result
-               << " error : " << error
-            //    << " response : " << (response ? response->toString() : "nullptr")
-               << "]";
-            return ss.str();
-        }
-
         HttpConnection::HttpConnection(SocketStream::SocketStreamPtr stream, uint64_t time, bool owner)
             : SocketStream(stream->getSock(), owner),
               m_stream(stream),
@@ -66,7 +56,6 @@ namespace blue
                 return 0; });
             }
             parser->Init();
-            // 无脑vector 管理data
             std::vector<char> vec_data(s_http_response_buffer_size.load(std::memory_order_acquire));
             auto data = vec_data.data();
             size_t offset = 0;
@@ -105,7 +94,9 @@ namespace blue
                 }
                 if (parser->getError() != HPE_OK)
                 {
-                    BLUE_LOG_ERROR(g_logger) << "http response 格式错误";
+                    BLUE_LOG_ERROR(g_logger) << "error: " << parser->getErrorName() 
+                                             << "error_pos: " << parser->getErrorPos()
+                                             << "error_reason: " << parser->getErrorReason();
                     co_return {HttpConnection::RecvStatus::ERROR, nullptr};
                 }
 
@@ -115,7 +106,6 @@ namespace blue
                     s_http_response_buffer_size.store(responsebuffersize * 2, std::memory_order_release);
                     responsebuffersize = s_http_response_buffer_size.load(std::memory_order_acquire);
 
-                    // 无脑vector 管理data
                     vec_data.resize(responsebuffersize);
                     data = vec_data.data();
                 }
@@ -149,10 +139,9 @@ namespace blue
             auto urlptr = blue::Url::CreateUrl(url);
             if (!urlptr)
             {
-                // BLUE_LOG_INFO(g_logger) << "url failed";
                 co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_URL),
                                                     nullptr,
-                                                    "invailed get url " + url);
+                                                    "invaild get url " + url);
             }
             auto res = co_await DoGet(urlptr, timeout_ms, header, body);
             co_return res;
@@ -168,7 +157,7 @@ namespace blue
             {
                 co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_URL),
                                                     nullptr,
-                                                    "invailed post url " + url);
+                                                    "invaild post url " + url);
             }
             auto res = co_await DoPost(urlptr, timeout_ms, header, body);
             co_return res;
@@ -203,7 +192,7 @@ namespace blue
             {
                 co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_URL),
                                                     nullptr,
-                                                    "invailed request url " + url);
+                                                    "invaild request url " + url);
             }
 
             auto res = co_await DoRequest(method, urlptr, timeout_ms, header, body);
@@ -252,21 +241,26 @@ namespace blue
             {
                 co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::INVALID_HOST),
                                                     nullptr,
-                                                    "invailed requst host, unicodehost : " + url->getUnicodeHost() + "asciihost : " + url->getHost());
+                                                    "invaild requst host, unicodehost : " + url->getUnicodeHost() +
+                                                    "asciihost : " + url->getHost());
             }
             auto sock = blue::MSocket::CreateTcp(addr);
             if (!sock)
             {
                 co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::CREATE_SOCKET_ERROR),
                                                     nullptr,
-                                                    "create socket failed, addr : " + addr->toString() + " error " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
+                                                    "create socket failed, addr : " + addr->toString() +
+                                                    " error " + std::to_string(errno) + 
+                                                    " strerror : " + std::string(strerror(errno)));
             }
             bool ret = co_await sock->connect(addr);
             if (!ret)
             {
                 co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::CONNECT_FAILED),
                                                     nullptr,
-                                                    "connected failed, addr : " + addr->toString() + " error " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
+                                                    "connect failed, addr : " + addr->toString() +
+                                                    " error " + std::to_string(errno) +
+                                                    " strerror : " + std::string(strerror(errno)));
             }
 
 
@@ -285,12 +279,12 @@ namespace blue
                 {
                     co_return std::make_shared<HttpResult>((int)HttpResult::ResultStatus::SSL_INVALID_SSL,
                                     nullptr,
-                                    "SSL invalied");
+                                    "SSL invalid");
                 }
                 bool tem = co_await ssl_sock->handshake();
                 if (!tem) 
                 {
-                    BLUE_LOG_ERROR(g_logger) << "SSL handshake failed for: " << url->getHost();
+                    BLUE_LOG_ERROR(g_logger) << "SSL handshake failed for: " << url->getUnicodeHost();
                     unsigned long e = ERR_get_error();
                     char buf[256];
                     ERR_error_string_n(e, buf, sizeof(buf));
@@ -319,7 +313,8 @@ namespace blue
             {
                 co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::SEND_SOCKET_ERROR),
                                                     nullptr,
-                                                    "send socket, errno : " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
+                                                    "send socket, errno : " + std::to_string(errno) +
+                                                    " strerror : " + std::string(strerror(errno)));
             }
             uint64_t nowtimems = blue::GetCurrentMs();
             auto [status, response] = co_await connect->recvResponse();
@@ -330,11 +325,13 @@ namespace blue
                 {
                     co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::TIMEOUT),
                                                         nullptr,
-                                                        "recvresponse timeout, addr : " + addr->toString() + " timeout_ms : " + std::to_string(timeout_ms));
+                                                        "recvresponse timeout, addr : " + addr->toString() +
+                                                        " timeout_ms : " + std::to_string(timeout_ms));
                 }
                 co_return std::make_shared<HttpResult>((int)(status),
                                                     nullptr,
-                                                    "recvresponse error, errno : " + std::to_string(errno) + " strerror : " + std::string(strerror(errno)));
+                                                    "recvresponse error, errno : " + std::to_string(errno) +
+                                                    " strerror : " + std::string(strerror(errno)));
             }
             co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::OK), response, "ok");
         }
@@ -602,7 +599,7 @@ namespace blue
             // BLUE_LOG_INFO(g_logger) << "ReleasePtr: isConnected=" << conn->isConnected()
             //                         << " createTime+alive=" << (conn->m_createTime + pool->m_maxAliveTime <= blue::GetCurrentMs())
             //                         << " requestSize=" << conn->m_requestSize << " maxRequest=" << pool->m_maxRequest;
-            BLUE_LOG_WARN(g_logger) << "ReleasePtr 开始";
+            BLUE_LOG_WARN(g_logger) << " ReleasePtr begin! ";
             conn->m_requestSize++;
             conn->m_isBusy.store(false, std::memory_order_release);
             if (!conn->isConnected() || conn->m_createTime + pool->m_maxAliveTime <= blue::GetCurrentMs() || conn->m_requestSize >= pool->m_maxRequest)
@@ -619,11 +616,6 @@ namespace blue
                 // 循环读取并丢弃所有残留数据
                 constexpr int kBUfferSize = 4096 * 2;
                 auto buf = std::make_unique<char[]>(kBUfferSize);
-                // auto res = co_await Recv(fd, buf.get(), kBUfferSize, 0);
-                // while (res > 0)
-                // {
-                //     res = co_await Recv(fd, buf.get(), kBUfferSize, 0);
-                // }
                 int flags = fcntl(fd, F_GETFL, 0);
                 fcntl(fd, F_SETFL, flags | O_NONBLOCK);
                 while (::recv(fd, buf.get(), sizeof(buf), 0) > 0) {}

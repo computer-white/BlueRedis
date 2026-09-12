@@ -94,7 +94,7 @@ namespace blue
     }
 
     bool MSocket::_getOption(int level, int option_name,
-                             void *option_val, socklen_t *option_len)
+                             void *option_val, socklen_t *option_len) const
     {
         int ret = getsockopt(m_sockfd, level,
                              option_name, option_val, option_len);
@@ -127,6 +127,39 @@ namespace blue
         return true;
     }
 
+    bool MSocket::close()
+    {
+        // 已经关闭直接退出
+        if (!m_isConnected && m_sockfd == -1)
+        {
+            return true;
+        }
+        m_isConnected = false;
+        if (m_sockfd != -1)
+        {
+            ::close(m_sockfd);
+            FdManagerPtr::GetInstance()->del(m_sockfd);
+            m_sockfd = -1;
+            return true;
+        }
+        return false;
+    }
+
+    bool MSocket::shutdown(int how)
+    {
+        if (isValid())
+        {
+            int ret = ::shutdown(m_sockfd,how);
+            return ret == 0;
+        }
+        return false;
+    }
+
+    bool MSocket::isValid() const
+    {
+        return m_sockfd != -1;
+    }
+
     bool MSocket::setNoBlocking()
     {
         if (isValid())
@@ -157,10 +190,11 @@ namespace blue
 
     int64_t MSocket::getSendTimeout() const
     {
-        blue::FdCxt::FdCxtPtr cxt = FdManagerPtr::GetInstance()->get(m_sockfd);
-        if (cxt)
+        struct timeval tv;
+        bool res = getOption(SOL_SOCKET, SO_SNDTIMEO, tv);
+        if (res)
         {
-            return cxt->getTimeout(SO_SNDTIMEO);
+            return tv.tv_sec * 1000 + tv.tv_usec / 1000;
         }
         return -1;
     }
@@ -168,8 +202,8 @@ namespace blue
     void MSocket::setSendTimeout(int64_t val)
     {
         struct timeval tv;
-        tv.tv_sec = val / 1000u;
-        tv.tv_usec = (val % 1000u) * 1000u;
+        tv.tv_sec = val / 1000;
+        tv.tv_usec = (val % 1000) * 1000;
         bool res = setOption(SOL_SOCKET, SO_SNDTIMEO, tv);
         if (BLUE_LIKELY(!res))
         {
@@ -180,10 +214,11 @@ namespace blue
 
     int64_t MSocket::getRecvTimeout() const
     {
-        blue::FdCxt::FdCxtPtr cxt = FdManagerPtr::GetInstance()->get(m_sockfd);
-        if (cxt)
+        struct timeval tv;
+        bool res = getOption(SOL_SOCKET, SO_RCVTIMEO, tv);
+        if (res)
         {
-            return cxt->getTimeout(SO_RCVTIMEO);
+            return tv.tv_sec * 1000 + tv.tv_usec / 1000;
         }
         return -1;
     }
@@ -191,8 +226,8 @@ namespace blue
     void MSocket::setRecvTimeout(int64_t val)
     {
         struct timeval tv;
-        tv.tv_sec = val / 1000u;
-        tv.tv_usec = (val % 1000u) * 1000u;
+        tv.tv_sec = val / 1000;
+        tv.tv_usec = (val % 1000) * 1000;
         bool res = setOption(SOL_SOCKET, SO_RCVTIMEO, tv);
         if (BLUE_LIKELY(!res))
         {
@@ -321,38 +356,6 @@ namespace blue
         getRemoteAddress();
         getLocalAddress();
         co_return true;
-    }
-
-    bool MSocket::close()
-    {
-        // 已经关闭直接退出
-        if (!m_isConnected && m_sockfd == -1)
-        {
-            return true;
-        }
-        m_isConnected = false;
-        if (m_sockfd != -1)
-        {
-            ::close(m_sockfd);
-            m_sockfd = -1;
-            return true;
-        }
-        return false;
-    }
-
-    bool MSocket::shutdown(int how)
-    {
-        if (isValid())
-        {
-            int ret = ::shutdown(m_sockfd,how);
-            return ret == 0;
-        }
-        return false;
-    }
-
-    bool MSocket::isValid() const
-    {
-        return m_sockfd != -1;
     }
 
     Task<ssize_t> MSocket::send(const iovec *buf, size_t len, int flags)
