@@ -57,11 +57,11 @@ namespace blue
             co_return -1;
         }
         std::vector<iovec> vec;
-        data->getWriteBuffers(vec,len);
+        // 获取可读缓冲区
+        data->getReadBuffers(vec,len);
         ssize_t ret = co_await m_sock->recv(&vec[0],vec.size());
         if (ret > 0)
         {
-            data->setSize(data->getSize() + ret);
             data->setPosition(data->getPosition() + ret);
         }
         co_return ret;
@@ -84,11 +84,12 @@ namespace blue
             co_return -1;
         }
         std::vector<iovec> vec;
-        data->getReadBuffers(vec,len);
+        // 获取可写缓冲区
+        data->getWriteBuffers(vec,len);
         ssize_t ret = co_await m_sock->send(&vec[0],vec.size());
         if (ret > 0)
         {
-            // data->setSize(ret);
+            data->setSize(data->getSize() + ret);
             data->setPosition(data->getPosition() + ret);
         }
         co_return ret;
