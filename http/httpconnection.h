@@ -355,9 +355,7 @@ namespace blue
                 }
             };
             /**
-             * @brief 获取连接实例指针(shared_ptr设置了自定义释放回调函数Release)
-             * @return httpconnectionPtr
-             * @note 不推荐之间使用这个获取http connection,如必要,需要保证返回出去的连接指针在连接池对象释放之前释放.
+             * @brief 获取连接实例指针(unique_ptr设置了自定义释放回调函数Release)
              */
             Task<std::unique_ptr<HttpConnection, HttpConnectionPool::Deleter>> getConnnection();
 
@@ -379,7 +377,7 @@ namespace blue
             uint32_t m_maxRequest;              // 最大支持的连接数(池中的每一个连接对象可以被使用多少次)
             uint16_t m_port;                    // 目标端口
             std::list<HttpConnection *> m_pool; // 连接池
-            std::atomic<int32_t> m_total = {0}; // 共有多少连接(使用有符号,避免更新时出现无符号下溢)
+            std::atomic<int32_t> m_total{0};    // 共有多少连接(使用有符号,避免更新时出现无符号下溢)
         };
     }
 }
