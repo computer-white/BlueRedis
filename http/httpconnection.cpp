@@ -379,7 +379,8 @@ namespace blue
             return m_pool.size();
         }
 
-        Task<HttpConnection::HttpConnectionPtr> HttpConnectionPool::getConnnection()
+        Task<std::unique_ptr<HttpConnection, HttpConnectionPool::Deleter>> 
+        HttpConnectionPool::getConnnection()
         {
             uint64_t nowms = blue::GetCurrentMsbyc();
             std::vector<HttpConnection *> invalid_conn;
@@ -473,10 +474,8 @@ namespace blue
                 }
                 m_total.fetch_add(1, std::memory_order_acq_rel);
             }
-            // 捕获this，需要保证返回出去的ptr的释放在this之前,这里我没有使用enable_shared_from_this.
-            // 因为http getConnection不会在外部被调用,后序看是否需要加强这块
-            co_return HttpConnection::HttpConnectionPtr(ptr, [self = this](HttpConnection *p)
-                                                        { ReleasePtr(p, self); });
+            // 改为使用unique_ptr
+            co_return std::unique_ptr<HttpConnection,Deleter>(ptr,HttpConnectionPool::Deleter{this});
         }
 
         Task<std::shared_ptr<HttpResult>> HttpConnectionPool::doGet(std::string url,
@@ -640,32 +639,29 @@ namespace blue
             co_return std::make_shared<HttpResult>((int)(HttpResult::ResultStatus::OK), response, "ok");
         }
 
-        void HttpConnectionPool::ReleasePtr(HttpConnection *conn, HttpConnectionPool *pool)
+        void HttpConnectionPool::ReleasePtr(HttpConnection *conn)
         {
-            // BLUE_LOG_INFO(g_logger) << "ReleasePtr: isConnected=" << conn->isConnected()
-            //                         << " createTime+alive=" << (conn->m_createTime + pool->m_maxAliveTime <= blue::GetCurrentMsbyc())
-            //                         << " requestSize=" << conn->m_requestSize << " maxRequest=" << pool->m_maxRequest;
             BLUE_LOG_WARN(g_logger) << " ReleasePtr begin! ";
+            conn->m_requestSize++;
             if (!conn->isConnected() ||
-                conn->m_createTime + pool->m_maxAliveTime <= blue::GetCurrentMsbyc() ||
-                conn->m_requestSize >= pool->m_maxRequest)
+                conn->m_createTime + m_maxAliveTime <= blue::GetCurrentMsbyc() ||
+                conn->m_requestSize >= m_maxRequest)
             {
                 delete conn;
-                pool->m_total.fetch_sub(1, std::memory_order_acq_rel);
+                m_total.fetch_sub(1, std::memory_order_acq_rel);
                 return;
             }
-            conn->m_requestSize++;
             conn->reset();
             // 放回池中或者delete
-            MmutexType::lockSco lock(pool->m_mutex);
-            if (pool->m_pool.size() < pool->m_maxSize)
+            MmutexType::lockSco lock(m_mutex);
+            if (m_pool.size() < m_maxSize)
             {
-                pool->m_pool.push_back(conn);
+                m_pool.push_back(conn);
                 return;
             }
             lock.unlock();
             delete conn;
-            pool->m_total.fetch_sub(1, std::memory_order_acq_rel);
+            m_total.fetch_sub(1, std::memory_order_acq_rel);
         }
 
     }

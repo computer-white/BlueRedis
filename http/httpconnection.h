@@ -253,13 +253,6 @@ namespace blue
                                uint32_t maxSize = s_httpconnpool_mxsize);
 
             /**
-             * @brief 获取连接实例指针(shared_ptr设置了自定义释放回调函数Release)
-             * @return httpconnectionPtr
-             * @note 不推荐之间使用这个获取http connection,如必要,需要保证返回出去的连接指针在连接池对象释放之前释放.
-             */
-            Task<HttpConnection::HttpConnectionPtr> getConnnection();
-
-            /**
              * @brief get 请求
              * @param url 请求目标url
              * @param timeout 超时时长(ms)
@@ -352,14 +345,29 @@ namespace blue
              */
             uint32_t getTotalCounts() const { return m_total.load(std::memory_order_acquire); }
 
+        public:
+            struct Deleter
+            {
+                HttpConnectionPool *pool;
+                void operator()(HttpConnection *conn) const noexcept
+                {
+                    pool->ReleasePtr(conn);
+                }
+            };
+            /**
+             * @brief 获取连接实例指针(shared_ptr设置了自定义释放回调函数Release)
+             * @return httpconnectionPtr
+             * @note 不推荐之间使用这个获取http connection,如必要,需要保证返回出去的连接指针在连接池对象释放之前释放.
+             */
+            Task<std::unique_ptr<HttpConnection, HttpConnectionPool::Deleter>> getConnnection();
+
         private:
             /**
              * @brief 释放连接或放回到连接池
              * @param conn http connection 连接
-             * @param pool 连接池
              * @note 不使用协程
              */
-            static void ReleasePtr(HttpConnection *conn, HttpConnectionPool *pool);
+            void ReleasePtr(HttpConnection *conn);
 
         private:
             mutable MmutexType m_mutex;         // 互斥变量

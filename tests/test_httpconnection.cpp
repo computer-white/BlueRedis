@@ -65,20 +65,18 @@ blue::Task<void> test_baidu()
 blue::Task<void> test_connectionPool()
 {
     auto pool = std::make_shared<blue::http::HttpConnectionPool>("http://www.baidu.com", "", 80, 3000, 5);
-    {
-        auto ptr = co_await pool->getConnnection(); // 需要保证ptr在pool之前析构
-        auto retGet = co_await blue::http::HttpConnection::DoGet("http://www.baidu.com", 300);
-        BLUE_LOG_INFO(g_logger) << "result : " << retGet->result
-                                << " reason : " << retGet->reason
-                                << " response : " << retGet->response->toString();
-    }
+    auto ptr = co_await pool->getConnnection(); // 需要保证ptr在pool之前析构
+    auto retGet = co_await blue::http::HttpConnection::DoGet("http://www.baidu.com", 300);
+    BLUE_LOG_INFO(g_logger) << "result : " << retGet->result
+                            << " reason : " << retGet->reason
+                            << " response : " << retGet->response->toString();
     co_await blue::sleepForMs(10);
 }
 
 int main()
 {
     blue::IOManager iom(2);
-    iom.scheduleMul(-1, test_stream(), test_baidu());
-    // iom.schedule(test_connectionPool());
+    // iom.scheduleMul(-1, test_stream(), test_baidu());
+    iom.schedule(test_connectionPool());
     iom.wait_all();
 }
