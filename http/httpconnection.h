@@ -187,6 +187,7 @@ namespace blue
              * @brief 析构
              */
             ~HttpConnection();
+
             /**
              * @brief 接收服务器端响应并解析
              * @return 返回一对值(recvStatus,httpResponsePtr)
@@ -204,15 +205,24 @@ namespace blue
              * @brief 设置是否开启流式输出
              * @param button true 表示开始
              */
-            void setStreaming(bool button) { m_isStreaming = button; }
+            void setStreaming(bool button) { m_isStreaming.store(button, std::memory_order_release); }
 
         private:
-            bool m_isFinish = false;
-            bool m_isStreaming = false;
-            SocketStream::SocketStreamPtr m_stream;
-            std::atomic<bool> m_isBusy = {false};
+            /**
+             * @brief reset(在连接池的Release里面使用)
+             * @note 主要将该连接socket fd上的旧数据清空
+             */
+            void reset();
+
+        private:
+            SocketStream::SocketStreamPtr m_stream; // socket 流
+            uint64_t m_createTime;                  // 连接的创建时间点(仅构造函数)
+            // 当前连接对象被用了多少次(仅在池中使用作为连接被释放的指标
+            // 而池有锁保护并且改内容的修改发生在ReleasePtr中，不会有多线程数据竞争)
             uint64_t m_requestSize = 0;
-            uint64_t m_createTime;
+            std::atomic<bool> m_isFinish{false};    // http Response解析是否完成
+            std::atomic<bool> m_isStreaming{false}; // 是否流式响应
+            std::atomic<bool> m_isBusy{false};      // 用于连接池中获取到连接后标记为true表示正在使用
         };
 
         // 连接池最大大小
@@ -228,10 +238,10 @@ namespace blue
             /**
              * @brief httpconnection pool 构造函数
              * @param host 目标真实目标主机(实际连接的 IP)
-             * @param vhost 虚拟主机
+             * @param vhost 目标虚拟主机
              * @param port 目标端口
-             * @param aliveTime 连接最大存活时间
-             * @param maxRequest 最大请求数量
+             * @param aliveTime 连接对象最大存活时间
+             * @param maxRequest 最大支持的连接数(池中的每一个连接对象可以被使用多少次)
              * @param maxSize 连接池最大大小 具有默认大小
              */
             HttpConnectionPool(const std::string &host,
@@ -243,8 +253,9 @@ namespace blue
                                uint32_t maxSize = s_httpconnpool_mxsize);
 
             /**
-             * @brief 获取连接实例指针
+             * @brief 获取连接实例指针(shared_ptr设置了自定义释放回调函数Release)
              * @return httpconnectionPtr
+             * @note 不推荐之间使用这个获取http connection,如必要,需要保证返回出去的连接指针在连接池对象释放之前释放.
              */
             Task<HttpConnection::HttpConnectionPtr> getConnnection();
 
@@ -342,19 +353,25 @@ namespace blue
             uint32_t getTotalCounts() const { return m_total.load(std::memory_order_acquire); }
 
         private:
-            static Task<void> ReleasePtr(HttpConnection *conn, HttpConnectionPool *pool);
+            /**
+             * @brief 释放连接或放回到连接池
+             * @param conn http connection 连接
+             * @param pool 连接池
+             * @note 不使用协程
+             */
+            static void ReleasePtr(HttpConnection *conn, HttpConnectionPool *pool);
 
         private:
-            mutable MmutexType m_mutex;          // 互斥变量
-            std::string m_scheme;                // scheme
-            std::string m_host;                  // 真实目标主机(实际连接的 IP)
-            std::string m_vhost;                 // 虚拟主机
-            uint64_t m_maxAliveTime;             // 每个连接的最大存活时长
-            uint32_t m_maxSize;                  // 连接池的最大大小
-            uint32_t m_maxRequest;               // 最大支持的连接数
-            uint16_t m_port;                     // 端口
-            std::list<HttpConnection *> m_pool;  // 连接池
-            std::atomic<uint32_t> m_total = {0}; // 共有多少连接
+            mutable MmutexType m_mutex;         // 互斥变量
+            std::string m_scheme;               // scheme
+            std::string m_host;                 // 目标真实目标主机(实际连接的 IP)
+            std::string m_vhost;                // 目标虚拟主机
+            uint64_t m_maxAliveTime;            // 每个连接的最大存活时长
+            uint32_t m_maxSize;                 // 连接池的最大大小
+            uint32_t m_maxRequest;              // 最大支持的连接数(池中的每一个连接对象可以被使用多少次)
+            uint16_t m_port;                    // 目标端口
+            std::list<HttpConnection *> m_pool; // 连接池
+            std::atomic<int32_t> m_total = {0}; // 共有多少连接(使用有符号,避免更新时出现无符号下溢)
         };
     }
 }

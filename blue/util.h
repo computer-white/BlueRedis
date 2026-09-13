@@ -46,16 +46,24 @@ namespace blue
     // 显示调用堆栈信息 prefix : 支持加上string前缀使信息更明显,size : 调用堆栈行数,skip : 选择跳过多少行
     std::string BacktraceToString(int size, int skip = 2, const std::string &prefix = "");
 
-    // 获取当前时间(ms)
-    uint64_t GetCurrentMs();
-    // 获取当前时间(us)
-    uint64_t GetCurrentUs();
-    // 获取当前时间(ms)
+    // 获取当前时间(ms)，相对时间
     uint64_t GetCurrentMsbyc();
-    // 获取当前时间(us)
+
+    // 获取当前时间(us)，相对时间
     uint64_t GetCurrentUsbyc();
-    // 获取当前时间(ns)
+
+    // 获取当前时间(ns)，相对时间
     uint64_t GetCurrentNsbyc();
+
+    // 获取当前绝对时间点(ms)，system_clock
+    uint64_t GetCurrentMsbySysClock();
+
+    // 获取当前绝对时间点(us)，system_clock
+    uint64_t GetCurrentUsbySysClock();
+
+    // 获取当前绝对时间点(ns)，system_clock
+    uint64_t GetCurrentNsbySysClock();
+    
     // 获取当前北京时间
     std::string GetCurrentBeiJingTime();
 }

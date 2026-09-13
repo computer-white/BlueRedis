@@ -152,26 +152,26 @@ namespace blue
         static std::shared_ptr<MSocket> CreateUnixUdpSocket();
 
         /**
-         * @brief  获取send的超时时长
-         * @return 返回超时时长,通常是ms
+         * @brief  获取send的超时时长,在socket fd层面上的超时
+         * @return 返回超时时长(ms)
          */
         int64_t getSendTimeout() const;
 
         /**
-         * @brief  设置send的超时时长
-         * @return
+         * @brief  设置send的超时时长,在socket fd层面上的超时
+         * @param val ms
          */
         void setSendTimeout(int64_t val);
 
         /**
-         * @brief  获取recv的超时时长
-         * @return 返回超时时长,通常是ms
+         * @brief  获取recv的超时时长,在socket fd层面上的超时
+         * @return 返回超时时长(ms)
          */
         int64_t getRecvTimeout() const;
 
         /**
-         * @brief  设置recv的超时时长
-         * @return
+         * @brief  设置recv的超时时长,在socket fd层面上的超时
+         * @param val ms
          */
         void setRecvTimeout(int64_t val);
 

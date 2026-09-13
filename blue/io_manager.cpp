@@ -90,9 +90,13 @@ namespace blue
 
             // 降级处理：直接在当前线程执行
             if (cb)
+            {
                 cb();
+            }
             if (handle && !handle.done())
+            {
                 handle.resume();
+            }
         }
     }
 

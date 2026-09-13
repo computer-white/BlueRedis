@@ -29,41 +29,56 @@ blue::Task<void> test_stream()
     }
 
     auto stream = std::make_shared<blue::SocketStream>(sock);
-    auto httpconnection = std::make_shared<blue::http::HttpConnection>(stream);
+    auto httpconnection = std::make_shared<blue::http::HttpConnection>(stream, blue::GetCurrentMsbySysClock());
     auto request = std::make_shared<blue::http::HttpRequest>();
     request->setMethod(blue::http::HttpMethod::GET);
     // request->setPath("/gzip");   // 测试gzip ok
     // request->setPath("/stream-bytes/256?chunk_size=32");  // 测试chunk,返回256字节,每块32字节 ok
     // request->setPath("/stream/10");    // 测试chunk ok
-    request->setPath("/drip?numbytes=128&duration=5&delay=1");  // 测试流式处理 ok
+    request->setPath("/drip?numbytes=128&duration=5&delay=1"); // 测试流式处理 ok
     request->setHeader("Host", "httpbin.org");
     httpconnection->setStreaming(true);
     co_await httpconnection->sendRequest(request);
-    auto [status,response] = co_await httpconnection->recvResponse();
+    auto [status, response] = co_await httpconnection->recvResponse();
     if (status != blue::http::HttpConnection::RecvStatus::OK)
     {
-        BLUE_LOG_ERROR(g_logger) << "response error, request : \n" << request->toString();
+        BLUE_LOG_ERROR(g_logger) << "response error, request : \n"
+                                 << request->toString();
         co_return;
     }
-    BLUE_LOG_INFO(g_logger) << "response : \n" << response->toString();
+    BLUE_LOG_INFO(g_logger) << "response : \n"
+                            << response->toString();
     BLUE_LOG_INFO(g_logger) << "response body size : " << response->getBody().size();
 }
 
 blue::Task<void> test_baidu()
 {
     BLUE_LOG_INFO(g_logger) << "===============================================";
-    auto retGet = co_await blue::http::HttpConnection::DoGet("http://www.baidu.com",300);
+    auto retGet = co_await blue::http::HttpConnection::DoGet("http://www.baidu.com", 300);
     BLUE_LOG_INFO(g_logger) << "result : " << retGet->result
                             << " reason : " << retGet->reason
                             << " response : " << retGet->response->toString();
-    
+
     BLUE_LOG_INFO(g_logger) << "===============================================";
 }
 
+blue::Task<void> test_connectionPool()
+{
+    auto pool = std::make_shared<blue::http::HttpConnectionPool>("http://www.baidu.com", "", 80, 3000, 5);
+    {
+        auto ptr = co_await pool->getConnnection(); // 需要保证ptr在pool之前析构
+        auto retGet = co_await blue::http::HttpConnection::DoGet("http://www.baidu.com", 300);
+        BLUE_LOG_INFO(g_logger) << "result : " << retGet->result
+                                << " reason : " << retGet->reason
+                                << " response : " << retGet->response->toString();
+    }
+    co_await blue::sleepForMs(10);
+}
 
 int main()
 {
     blue::IOManager iom(2);
     iom.scheduleMul(-1, test_stream(), test_baidu());
+    // iom.schedule(test_connectionPool());
     iom.wait_all();
 }

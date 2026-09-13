@@ -15,7 +15,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "monitor.h"
+#include "redis_command/modules/monitor.h"
+#include "blue/util.h"
 
 namespace blue
 {
@@ -29,8 +30,7 @@ namespace blue
         }
 
         // 构造 MONITOR 消息格式: +时间戳 [客户端IP:端口] "命令"
-        auto now = std::chrono::system_clock::now();
-        auto ts = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+        auto ts = blue::GetCurrentUsbyc();
 
         std::string message = "+" + std::to_string(ts) +
                                 " [" + sock->getRemoteAddress()->toString() + "] \"" +

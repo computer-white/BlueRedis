@@ -69,9 +69,8 @@ namespace blue
             log_entry.push_back(*RespValue::integer(entry.id));
 
             // 时间戳微秒
-            auto ts = std::chrono::duration_cast<std::chrono::microseconds>(
-                          entry.timestamp.time_since_epoch())
-                          .count();
+            auto ts = blue::GetCurrentUsbyc();
+            
             log_entry.push_back(*RespValue::integer(ts));
 
             // 执行时间(微秒)

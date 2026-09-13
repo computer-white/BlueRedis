@@ -27,10 +27,13 @@
 namespace blue
 {
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
+
     // 进程id
     pid_t GetThreadId()
     {
-        return syscall(SYS_gettid);
+        static thread_local const pid_t tid =
+            static_cast<pid_t>(::syscall(SYS_gettid));
+        return tid;
     }
 
     // bt : 存放调用栈内容 size : 大小 skip : 跳过的行数(默认1,跳过一行)
@@ -72,37 +75,45 @@ namespace blue
         }
         return ss.str();
     }
-
-    uint64_t GetCurrentMs()
-    {
-        struct timeval v;
-        gettimeofday(&v, NULL);
-        return v.tv_sec * 1000ul + v.tv_usec / 1000ul;
-    }
-    uint64_t GetCurrentUs()
-    {
-        struct timeval v;
-        gettimeofday(&v, NULL);
-        return v.tv_sec * 1000ul * 1000ul + v.tv_usec;
-    }
     uint64_t GetCurrentMsbyc()
     {
         struct timespec tsp;
         clock_gettime(CLOCK_MONOTONIC, &tsp);
         return tsp.tv_sec * 1000ul + tsp.tv_nsec / 1000000ul;
     }
+
     uint64_t GetCurrentUsbyc()
     {
         struct timespec tsp;
         clock_gettime(CLOCK_MONOTONIC, &tsp);
-        return tsp.tv_sec * 1000ul * 1000ul + tsp.tv_nsec / 1000ul;
+        return static_cast<uint64_t>(tsp.tv_sec) * 1000ul * 1000ul + tsp.tv_nsec / 1000ul;
     }
+
     uint64_t GetCurrentNsbyc()
     {
         struct timespec tsp;
         clock_gettime(CLOCK_MONOTONIC, &tsp);
-        return tsp.tv_sec * 1000ul * 1000ul * 1000ul + tsp.tv_nsec;
+        return static_cast<uint64_t>(tsp.tv_sec) * 1000000000ull + tsp.tv_nsec;
     }
+
+    uint64_t GetCurrentMsbySysClock()
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
+    uint64_t GetCurrentUsbySysClock()
+    {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
+    uint64_t GetCurrentNsbySysClock()
+    {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
     std::string GetCurrentBeiJingTime()
     {
         auto now = std::chrono::system_clock::now();
