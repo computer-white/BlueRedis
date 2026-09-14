@@ -107,64 +107,123 @@ namespace blue
 		hints.ai_canonname = NULL;
 		hints.ai_next = NULL;
 		hints.ai_addr = NULL;
-		
-		auto Url = blue::Url::CreateUrl(host);
-		std::string bulk, service;
-		if (Url)
+
+		try
 		{
-			bulk = Url->getHost();
-			if (bulk.empty()) 
+			auto Url = blue::Url::CreateUrl(host);
+			std::string bulk, service;
+			if (Url)
 			{
-				bulk = host;  // 降级
-			}
-			service = std::to_string(Url->getPort());
-		}
-		else
-		{
-			// Url 解析失败，降级为简单处理
-			BLUE_LOG_ERROR(g_logger) << "url parser failed, host : " << host
-									 << " 降级为我们自己的处理";
-			std::string port = "80";
-			if (host.find("https://") != std::string::npos)
-			{
-				port = "443";
-			}
-
-			// 统一判断是否有http://
-			size_t addr_start = host.find("://");
-			addr_start = addr_start == std::string::npos ? 0 : addr_start + 3;
-
-			// 判断是否是 没有带有[] 的ipv6地址
-			bool isipv6nobracket = (std::count(host.begin(), host.end(), ':') >= 2) && (host.find('.') == std::string::npos);
-
-			// 解析ipv6
-			// http://[2001:db8::1]:8080/index.html
-			if (family == AF_INET6 || host[addr_start] == '[' || isipv6nobracket)
-			{
-				size_t ipv6_start_pos = host.find('[');
-				if (ipv6_start_pos != std::string::npos)
+				bulk = Url->getHost();
+				if (bulk.empty())
 				{
-					size_t ipv6_end_pos = host.find(']');
-					if (ipv6_end_pos != std::string::npos && ipv6_start_pos < ipv6_end_pos)
+					bulk = host; // 降级
+				}
+				service = std::to_string(Url->getPort());
+			}
+			else
+			{
+				// Url 解析失败，降级为简单处理
+				BLUE_LOG_ERROR(g_logger) << "url parser failed, host : " << host
+										 << " 降级为我们自己的处理";
+				std::string port = "80";
+				if (host.find("https://") != std::string::npos)
+				{
+					port = "443";
+				}
+
+				// 统一判断是否有http://
+				size_t addr_start = host.find("://");
+				addr_start = addr_start == std::string::npos ? 0 : addr_start + 3;
+
+				// 判断是否是 没有带有[] 的ipv6地址
+				bool isipv6nobracket = (std::count(host.begin(), host.end(), ':') >= 2) && (host.find('.') == std::string::npos);
+
+				// 解析ipv6
+				// http://[2001:db8::1]:8080/index.html
+				if (family == AF_INET6 || host[addr_start] == '[' || isipv6nobracket)
+				{
+					size_t ipv6_start_pos = host.find('[');
+					if (ipv6_start_pos != std::string::npos)
 					{
-						// ipv6地址
-						bulk = host.substr(ipv6_start_pos + 1, ipv6_end_pos - ipv6_start_pos - 1);
-						if (bulk.empty())
+						size_t ipv6_end_pos = host.find(']');
+						if (ipv6_end_pos != std::string::npos && ipv6_start_pos < ipv6_end_pos)
 						{
-							BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host have not ipv6address,host : " << host;
+							// ipv6地址
+							bulk = host.substr(ipv6_start_pos + 1, ipv6_end_pos - ipv6_start_pos - 1);
+							if (bulk.empty())
+							{
+								BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host have not ipv6address,host : " << host;
+								return false;
+							}
+
+							// port
+							if (ipv6_end_pos + 1 < host.size() && host[ipv6_end_pos + 1] == ':')
+							{
+								size_t port_start = ipv6_end_pos + 2;
+								size_t port_end = host.find('/', port_start);
+								// 无论port_end是多少,最后都可以得到正确的长度(一般port长度不超过6)
+								// 而port_end最后要么等于npos,要么等于正确的下标
+								// port_end >= port_start
+								service = host.substr(port_start, port_end - port_start);
+							}
+							if (service.empty())
+							{
+								service = port;
+							}
+							if (std::stoul(service) > 65535)
+							{
+								BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), port > 65535,host : " << host;
+								return false;
+							}
+						}
+						else
+						{
+							BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host error,host : " << host;
 							return false;
 						}
+					}
+					else if (isipv6nobracket)
+					{
+						bulk = host.substr(addr_start);
+						service = port;
+					}
+					else
+					{
+						BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host error,host : " << host;
+						return false;
+					}
+				}
+				// ipv4(http://192.168.1.1:8080/index.html)
+				// 或 http://www.baidu.com:8080/index.html
+				else
+				{
+					size_t addr_end = host.find(':', addr_start);
+					// 无论addr_end是多少,有效还是无效,ipv4地址或网址都可以被正确解析出来
+					// addr_end >= addr_start
+					// ipv4地址或网址
+					bulk = host.substr(addr_start, addr_end - addr_start);
+					if (bulk.empty())
+					{
+						BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host have not ipv4address,host : " << host;
+						return false;
+					}
 
+					// 这里必须区分,因为计算port_start需要对addr_end + 1,不区分可能导致size_t溢出
+					if (addr_end == std::string::npos)
+					{
+						// port默认
+						service = port;
+					}
+					else
+					{
 						// port
-						if (ipv6_end_pos + 1 < host.size() && host[ipv6_end_pos + 1] == ':')
-						{
-							size_t port_start = ipv6_end_pos + 2;
-							size_t port_end = host.find('/', port_start);
-							// 无论port_end是多少,最后都可以得到正确的长度(一般port长度不超过6)
-							// 而port_end最后要么等于npos,要么等于正确的下标
-							// port_end >= port_start
-							service = host.substr(port_start, port_end - port_start);
-						}
+						size_t port_start = addr_end + 1;
+						size_t port_end = host.find('/', port_start);
+						// 无论port_end是多少,最后都可以得到正确的长度(一般port长度不超过6)
+						// 而port_end最后要么等于npos,要么等于正确的下标
+						// port_end >= port_start
+						service = host.substr(port_start, port_end - port_start);
 						if (service.empty())
 						{
 							service = port;
@@ -175,64 +234,12 @@ namespace blue
 							return false;
 						}
 					}
-					else
-					{
-						BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host error,host : " << host;
-						return false;
-					}
-				}
-				else if (isipv6nobracket)
-				{
-					bulk = host.substr(addr_start);
-					service = port;
-				}
-				else
-				{
-					BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host error,host : " << host;
-					return false;
 				}
 			}
-			// ipv4(http://192.168.1.1:8080/index.html)
-			// 或 http://www.baidu.com:8080/index.html
-			else
-			{
-				size_t addr_end = host.find(':', addr_start);
-				// 无论addr_end是多少,有效还是无效,ipv4地址或网址都可以被正确解析出来
-				// addr_end >= addr_start
-				// ipv4地址或网址
-				bulk = host.substr(addr_start, addr_end - addr_start);
-				if (bulk.empty())
-				{
-					BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host have not ipv4address,host : " << host;
-					return false;
-				}
-
-				// 这里必须区分,因为计算port_start需要对addr_end + 1,不区分可能导致size_t溢出
-				if (addr_end == std::string::npos)
-				{
-					// port默认
-					service = port;
-				}
-				else
-				{
-					// port
-					size_t port_start = addr_end + 1;
-					size_t port_end = host.find('/', port_start);
-					// 无论port_end是多少,最后都可以得到正确的长度(一般port长度不超过6)
-					// 而port_end最后要么等于npos,要么等于正确的下标
-					// port_end >= port_start
-					service = host.substr(port_start, port_end - port_start);
-					if (service.empty())
-					{
-						service = port;
-					}
-					if (std::stoul(service) > 65535)
-					{
-						BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), port > 65535,host : " << host;
-						return false;
-					}
-				}
-			}
+		}
+		catch (...)
+		{
+			return false;
 		}
 		if (bulk.empty())
 		{
@@ -515,9 +522,9 @@ namespace blue
 	{
 		std::string ip_str;
 		char buf[INET_ADDRSTRLEN];
-        auto* sin = (struct sockaddr_in*)getAddr();
-        inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf));
-        ip_str = buf;
+		auto *sin = (struct sockaddr_in *)getAddr();
+		inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf));
+		ip_str = buf;
 		return ip_str;
 	}
 
@@ -667,9 +674,9 @@ namespace blue
 	{
 		std::string ip_str;
 		char buf[INET6_ADDRSTRLEN];
-        auto* sin6 = (struct sockaddr_in6*)getAddr();
-        inet_ntop(AF_INET6, &sin6->sin6_addr, buf, sizeof(buf));
-        ip_str = buf;
+		auto *sin6 = (struct sockaddr_in6 *)getAddr();
+		inet_ntop(AF_INET6, &sin6->sin6_addr, buf, sizeof(buf));
+		ip_str = buf;
 		return ip_str;
 	}
 
@@ -843,9 +850,9 @@ namespace blue
 	{
 		std::string ip_str;
 		char buf[INET_ADDRSTRLEN];
-        auto* sin = (struct sockaddr*)getAddr();
-    	inet_ntop(sin->sa_family, &sin->sa_data, buf, sizeof(buf));
-        ip_str = buf;
+		auto *sin = (struct sockaddr *)getAddr();
+		inet_ntop(sin->sa_family, &sin->sa_data, buf, sizeof(buf));
+		ip_str = buf;
 		return ip_str;
 	}
 	std::ostream &UnknowAddress::insert(std::ostream &os, bool show_port) const
