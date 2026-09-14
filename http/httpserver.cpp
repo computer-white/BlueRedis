@@ -27,7 +27,6 @@
 #include "proxy/tunnel.h"
 #include "proxy/url_rewriter.h"
 #include "http/httpserver.h"
-#include "http/httpserverfile.h"
 #ifdef USE_GUMBO
 #include <gumbo.h>
 #endif

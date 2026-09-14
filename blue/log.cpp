@@ -433,61 +433,6 @@ namespace blue
         this->Log(Level::FATAL, logevent);
     }
 
-    void Logger::Debug(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::DEBUG,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        debug(logevent);
-    }
-
-    void Logger::Info(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::INFO,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        info(logevent);
-    }
-
-    void Logger::Warn(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::WARN,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        warn(logevent);
-    }
-
-    void Logger::Error(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::ERROR,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        error(logevent);
-    }
-
-    void Logger::Fatal(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::FATAL,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        fatal(logevent);
-    }
-
     void LogAppender::setformatter(LogFormatter::LogFormatterPtr formatter)
     {
         auto old_formatter = std::atomic_exchange_explicit(&m_formatter, formatter, std::memory_order_acq_rel);
@@ -900,11 +845,7 @@ namespace blue
 
     LoggerManager::LoggerManager()
     {
-<<<<<<< HEAD
-        m_root.reset(new Logger);
-=======
         m_root.reset(new Logger); // 默认name为root,并且默认有一个正确的formatter格式
->>>>>>> 1d31efc (blue 修改日志模块)
         auto console_appender = std::make_shared<blue::StdoutLogAppender>();
         m_root->addAppender(console_appender);
     }
