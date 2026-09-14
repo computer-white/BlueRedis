@@ -26,10 +26,17 @@ namespace blue
     namespace http
     {
         static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
+
         HttpSession::HttpSession(SocketStream::SocketStreamPtr stream, bool owner)
             : SocketStream(stream->getSock(), owner),
               m_stream(stream)
         {
+        }
+
+        HttpSession::HttpSession(MSocket::MSocketPtr sock, bool owner)
+        : SocketStream(sock, owner)
+        {
+            m_stream = std::make_shared<SocketStream>(sock, owner);
         }
 
         Task<HttpSession::ReturnType> HttpSession::recvRequest()

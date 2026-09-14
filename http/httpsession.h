@@ -61,6 +61,11 @@ namespace blue
             HttpSession(SocketStream::SocketStreamPtr stream, bool owner = true);
 
             /**
+             * @brief 接收socket
+             */
+            HttpSession(MSocket::MSocketPtr sock, bool owner = true);
+
+            /**
              * @brief 接收客户端请求并解析
              * @return 返回一对值(recvStatus,httpRequestPtr)
              * @note recvStatus返回有 ok,error,close(客户端主动关闭连接)

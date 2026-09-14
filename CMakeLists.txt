@@ -288,6 +288,7 @@ add_blue_test(test_redis_aof_config)
 add_blue_test(httpclient)
 add_blue_test(httpserver)
 add_blue_test(blueRedis)
+add_blue_test(helloblue)
 
 # add_library(configinit_obj OBJECT blue/configinit.cpp)
 # add_executable(test_benchmark newtests/test_benchmark.cpp)
