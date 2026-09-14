@@ -26,7 +26,8 @@
 #include "proxy/rate_limiter.h"
 #include "proxy/tunnel.h"
 #include "proxy/url_rewriter.h"
-#include "httpserver.h"
+#include "http/httpserver.h"
+#include "http/httpserverfile.h"
 #ifdef USE_GUMBO
 #include <gumbo.h>
 #endif
@@ -99,14 +100,12 @@ namespace blue
             // BLUE_LOG_INFO(g_logger) << "remoteaddress : " << remoteAddress->toString() << " ip : " << m_remoteIP << " port : " << m_remotePort;
             // BLUE_LOG_INFO(g_logger) << "remoteaddress : " << localAddress->toString()  << " ip : " << m_localIp  << " port : " << m_localPort;
 
-            // ===== 检测 TLS，如果是就替换为 SSLSocket =====
             char first_byte;
             int peek_ret = co_await Recv(sock->getSocketfd(), &first_byte, 1, MSG_PEEK | MSG_DONTWAIT);
 
             std::shared_ptr<HttpSession> session;
             if (peek_ret == 1 && first_byte == 0x16)
             {
-                // HTTPS：创建 SSLSocket，握手，然后直接当 SocketStream 用
                 auto ssl_sock = std::make_shared<SSLSocket>(sock, true, true);
                 if (!ssl_sock->isValid())
                 {
@@ -142,23 +141,19 @@ namespace blue
                 {
                     break;
                 }
-                auto responsePtr = std::make_shared<HttpResponse>(requestPtr->getVersion(), (requestPtr->isKeepAlive() || temkeepAlive));
+
+                auto responsePtr = std::make_shared<HttpResponse>(requestPtr->getVersion(),
+                                                                  (requestPtr->isKeepAlive() || temkeepAlive));
                 temkeepAlive = (requestPtr->isKeepAlive() || temkeepAlive);
+
                 BLUE_LOG_INFO(g_logger) << "requestPtrKeepAlive: " << requestPtr->isKeepAlive() << " m_keepAlive: " << m_keepAlive;
+
                 std::string path = requestPtr->getPath();
                 std::string host = requestPtr->getHeader("Host");
                 BLUE_LOG_INFO(g_logger) << "path : " << path << " host : " << host;
+
                 std::string targeturl;
                 std::string target_param = requestPtr->getParam("target", "");
-
-                if (requestPtr->getMethod() == HttpMethod::CONNECT)
-                {
-                    BLUE_LOG_INFO(g_logger) << "CONNECT: " << requestPtr->getPath();
-                    co_await _handleConnect(sock, requestPtr);
-                    // 走外面减少connection并看服务是否需要停止,
-                    // 在_handleConnect里面处理过sock的关闭但是close里面有保险措施,所以不怕重复调用close
-                    break;
-                }
 
                 if (path == "/proxy.pac")
                 {
