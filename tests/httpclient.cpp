@@ -61,12 +61,12 @@ blue::Task<void> test_baidu()
 
     BLUE_LOG_INFO(g_logger) << "===============================================";
 }
-
+ 
 blue::Task<void> test_connectionPool()
 {
     auto pool = std::make_shared<blue::http::HttpConnectionPool>("http://www.baidu.com", "", 80, 3000, 5);
     auto ptr = co_await pool->getConnnection(); // 需要保证ptr在pool之前析构
-    auto retGet = co_await blue::http::HttpConnection::DoGet("http://www.baidu.com", 300);
+    auto retGet = co_await ptr->DoGet("http://www.baidu.com", 300);
     BLUE_LOG_INFO(g_logger) << "result : " << retGet->result
                             << " reason : " << retGet->reason
                             << " response : " << retGet->response->toString();
