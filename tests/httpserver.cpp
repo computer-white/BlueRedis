@@ -28,34 +28,30 @@ blue::Task<void> test()
     }
 
     auto ds = httpserver->getDispatch();
-    ds->addServlet("/blue/xxx", [](blue::http::HttpRequest::HttpRequestPtr req,
-                                    blue::http::HttpResponse::HttpResponsePtr resp,
-                                    blue::http::HttpSession::HttpSessionPtr session) -> int32_t {
+    ds->addServlet("/blue/servlet", [](blue::http::HttpRequest::HttpRequestPtr req, blue::http::HttpResponse::HttpResponsePtr resp, blue::http::HttpSession::HttpSessionPtr session) -> int32_t
+                   {
         std::string body = "<html>\r\n"
                         "<head>\r\n"
                         "<meta charset='UTF-8'>\r\n"
                         "<title>Blue Servlet</title>\r\n"
                         "<style>\r\n"
-                        "body{margin:0;padding:40px;font-family:monospace;background:#f0f0f0;}\r\n"
+                        "body{margin:0;padding:40px;font-family:monospace;background:#f5f5f5;}\r\n"
                         "h1{color:#1677ff;}\r\n"
                         "pre{background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);overflow-x:auto;}\r\n"
                         "</style>\r\n"
                         "</head>\r\n"
                         "<body>\r\n"
-                        "<h1>Hello Blue, Pinpoint Servlet</h1>\r\n"
+                        "<h1>Hello Blue, Servlet</h1>\r\n"
                         "<pre>" + req->toString() + "</pre>\r\n"
                         "</body>\r\n"
                         "</html>\r\n";
-        BLUE_LOG_INFO(g_logger) << "query : " << req->getQuery(); 
         resp->setHeader("Content-Type", "text/html; charset=utf-8");
         resp->setHeader("Content-Length", std::to_string(body.size()));
         resp->setBody(body);
-        return 0;
-    });
+        return 0; });
 
-    ds->addBlurServlet("/blue/*", [](blue::http::HttpRequest::HttpRequestPtr req,
-                                    blue::http::HttpResponse::HttpResponsePtr resp,
-                                    blue::http::HttpSession::HttpSessionPtr session) -> int32_t {
+    ds->addBlurServlet("/blue/*", [](blue::http::HttpRequest::HttpRequestPtr req, blue::http::HttpResponse::HttpResponsePtr resp, blue::http::HttpSession::HttpSessionPtr session) -> int32_t
+                       {
         std::string body = "<html>\r\n"
                         "<head>\r\n"
                         "<meta charset='UTF-8'>\r\n"
@@ -75,14 +71,14 @@ blue::Task<void> test()
         resp->setHeader("Content-Type", "text/html; charset=utf-8");
         resp->setHeader("Content-Length", std::to_string(body.size()));
         resp->setBody(body);
-        return 0;
-    });
+        return 0; });
     bool ans = co_await httpserver->start();
-    if (ans)
+    if (!ans)
     {
-        BLUE_LOG_INFO(g_logger) << "start 成功";
+        g_logger->Error("Http Server Start Error");
+        co_return;
     }
-     while (g_running.load(std::memory_order_acquire) && !httpserver->getIsStop())
+    while (g_running.load(std::memory_order_acquire) && !httpserver->getIsStop())
     {
         co_await blue::sleepFor(2);
     }

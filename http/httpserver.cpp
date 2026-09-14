@@ -150,160 +150,14 @@ namespace blue
                 std::string path = requestPtr->getPath();
                 std::string host = requestPtr->getHeader("Host");
                 BLUE_LOG_INFO(g_logger) << "path : " << path << " host : " << host;
-
-                std::string targeturl;
-                std::string target_param = requestPtr->getParam("target", "");
-
-                if (path == "/proxy.pac")
-                {
-                    // FindProxyForURL 浏览器每次请求调用
-                    std::string pac = R"(function FindProxyForURL(url, host) {
-                        // 本地地址直连,isPlainHostName判断是否是本机主机名
-                        if (isPlainHostName(host) || host == "127.0.0.1" || host == "localhost")
-                            return "DIRECT";
-                        // 百度相关走代理
-                        if (shExpMatch(host, "*.baidu.com") || shExpMatch(host, "*.bdstatic.com"))
-                            return "PROXY localhost:8020";
-                        // websocket
-                        if (url.startsWith("ws://") || url.startsWith("wss://"))
-                            return "PROXY localhost:8020";
-                        // 其他直连
-                        return "DIRECT";
-                    })";
-                    responsePtr->setBody(pac);
-                    responsePtr->setHeader("Content-Type", "application/x-ns-proxy-autoconfig");
-                    responsePtr->setHeader("Content-Length", std::to_string(pac.size()));
-                    responsePtr->setStatus(HttpStatus::OK);
-                }
-                else if (path.find("/admin/") == 0 || path == "/admin")
+                
+                if (path.find("/admin/") == 0 || path == "/admin")
                 {
                     _handleAdmin(requestPtr, responsePtr, session);
-                }
-                else if (!target_param.empty())
-                {
-                    targeturl = target_param;
-                    // 整个path带有/blue...
-                    std::string extra = path;
-                    size_t blue_pos = extra.find("/blue");
-                    if (blue_pos != std::string::npos)
-                    {
-                        extra = extra.substr(blue_pos + strlen("/blue"));
-                    }
-                    if (!extra.empty() && extra != "/")
-                    {
-                        auto u = blue::Url::CreateUrl(targeturl);
-                        if (u)
-                        {
-                            targeturl = u->getScheme() + "://" + u->getAuthority() + extra;
-                            std::string q = u->getQuery();
-                            if (!q.empty())
-                                targeturl += "?" + q;
-                        }
-                    }
-                    co_await _forwardRequest(requestPtr, responsePtr, targeturl, false);
-                }
-
-                // ===== 正向代理 =====
-                // 正向代理：Host 不是 localhost，path 就是目标路径
-                else if (!host.empty() &&
-                         host.find("localhost") == std::string::npos &&
-                         host.find("127.0.0.1") == std::string::npos)
-                {
-                    // websocket
-                    std::string upgrade = requestPtr->getHeader("Upgrade");
-                    if (strcasecmp(upgrade.c_str(), "websocket") == 0)
-                    {
-                        BLUE_LOG_INFO(g_logger) << "WebSocket upgrade: " << requestPtr->getPath();
-                        if (path.find("http://") == 0 || path.find("https://") == 0)
-                        {
-                            targeturl = path;
-                        }
-                        else
-                        {
-                            targeturl = "http://" + host + path;
-                            std::string query = requestPtr->getQuery();
-                            if (!query.empty())
-                                targeturl += "?" + query;
-                        }
-                        co_await _handleWebSocket(sock, requestPtr, responsePtr, targeturl);
-                        break;
-                    }
-                    // 正常正向代理
-                    if (path.find("http://") == 0 || path.find("https://") == 0)
-                    {
-                        targeturl = path;
-                    }
-                    else
-                    {
-                        targeturl = "http://" + host + path;
-                        std::string query = requestPtr->getQuery();
-                        if (!query.empty())
-                            targeturl += "?" + query;
-                    }
-                    co_await _forwardRequest(requestPtr, responsePtr, targeturl, true);
-                }
-
-                // ===== 反向代理（路径前缀模式）=====
-                else if (path.find("/blue/") == 0)
-                {
-                    size_t scheme_pos = path.find("http://");
-                    if (scheme_pos == std::string::npos)
-                    {
-                        scheme_pos = path.find("https://");
-                    }
-                    if (scheme_pos != std::string::npos)
-                    {
-                        // /blue/xxx/https://www.baidu.com/news
-                        //              ↑ scheme_pos
-                        targeturl = path.substr(scheme_pos); // "https://www.baidu.com/news"
-
-                        // 提取中间路径：/blue 和 scheme 之间的部分
-                        std::string middle = path.substr(strlen("/blue"), scheme_pos - strlen("/blue"));
-                        BLUE_LOG_INFO(g_logger) << "middle : " << middle;
-                        // middle = "/xxx"
-                        // 如果 middle 不为空，拼到 target URL 的 path 上
-                        if (!middle.empty() && middle != "/")
-                        {
-                            // 去掉 middle 尾部斜杠
-                            while (!middle.empty() && middle.back() == '/')
-                            {
-                                middle.pop_back();
-                            }
-                            // 去掉 middle 首部斜杠
-                            if (!middle.empty() && middle.front() == '/')
-                            {
-                                middle.erase(0, 1);
-                            }
-
-                            auto u = blue::Url::CreateUrl(targeturl);
-                            if (u)
-                            {
-                                // 用 middle 作为实际路径
-                                targeturl = u->getScheme() + "://" + u->getAuthority() + "/" + middle;
-                                std::string q = u->getQuery();
-                                if (!q.empty())
-                                    targeturl += "?" + q;
-                            }
-                        }
-                        co_await _forwardRequest(requestPtr, responsePtr, targeturl, false);
-                    }
-                    else
-                    {
-                        m_dispatch->handle(requestPtr, responsePtr, session);
-                    }
                 }
                 else
                 {
                     m_dispatch->handle(requestPtr, responsePtr, session);
-                }
-                // 补全缺失的响应头
-                if (responsePtr->getHeader("Content-Type").empty())
-                {
-                    responsePtr->setHeader("Content-Type", "text/html; charset=utf-8");
-                }
-                if (responsePtr->getHeader("Content-Length").empty())
-                {
-                    responsePtr->setHeader("Content-Length", std::to_string(responsePtr->getBody().size()));
                 }
                 co_await session->sendResponse(responsePtr, requestPtr);
                 BLUE_LOG_INFO(g_logger) << sock->getRemoteAddress()->toString()
@@ -322,7 +176,7 @@ namespace blue
                 bool end = co_await TcpServer<T>::stop();
                 if (end)
                 {
-                    BLUE_LOG_INFO(xx::g_logger) << "tcpserver stoped";
+                    BLUE_LOG_INFO(xx::g_logger) << "Http Server Stoped";
                 }
             }
             co_return;

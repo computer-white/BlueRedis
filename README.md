@@ -12,7 +12,7 @@
 - **redis** — 使用c++20协程的redis服务器
 
 ## 关于一些模块
-### 关于Redis服务器的入口文件(newtests/test_commandHandler.cpp)
+### 关于Redis服务器的入口文件(tests/blueRedis.cpp)
     这个是Redis服务器的测试函数，IO调度器提交协程任务，然后协程被执行，comm->start()后Redis服务器就成功启动了
 ### 关于协程以及相关IO、Sleep实现(blue/task.h，blue/asyncio.h，blue/await.h，redis_command/generator.h)
     这些是关于协程和利用协程实现的IO和Sleep操作,在asyncio.h和await.h内部搭配epoll和定时器实现。关于C++20协程的用法这里不过多解释，
