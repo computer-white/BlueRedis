@@ -408,190 +408,204 @@ namespace blue
     template <typename T>
     void ServerData<T>::saveToFile()
     {
-        const std::string filename = "/var/lib/blueRedis/dump.rdb";
-        std::ofstream file(filename, std::ios::binary);
+        try
+        {
+            const std::string filename = "/var/lib/blueRedis/dump.rdb";
+            std::ofstream file(filename, std::ios::binary);
 
-        if (!file)
-        {
-            BLUE_LOG_ERROR(xx::g_logger) << "Failed to open " << filename;
-            return;
-        }
-        for (int db = 0; db < DB_COUNT; db++)
-        {
-            for (auto &shard : m_dbs[db])
+            if (!file)
             {
-                std::shared_lock lock(shard.mutex);
-
-                for (auto &[key, value] : shard.store)
+                BLUE_LOG_ERROR(xx::g_logger) << "Failed to open " << filename;
+                return;
+            }
+            for (int db = 0; db < DB_COUNT; db++)
+            {
+                for (auto &shard : m_dbs[db])
                 {
-                    file << "DB|" << db << "|STR|" << key << "|" << value.val;
+                    std::shared_lock lock(shard.mutex);
 
-                    if (value.is_expired())
+                    for (auto &[key, value] : shard.store)
                     {
-                        auto expire_time = value.expire.value().time_since_epoch().count();
-                        file << "|" << expire_time;
+                        file << "DB|" << db << "|STR|" << key << "|" << value.val;
+
+                        if (value.is_expired())
+                        {
+                            auto expire_time = value.expire.value().time_since_epoch().count();
+                            file << "|" << expire_time;
+                        }
+                        file << "\n";
                     }
-                    file << "\n";
-                }
 
-                for (auto &[key, fields] : shard.hash)
-                {
-                    for (auto &[field, value] : fields)
+                    for (auto &[key, fields] : shard.hash)
                     {
-                        file << "DB|" << db << "|HASH|" << key << "|" << field << "|" << value << "\n";
+                        for (auto &[field, value] : fields)
+                        {
+                            file << "DB|" << db << "|HASH|" << key << "|" << field << "|" << value << "\n";
+                        }
                     }
-                }
 
-                for (auto &[key, list] : shard.lists)
-                {
-                    for (auto &value : list)
+                    for (auto &[key, list] : shard.lists)
                     {
-                        file << "DB|" << db << "|LIST|" << key << "|" << value << "\n";
+                        for (auto &value : list)
+                        {
+                            file << "DB|" << db << "|LIST|" << key << "|" << value << "\n";
+                        }
                     }
-                }
 
-                for (auto &[key, set] : shard.sets)
-                {
-                    for (auto &member : set)
+                    for (auto &[key, set] : shard.sets)
                     {
-                        file << "DB|" << db << "|SET|" << key << "|" << member << "\n";
+                        for (auto &member : set)
+                        {
+                            file << "DB|" << db << "|SET|" << key << "|" << member << "\n";
+                        }
                     }
-                }
 
-                for (auto &[key, zset] : shard.zset_score)
-                {
-                    for (auto &[member, score] : zset)
+                    for (auto &[key, zset] : shard.zset_score)
                     {
-                        file << "DB|" << db << "|ZSET|" << key << "|" << score << "|" << member << "\n";
+                        for (auto &[member, score] : zset)
+                        {
+                            file << "DB|" << db << "|ZSET|" << key << "|" << score << "|" << member << "\n";
+                        }
                     }
                 }
             }
+            m_last_time.store(time(nullptr), std::memory_order_release);
+            BLUE_LOG_INFO(xx::g_logger) << "RDB saved to " << filename;
         }
-        m_last_time.store(time(nullptr), std::memory_order_release);
-        BLUE_LOG_INFO(xx::g_logger) << "RDB saved to " << filename;
+        catch (...)
+        {
+            return;
+        }
     }
 
     template <typename T>
     void ServerData<T>::loadFromFile()
     {
-        BLUE_LOG_INFO(xx::g_logger) << "loadFromFile";
-        const std::string filename = "/var/lib/blueRedis/dump.rdb";
-        std::ifstream file(filename);
-
-        if (!file)
+        try
         {
-            BLUE_LOG_INFO(xx::g_logger) << "No existing RDB file";
-            return;
-        }
+            BLUE_LOG_INFO(xx::g_logger) << "loadFromFile";
+            const std::string filename = "/var/lib/blueRedis/dump.rdb";
+            std::ifstream file(filename);
 
-        std::string line;
-        while (std::getline(file, line))
-        {
-            std::vector<std::string> parts;
-            size_t pos = 0;
-            std::string token;
-
-            while ((pos = line.find('|')) != std::string::npos)
+            if (!file)
             {
-                token = line.substr(0, pos);
-                parts.push_back(token);
-                line.erase(0, pos + 1);
-            }
-            parts.push_back(line);
-
-            if (parts.empty())
-            {
-                continue;
-            }
-
-            // parts[0] = "DB"
-            // parts[1] = 数据库编号
-            // parts[2] = 类型 (STR/HASH/LIST/SET/ZSET)
-
-            int db = 0;
-            try
-            {
-                db = std::stoi(parts[1]);
-            }
-            catch (...)
-            {
+                BLUE_LOG_INFO(xx::g_logger) << "No existing RDB file";
                 return;
             }
-            std::string type = parts[2];
 
-            // 临时保存到对应的数据库
-            auto &target_db = m_dbs[db];
-
-            if (type == "STR" && parts.size() >= 5)
+            std::string line;
+            while (std::getline(file, line))
             {
-                std::string key = parts[3];
-                std::string value = parts[4];
+                std::vector<std::string> parts;
+                size_t pos = 0;
+                std::string token;
 
-                // 找到正确的分片
-                int shard_idx = getShardIndex(key);
-                auto &shard = target_db[shard_idx];
-                std::unique_lock lock(shard.mutex);
-                shard.store.insert_or_assign(key, DataShard::StoreData(value));
-
-                if (parts.size() >= 6)
+                while ((pos = line.find('|')) != std::string::npos)
                 {
-                    int64_t expire_time = std::stoll(parts[5]);
-                    shard.store.insert_or_assign(key, DataShard::StoreData(value, TimePoint(std::chrono::nanoseconds(expire_time))));
+                    token = line.substr(0, pos);
+                    parts.push_back(token);
+                    line.erase(0, pos + 1);
+                }
+                parts.push_back(line);
+
+                if (parts.empty())
+                {
+                    continue;
+                }
+
+                // parts[0] = "DB"
+                // parts[1] = 数据库编号
+                // parts[2] = 类型 (STR/HASH/LIST/SET/ZSET)
+
+                int db = 0;
+                try
+                {
+                    db = std::stoi(parts[1]);
+                }
+                catch (...)
+                {
+                    return;
+                }
+                std::string type = parts[2];
+
+                // 临时保存到对应的数据库
+                auto &target_db = m_dbs[db];
+
+                if (type == "STR" && parts.size() >= 5)
+                {
+                    std::string key = parts[3];
+                    std::string value = parts[4];
+
+                    // 找到正确的分片
+                    int shard_idx = getShardIndex(key);
+                    auto &shard = target_db[shard_idx];
+                    std::unique_lock lock(shard.mutex);
+                    shard.store.insert_or_assign(key, DataShard::StoreData(value));
+
+                    if (parts.size() >= 6)
+                    {
+                        int64_t expire_time = std::stoll(parts[5]);
+                        shard.store.insert_or_assign(key, DataShard::StoreData(value, TimePoint(std::chrono::nanoseconds(expire_time))));
+                    }
+                }
+                else if (type == "HASH" && parts.size() >= 6)
+                {
+                    std::string key = parts[3];
+                    std::string field = parts[4];
+                    std::string value = parts[5];
+
+                    int shard_idx = getShardIndex(key);
+                    auto &shard = target_db[shard_idx];
+                    std::unique_lock lock(shard.mutex);
+                    auto [it, inserted] = shard.hash.try_emplace(key, absl::flat_hash_map<std::string, std::string>{});
+                    it->second.insert_or_assign(field, value);
+                }
+                else if (type == "LIST" && parts.size() >= 5)
+                {
+                    std::string key = parts[3];
+                    std::string value = parts[4];
+
+                    int shard_idx = getShardIndex(key);
+                    auto &shard = target_db[shard_idx];
+                    std::unique_lock lock(shard.mutex);
+                    auto [it, inserted] = shard.lists.try_emplace(key, std::list<std::string>{});
+                    it->second.push_back(value);
+                }
+                else if (type == "SET" && parts.size() >= 5)
+                {
+                    std::string key = parts[3];
+                    std::string member = parts[4];
+
+                    int shard_idx = getShardIndex(key);
+                    auto &shard = target_db[shard_idx];
+                    std::unique_lock lock(shard.mutex);
+                    auto [it, inserted] = shard.sets.try_emplace(key, std::unordered_set<std::string>{});
+                    it->second.insert(member);
+                }
+                else if (type == "ZSET" && parts.size() >= 6)
+                {
+                    std::string key = parts[3];
+                    double score = std::stod(parts[4]);
+                    std::string member = parts[5];
+
+                    int shard_idx = getShardIndex(key);
+                    auto &shard = target_db[shard_idx];
+                    std::unique_lock lock(shard.mutex);
+                    // zset_score
+                    auto [sit, sinserted] = shard.zset_score.try_emplace(key, absl::flat_hash_map<std::string, double>{});
+                    sit->second.insert_or_assign(member, score);
+
+                    // zset
+                    auto [zit, zinserted] = shard.zset.try_emplace(key, SkipList<ZSetKey, std::string>{});
+                    zit->second.insert({score, member}, member);
                 }
             }
-            else if (type == "HASH" && parts.size() >= 6)
-            {
-                std::string key = parts[3];
-                std::string field = parts[4];
-                std::string value = parts[5];
-
-                int shard_idx = getShardIndex(key);
-                auto &shard = target_db[shard_idx];
-                std::unique_lock lock(shard.mutex);
-                auto [it, inserted] = shard.hash.try_emplace(key, absl::flat_hash_map<std::string, std::string>{});
-                it->second.insert_or_assign(field, value);
-            }
-            else if (type == "LIST" && parts.size() >= 5)
-            {
-                std::string key = parts[3];
-                std::string value = parts[4];
-
-                int shard_idx = getShardIndex(key);
-                auto &shard = target_db[shard_idx];
-                std::unique_lock lock(shard.mutex);
-                auto [it, inserted] = shard.lists.try_emplace(key, std::list<std::string>{});
-                it->second.push_back(value);
-            }
-            else if (type == "SET" && parts.size() >= 5)
-            {
-                std::string key = parts[3];
-                std::string member = parts[4];
-
-                int shard_idx = getShardIndex(key);
-                auto &shard = target_db[shard_idx];
-                std::unique_lock lock(shard.mutex);
-                auto [it, inserted] = shard.sets.try_emplace(key, std::unordered_set<std::string>{});
-                it->second.insert(member);
-            }
-            else if (type == "ZSET" && parts.size() >= 6)
-            {
-                std::string key = parts[3];
-                double score = std::stod(parts[4]);
-                std::string member = parts[5];
-
-                int shard_idx = getShardIndex(key);
-                auto &shard = target_db[shard_idx];
-                std::unique_lock lock(shard.mutex);
-                // zset_score
-                auto [sit, sinserted] = shard.zset_score.try_emplace(key, absl::flat_hash_map<std::string, double>{});
-                sit->second.insert_or_assign(member, score);
-
-                // zset
-                auto [zit, zinserted] = shard.zset.try_emplace(key, SkipList<ZSetKey, std::string>{});
-                zit->second.insert({score, member}, member);
-            }
+            BLUE_LOG_INFO(xx::g_logger) << "RDB loaded from " << filename;
         }
-        BLUE_LOG_INFO(xx::g_logger) << "RDB loaded from " << filename;
+        catch (...)
+        {
+            return;
+        }
     }
 
     template <typename T>

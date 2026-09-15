@@ -67,12 +67,8 @@ namespace blue
                 }
                 if (n < 0)
                 {
-                    if (errno == EINTR)
-                    {
-                        continue;
-                    }
-                    // 极其难发生
-                    if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    // EAGIN 和 EWOULDBLOCK 极其难发生除非errno被污染，因为使用了协程搭配epoll后被resume回来说明epoll成功
+                    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
                     {
                         continue;
                     }
@@ -115,7 +111,6 @@ namespace blue
         Task<int> HttpSession::sendResponse(HttpResponse::HttpResponsePtr response, HttpRequest::HttpRequestPtr request)
         {
             std::string encoding = request->getHeader("Accept-Encoding", "");
-            // BLUE_LOG_INFO(g_logger) << "query : " << request->getQuery() << " val : " << request->getParam("target");
             std::string body = response->getBody();
 
             if (!body.empty() && checkEncoding(encoding, "gzip"))
@@ -129,7 +124,6 @@ namespace blue
                 }
             }
             std::string str = response->toString();
-            BLUE_LOG_WARN(g_logger) << "=== Final HTTP Response Headers ===";
             size_t header_end = str.find("\r\n\r\n");
             if (header_end != std::string::npos)
             {

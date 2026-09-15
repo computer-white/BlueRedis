@@ -24,28 +24,21 @@
 // tcp server
 namespace blue
 {
-    static blue::ConfigVar<uint64_t>::ConfigVarPtr g_tcp_server_read_timeout =
-        blue::Config::Lookup<uint64_t>("tcp_server.read_timeout",
-                                       (uint64_t)(60 * 1000 * 2), "tcp server read timeout");
-
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
 
     template <typename T>
     TcpServer<T>::TcpServer(int level, int option_name, T option, IOManager *manager, IOManager *acceptmanager)
-        : m_worker(manager),
-          m_acceptworker(acceptmanager),
-          m_name("blue/1.0.0"),
-          m_RecvTimeOut(g_tcp_server_read_timeout->getValue()),
-          m_level(level),
+        : m_level(level),
           m_option_name(option_name),
-          m_option(std::move(option))
+          m_option(std::move(option)),
+          m_worker(manager),
+          m_acceptworker(acceptmanager)
     {
     }
 
     template <typename T>
     TcpServer<T>::~TcpServer()
     {
-        BLUE_LOG_INFO(g_logger) << "~TcpServer";
         m_isStop.store(true, std::memory_order_release);
         if (m_socks.empty())
         {
@@ -82,15 +75,17 @@ namespace blue
                 fails.push_back(add);
                 continue;
             }
-            if (m_level != -1 && m_option_name != -1 && m_option_name != SO_REUSEADDR && m_option_name != SO_REUSEPORT && m_option_name != (SO_REUSEADDR | SO_REUSEPORT))
+            if (m_level != -1 && m_option_name != -1 &&
+                m_option_name != SO_REUSEADDR && m_option_name != SO_REUSEPORT &&
+                m_option_name != (SO_REUSEADDR | SO_REUSEPORT))
             {
                 sock->setOption(m_level, m_option_name, m_option);
             }
             if (!sock->listen())
             {
-                BLUE_LOG_ERROR(g_logger) << "tcp server listen error : " << errno
-                                         << " strerror : " << strerror(errno)
-                                         << " addr : [" << add->toString();
+                BLUE_LOG_ERROR(g_logger) << "tcp server listen error: " << errno
+                                         << " strerror: " << strerror(errno)
+                                         << " addr: [" << add->toString();
                 fails.push_back(add);
                 continue;
             }
@@ -100,11 +95,6 @@ namespace blue
         {
             m_socks.clear();
             return false;
-        }
-
-        for (auto &sock : m_socks)
-        {
-            BLUE_LOG_INFO(g_logger) << "tcp server bind success : " << sock->toString();
         }
         return true;
     }
@@ -128,9 +118,8 @@ namespace blue
             MSocket::MSocketPtr client = co_await sock->acceptT(500);
             if (client)
             {
-                BLUE_LOG_INFO(g_logger) << "accept new client, ptr=" << client.get()
-                                        << " fd=" << client->getSocketfd();
-                client->setRecvTimeout(m_RecvTimeOut);
+                // 设置1s的socket fd上的超时
+                client->setRecvTimeout(1000);
                 client->setNoBlocking();
                 m_worker->schedule(handleClient(client));
                 addConnection();
@@ -200,18 +189,16 @@ namespace blue
         while (true)
         {
             ssize_t n = co_await sock->recv(buf, sizeof(buf));
-            BLUE_LOG_INFO(g_logger) << "recv returned: n=" << n
-                                    << " errno=" << errno
-                                    << " strerror=" << strerror(errno);
             if (n <= 0)
             {
                 BLUE_LOG_INFO(g_logger) << "client closed, breaking";
                 break;
             }
             ssize_t sent = co_await sock->send(buf, n);
-            BLUE_LOG_INFO(g_logger) << "send returned: sent=" << sent;
             if (sent <= 0)
+            {
                 break;
+            }
         }
         sock->close();
         BLUE_LOG_INFO(g_logger) << "handleClient done";

@@ -446,7 +446,6 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData<int>> self)
     {
-        BLUE_LOG_INFO(xx::g_logger) << "commandTable 模式";
         if (sock->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
@@ -4185,7 +4184,6 @@ namespace blue
                 {
                     ptr->saveToFile();
                     ptr->setBgSaveRunning(false);
-                    BLUE_LOG_INFO(xx::g_logger) << "BGSAVE completed";
                 }
                 else
                 {

@@ -36,12 +36,18 @@ namespace blue
         switch (event)
         {
         case IOManager::Event::READ:
+        {
             return read;
+        }
         case IOManager::Event::WRITE:
+        {
             return write;
+        }
         default:
+        {
             BLUE_ASSERT2(false, "getEventContext: invalid event");
             throw std::invalid_argument("Invalid event type");
+        }
         }
     }
 
@@ -123,10 +129,15 @@ namespace blue
         start();
 
         // 分配一个线程在idle上运行
-        m_workers.emplace_back([this]()
-                               {
-            Scheduler::setThis(this);
-            this->idle(); });
+        auto t = std::make_unique<blue::Mthread>(
+            [this]()
+            {
+                Scheduler::setThis(this);
+                idle();
+            },
+            "IOManager" // 线程名称
+        );
+        m_workers.push_back(std::move(t));
     }
 
     IOManager::~IOManager()
@@ -265,7 +276,9 @@ namespace blue
     bool IOManager::delEvent(int fd, Event event)
     {
         if (fd < 0)
+        {
             return false;
+        }
 
         std::shared_lock<std::shared_mutex> read_lock(m_Iommutex);
         auto it = m_fdContexts.find(fd);
@@ -305,8 +318,6 @@ namespace blue
                                      << " (" << strerror(errno) << ")";
             return false;
         }
-
-        // --m_pendingEventCounts;
         fd_ctx->m_events = new_event;
 
         // 重置事件上下文
@@ -319,7 +330,9 @@ namespace blue
     bool IOManager::cancelEvent(int fd, Event event)
     {
         if (fd < 0)
+        {
             return false;
+        }
 
         std::shared_lock<std::shared_mutex> read_lock(m_Iommutex);
         auto it = m_fdContexts.find(fd);
@@ -370,7 +383,9 @@ namespace blue
     bool IOManager::cancelAll(int fd)
     {
         if (fd < 0)
+        {
             return false;
+        }
 
         std::shared_lock<std::shared_mutex> read_lock(m_Iommutex);
         auto it = m_fdContexts.find(fd);
@@ -469,7 +484,7 @@ namespace blue
             // 再次检查是否需要停止
             if (stopping())
             {
-                BLUE_LOG_INFO(g_logger) << "IOManager idle stopping: " << getName();
+                BLUE_LOG_INFO(g_logger) << "IOManager idle stopping";
                 break;
             }
 
@@ -491,7 +506,9 @@ namespace blue
                 // 处理 fd 事件
                 FdContext *fd_ctx = static_cast<FdContext *>(event.data.ptr);
                 if (!fd_ctx)
+                {
                     continue;
+                }
 
                 std::lock_guard<std::mutex> lock(fd_ctx->mutex);
 
@@ -557,7 +574,7 @@ namespace blue
             }
         }
 
-        BLUE_LOG_INFO(g_logger) << "IOManager idle exited: " << getName();
+        BLUE_LOG_INFO(g_logger) << "IOManager idle exited";
     }
 
     void IOManager::tickle()
@@ -578,8 +595,9 @@ namespace blue
 
     void IOManager::wait_all()
     {
-        std::unique_lock<std::mutex> lock(m_Schemutex);
-        m_Schecv.wait(lock, [this]
+        std::unique_lock<std::mutex> lock(m_doneMutex);
+        m_waiting.fetch_add(1, std::memory_order_acq_rel);
+        m_doneCv.wait(lock, [this]
                       {
             size_t total = m_pending.load(std::memory_order_acquire);
             for (auto& queue : m_threadQueues)
@@ -592,6 +610,7 @@ namespace blue
                    && m_pendingEventCounts.load(std::memory_order_acquire) == 0
                    && !TimerManager::hasTimer()
                    && m_running.load(std::memory_order_acquire) == 0; });
+        m_waiting.fetch_sub(1, std::memory_order_acq_rel);
     }
 
     IOManager *IOManager::GetThis()

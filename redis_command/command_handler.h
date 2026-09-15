@@ -205,8 +205,8 @@ namespace blue
     Task<void> CommandHandler<T>::handleClient(MSocket::MSocketPtr sock)
     {
         m_clients.push_back(sock);
-        BLUE_LOG_INFO(xx::g_logger) << "generator";
-        BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
+        BLUE_LOG_INFO(xx::g_logger) << "Generator Mode";
+        BLUE_LOG_INFO(xx::g_logger) << "Redis Server begin, fd=" << sock->getSocketfd();
         // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
         // BLUE_LOG_INFO(xx::g_logger) << "local address : " <<  sock->getLocalAddress()->toString();
 
@@ -356,8 +356,8 @@ namespace blue
     {
         // 收集连接上来的客户端sock
         m_clients.push_back(sock);
-        BLUE_LOG_INFO(xx::g_logger) << "batch_commands";
-        BLUE_LOG_INFO(xx::g_logger) << "handleClient begin, fd=" << sock->getSocketfd();
+        BLUE_LOG_INFO(xx::g_logger) << "Batch_commands Mode";
+        BLUE_LOG_INFO(xx::g_logger) << "Redis Server begin, fd=" << sock->getSocketfd();
         // BLUE_LOG_INFO(xx::g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
         // BLUE_LOG_INFO(xx::g_logger) << "local address : " <<  sock->getLocalAddress()->toString();
 

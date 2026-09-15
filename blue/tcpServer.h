@@ -94,30 +94,6 @@ namespace blue
         virtual Task<bool> stop();
 
         /**
-         * @brief 获取receive超时
-         * @return 返回receive超时时间
-         */
-        uint64_t getRecvTimeOut() const noexcept { return m_RecvTimeOut; }
-
-        /**
-         * @brief 获取tcp服务名称
-         * @return 返回tcp服务名称
-         */
-        std::string getName() const noexcept { return m_name; }
-
-        /**
-         * @brief 设置receive超时时间
-         * @param timeout 需要设置的超时时间(ms)
-         */
-        void setRecvTimeOut(uint64_t timeout) noexcept { m_RecvTimeOut = timeout; }
-
-        /**
-         * @brief 设置tcp服务名称
-         * @param name tcp服务名称
-         */
-        void setName(const std::string &name) noexcept { m_name = name; }
-
-        /**
          * @brief tcp是否停止
          * @return true表示停止
          */
@@ -163,17 +139,15 @@ namespace blue
         virtual const int getMaxClientCount() const noexcept { return -1; };
 
     private:
-        std::vector<blue::MSocket::MSocketPtr> m_socks;
-        IOManager *m_worker;
-        IOManager *m_acceptworker;
-        std::string m_name;
-        uint64_t m_RecvTimeOut;
         int m_level;
         int m_option_name;
         T m_option;
-        std::atomic<bool> m_isStop = {true};
+        IOManager *m_worker;
+        IOManager *m_acceptworker;
+        std::atomic<bool> m_isStop{true};
         std::atomic<uint32_t> m_connections{0};
         std::atomic<uint32_t> m_rejected_connections{0};
+        std::vector<blue::MSocket::MSocketPtr> m_socks;
     };
 }
 

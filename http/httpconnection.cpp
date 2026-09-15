@@ -38,7 +38,7 @@ namespace blue
 
         HttpConnection::~HttpConnection()
         {
-            BLUE_LOG_INFO(g_logger) << "HttpConnection::~HttpConnection";
+            // BLUE_LOG_INFO(g_logger) << "HttpConnection::~HttpConnection";
         }
 
         void HttpConnection::reset()

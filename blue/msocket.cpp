@@ -482,7 +482,7 @@ namespace blue
             {
                 co_return nullptr;
             }
-            BLUE_LOG_ERROR(g_logger) << "::accpet(" << m_sockfd
+            BLUE_LOG_ERROR(g_logger) << "accpet(" << m_sockfd
                                     << "),errno : " << errno << ",strerrno : "
                                     << strerror(errno);
             co_return nullptr;
@@ -815,7 +815,6 @@ namespace blue
     bool MSocket::_init(int fd)
     {
         blue::FdCxt::FdCxtPtr cxt = FdManagerPtr::GetInstance()->get(fd);
-        BLUE_LOG_INFO(g_logger) << "cxt : " << cxt;
         if (cxt && cxt->isSocket() && !cxt->isClosed())
         {
             m_sockfd = fd;

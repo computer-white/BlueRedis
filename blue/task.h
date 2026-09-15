@@ -30,7 +30,6 @@
 
 namespace blue
 {
-    void schedule_coroutine(std::coroutine_handle<> h);
     template <typename T = void>
     struct Task;
 

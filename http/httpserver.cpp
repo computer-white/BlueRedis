@@ -23,6 +23,7 @@
 #include "blue/dbmanager.h"
 #include "blue/redismanager.h"
 #include "blue/configinit.h"
+#include "blue/config_parser.h"
 #include "proxy/rate_limiter.h"
 #include "proxy/tunnel.h"
 #include "proxy/url_rewriter.h"
@@ -145,12 +146,8 @@ namespace blue
                                                                   (requestPtr->isKeepAlive() || temkeepAlive));
                 temkeepAlive = (requestPtr->isKeepAlive() || temkeepAlive);
 
-                BLUE_LOG_INFO(g_logger) << "requestPtrKeepAlive: " << requestPtr->isKeepAlive() << " m_keepAlive: " << m_keepAlive;
-
                 std::string path = requestPtr->getPath();
-                std::string host = requestPtr->getHeader("Host");
-                BLUE_LOG_INFO(g_logger) << "path : " << path << " host : " << host;
-                
+                std::string host = requestPtr->getHeader("Host");     
                 if (path.find("/admin/") == 0 || path == "/admin")
                 {
                     _handleAdmin(requestPtr, responsePtr, session);
@@ -165,11 +162,13 @@ namespace blue
                                         << " " << requestPtr->getPath()
                                         << " HTTP/" << requestPtr->versionToStr() << "\" "
                                         << http::HttpStatusToChars(responsePtr->getStatus())
-                                        << " " << responsePtr->getBody().size() << "B "
+                                        << " " << blue::util::ConfigParser::FormatSize(responsePtr->getBody().size())
                                         << requestPtr->getHeader("User-Agent");
             } while (temkeepAlive);
+
             session->close();
             TcpServer<T>::subConnection();
+            
             // 如果正在关闭且没有活跃连接，停止服务器
             if (m_shutdown.load(std::memory_order_acquire) && TcpServer<T>::getConnection() == 0)
             {

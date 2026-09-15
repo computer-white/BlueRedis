@@ -33,7 +33,8 @@
 #include <condition_variable>
 #include <functional>
 #include <atomic>
-#include "task.h"
+#include "blue/task.h"
+#include "blue/mthread.h"
 
 namespace blue
 {
@@ -55,7 +56,7 @@ namespace blue
                 : cb(std::move(cb)), threadId(thr) {}
         };
 
-        struct PerThreadQueue
+        struct alignas(64) PerThreadQueue
         {
             friend class Scheduler;
 
@@ -90,7 +91,7 @@ namespace blue
          * @param threads 线程数量
          * @param name 调度器名称
          */
-        Scheduler(size_t threads = 1, const std::string &name = "");
+        Scheduler(size_t threads = 1);
 
         /**
          * @brief 如果调度器没有停止,则析构来调用stop
@@ -113,16 +114,11 @@ namespace blue
         virtual void wait_all();
 
         /**
-         * @brief 获取调度器名称
-         */
-        const std::string &getName() const { return m_name; }
-
-        /**
          * @brief 提交一组协程任务
          * @param thr 指定工作线程
          */
         template <typename... Args>
-        void scheduleMul(int thr, Args&&... args)
+        void scheduleMul(int thr, Args &&...args)
         {
             (schedule(std::forward<Args>(args), thr), ...);
         }
@@ -205,23 +201,22 @@ namespace blue
         void drainLocalQueue(size_t index);
 
     protected:
-        std::mutex m_Schemutex;                                      // 互斥变量
-        std::condition_variable m_Schecv;                            // 条件变量
-        std::vector<std::thread> m_workers;                          // 工作线程
+        // iomanager需要使用
+        std::mutex m_doneMutex;                                      // wait_all用
+        std::condition_variable m_doneCv;                            // wait_all用
+        std::atomic<size_t> m_waiting{0};                            // 记录正在等 m_Schecv 的线程数，用于精准 notify
+        std::vector<std::unique_ptr<blue::Mthread>> m_workers;       // 工作线程
         std::vector<std::unique_ptr<PerThreadQueue>> m_threadQueues; // 工作线程任务队列
         std::atomic<size_t> m_pending{0};                            // 全局队列任务计数
         std::atomic<size_t> m_running{0};                            // 有任务在运行计数
         std::atomic<bool> m_stopping{false};                         // 是否主动停止调度器
 
     private:
-        std::string m_name;             // 调度器名称
-        size_t m_threadCount;           // 线程数量
-        std::atomic<bool> m_stop{true}; // 调度器处于停止状态或开启状态
-        std::deque<FuncAndId> m_queue;  // 全局任务队列
-
-        std::mt19937 m_rng{std::random_device{}()};         // 任务窃取随机因子
-        std::uniform_int_distribution<> m_steal_dist{0, 0}; // 随机值产生器
-
+        size_t m_threadCount;             // 线程数量
+        std::atomic<bool> m_stop{true};   // 调度器处于停止状态或开启状态
+        std::mutex m_Schemutex;           // 互斥变量
+        std::condition_variable m_Schecv; // 条件变量
+        std::deque<FuncAndId> m_queue;    // 全局任务队列
     private:
         static thread_local Scheduler *t_Scheduler; // 线程局部调度器指针
         static thread_local int t_threadIndex;      // 线程索引,切换线程队列

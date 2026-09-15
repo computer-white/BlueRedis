@@ -124,8 +124,6 @@ namespace blue
 			else
 			{
 				// Url 解析失败，降级为简单处理
-				BLUE_LOG_ERROR(g_logger) << "url parser failed, host : " << host
-										 << " 降级为我们自己的处理";
 				std::string port = "80";
 				if (host.find("https://") != std::string::npos)
 				{
@@ -236,33 +234,34 @@ namespace blue
 					}
 				}
 			}
+			if (bulk.empty())
+			{
+				BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host parse failed: " << host;
+				return false;
+			}
+			int error = getaddrinfo(bulk.c_str(), service.c_str(), &hints, &res);
+			if (error)
+			{
+				BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), [host : " << host
+										<< " family : " << family << " type : " << type
+										<< " protocol : " << protocol << "],error : "
+										<< error << " gai_strerror : " << gai_strerror(error);
+				return false;
+			}
+			next = res;
+
+			while (next)
+			{
+				results.push_back(Create(next->ai_addr, next->ai_addrlen));
+				next = next->ai_next;
+			}
+			freeaddrinfo(res);
+			return true;
 		}
 		catch (...)
 		{
 			return false;
 		}
-		if (bulk.empty())
-		{
-			BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host parse failed: " << host;
-			return false;
-		}
-		int error = getaddrinfo(bulk.c_str(), service.c_str(), &hints, &res);
-		if (error)
-		{
-			BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), [host : " << host
-									 << " family : " << family << " type : " << type
-									 << " protocol : " << protocol << "],error : "
-									 << error << " gai_strerror : " << gai_strerror(error);
-			return false;
-		}
-		next = res;
-
-		while (next)
-		{
-			results.push_back(Create(next->ai_addr, next->ai_addrlen));
-			next = next->ai_next;
-		}
-		freeaddrinfo(res);
 		return true;
 	}
 
