@@ -283,10 +283,17 @@ namespace blue
                     handle = nullptr;
                     h.destroy();
                 }
-                else
+                else if (handle.promise().fa == nullptr)
                 {
-                    handle = nullptr; // 协程未完成，仅释放引用
+                    HandleType h = handle;
+                    handle = nullptr;
+                    h.destroy();
                 }
+                // 已交给调度器,由调度器在协程完成后自行清理
+                // else
+                // {
+                //     handle = nullptr; // 协程未完成，仅释放引用(若协程创建但是没有完成会导致协程内存泄漏)
+                // }
             }
         }
     };
@@ -418,10 +425,18 @@ namespace blue
                     handle = nullptr;
                     h.destroy();
                 }
-                else
+                else if (handle.promise().fa == nullptr)
                 {
+                    HandleType h = handle;
                     handle = nullptr;
+                    h.destroy();
                 }
+                // 已交给调度器,由调度器在协程完成后自行清理
+
+                // else
+                // {
+                //     handle = nullptr; // 协程未完成，仅释放引用(若协程创建但是没有完成会导致协程内存泄漏)
+                // }
             }
         }
     };
