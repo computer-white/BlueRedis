@@ -1,5 +1,3 @@
-[![CI](https://github.com/computer-white/BlueRedis/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPO/actions/workflows/ci.yml)
-[![ASAN](https://github.com/computer-white/BlueRedis/actions/workflows/asan.yml/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPO/actions/workflows/asan.yml)
 # Blue - C++20 协程服务器框架
 
 基于 C++20 无栈协程的异步网络框架，支持 epoll 事件驱动、HTTP 客户端/服务端、连接池。
