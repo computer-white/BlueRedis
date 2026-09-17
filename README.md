@@ -1,5 +1,5 @@
 # Blue - C++20 协程服务器框架
-
+[![CI](https://github.com/computer-white/BlueRedis/actions/workflows/ci.yml/badge.svg)](https://github.com/computer-white/BlueRedis/actions/workflows/ci.yml)
 基于 C++20 无栈协程的异步网络框架，支持 epoll 事件驱动、HTTP 客户端/服务端、连接池。
 
 ## 特性
@@ -70,6 +70,10 @@ sudo apt install -y \
     libhiredis-dev \
     libyaml-cpp-dev \
     ragel
+```
+```bash
+**第三方源码**:`thirdparty/llhttp-release-v9.2.0/` 已 vendor 进仓库,
+克隆后无需额外下载。
 ```
 
 ## 支持命令
