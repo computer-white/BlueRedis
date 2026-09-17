@@ -125,9 +125,79 @@ AOF：追加日志，支持 always、everysec、no 三种策略
 
 ## 编译
 ```bash
-    mkdir build && cd build
-    cmake ..    # 默认是命令表
-    make -j$(nproc)
+git clone https://github.com/computer-white/BlueRedis.git blue
+cd blue
+
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+```
+
+**产物位置**:
+
+- 可执行文件:`bin/`
+- 库文件:`lib/libblue.so` / `lib/libblue.a`
+
+### 只构建库,不构建测试(在不使用Google Test时使用，因为ASAN的编译选项与absl的冲突)
+
+```bash
+cmake ..
+```
+
+### 开启 ASAN(推荐开发时使用)
+
+```bash
+cmake .. -DENABLE_ASAN=ON
+make -j$(nproc)
+```
+
+---
+
+## 测试
+
+```bash
+cd build
+make -j$(nproc)
+ctest --output-on-failure
+```
+
+### 只跑特定测试
+
+```bash
+ctest -R test_url --output-on-failure
+./bin/test_task --gtest_filter='TaskBasic.*'
+./bin/test_iomanager --gtest_filter='IOFdTest.*'
+```
+
+### 用 ASAN 跑全部测试
+
+```bash
+cmake .. -DENABLE_ASAN=ON
+make -j$(nproc)
+ctest --output-on-failure
+```
+
+---
+
+## 快速开始
+
+```cpp
+#include "blue/io_manager.h"
+#include "blue/await.h"
+
+blue::Task<void> hello()
+{
+    co_await blue::sleepForMs(100);
+    std::cout << "Hello from coroutine" << std::endl;
+    co_return;
+}
+
+int main()
+{
+    blue::IOManager iom(4);
+    iom.schedule(hello());
+    iom.wait_all();
+}
 ```
 
 ## 启动服务器

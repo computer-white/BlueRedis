@@ -22,18 +22,20 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fcoroutines>)
 endif()
 
-# 需要用Google Test测试test_task.cpp时可以使用
-# 开启ASAN 可以抓捕协程创建但不resume,析构时协程帧泄漏
 # 编译时使用cmake .. -DENABLE_ASAN=ON
-option(ENABLE_ASAN "Address Sanitizer" OFF)
+option(ENABLE_ASAN  "Address Sanitizer"              OFF)
+option(ENABLE_UBSAN "Undefined Behavior Sanitizer"   OFF)
+
 if(ENABLE_ASAN)
-    message(STATUS "ASAN enabled")
-    add_compile_options(-fsanitize=address,undefined
-                        -fno-omit-frame-pointer
-                        -fno-sanitize-recover=all
-                        -g)
-    add_link_options(-fsanitize=address,undefined)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=address)
 endif()
+
+if(ENABLE_UBSAN)
+    add_compile_options(-fsanitize=undefined -fno-sanitize-recover=all -g)
+    add_link_options(-fsanitize=undefined)
+endif()
+
 add_compile_options(-Wall -Wextra -Wpedantic)
 
 # ============ 输出目录 ============
