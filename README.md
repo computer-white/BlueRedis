@@ -138,7 +138,7 @@ make -j$(nproc)
 - 可执行文件:`bin/`
 - 库文件:`lib/libblue.so` / `lib/libblue.a`
 
-### 只构建库,不构建测试(在不使用Google Test时使用，因为ASAN的编译选项与absl的冲突)
+### 只构建库,不构建测试
 
 ```bash
 cmake ..
