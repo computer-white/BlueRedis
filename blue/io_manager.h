@@ -62,8 +62,12 @@ namespace blue
                 void reset()
                 {
                     scheduler = nullptr;
+                    if (handle && handle.address())
+                    {
+                        handle.destroy();
+                    }
                     handle = nullptr;
-                    cb = nullptr;
+                    cb = nullptr;       // cb中的对象会被析构，但是协程句柄不会被释放，我没有使用RAII包装句柄
                     thread_id = -1;
                 }
             };
@@ -104,6 +108,7 @@ namespace blue
          * @param h 协程句柄
          * @param cd 回调函数
          * @param thread_id 指定线程id执行
+         * @note 注意不要提交一个用cb包装的协程句柄，会造成协程内存泄漏(看reset逻辑)
          */
         int addEvent(int fd, Event event, 
                      std::coroutine_handle<> h = nullptr, 

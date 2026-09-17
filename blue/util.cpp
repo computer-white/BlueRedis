@@ -50,7 +50,7 @@ namespace blue
             return;
         }
 
-        for (size_t i = skip; i < s; i++)
+        for (ssize_t i = skip; i < s; i++)
         {
             bt.push_back(string[i]);
         }

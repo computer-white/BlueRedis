@@ -202,9 +202,9 @@ namespace blue
 
         private:
             MRWmutexType m_mutex;
-            /* /blue/xxx -> servlet */
+            // /blue/xxx -> servlet
             std::unordered_map<std::string, std::shared_ptr<Servlet> > m_pinpointData; // 精准匹配
-            /* /blue/* -> servlet */
+            // /blue/* -> servlet
             std::vector<std::pair<std::string, std::shared_ptr<Servlet> >> m_blurData; // 模糊匹配
 
             std::shared_ptr<Servlet> m_default;

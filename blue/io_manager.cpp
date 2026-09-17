@@ -53,6 +53,7 @@ namespace blue
 
     void IOManager::FdContext::resetEventContext(IOManager::FdContext::EventContext &ec)
     {
+        // 这边可以reset，因为它发生在delEvent中，从epoll中删除事件确实应该释放协程内存
         ec.reset();
     }
 
@@ -76,9 +77,28 @@ namespace blue
         std::coroutine_handle<> handle = ctx.handle;
         int thread_id = ctx.thread_id;
 
-        ctx.reset();
+        // 不能reset,假如有协程句柄，reset后会要么内存泄漏要么ASAN
+        // ctx.reset();
 
         // 调度任务
+        // if (!scheduler)
+        // {
+        //     // BLUE_LOG_ERROR(g_logger) << "triggerContext: scheduler is null";
+
+        //     // // 降级处理：直接在当前线程执行
+        //     // if (cb)
+        //     // {
+        //     //     cb();
+        //     // }
+        //     // if (handle && handle.address() && !handle.done())
+        //     // {
+        //     //     handle.resume();
+        //     // }
+        //     // return;
+
+        //     // 倘若时耗时任务，非阻塞线程
+        //     // 在addEvent里面设置为IOManager的this
+        // }
         if (scheduler)
         {
             if (cb)
@@ -88,20 +108,6 @@ namespace blue
             else if (handle)
             {
                 scheduler->schedule(handle, thread_id);
-            }
-        }
-        else
-        {
-            BLUE_LOG_ERROR(g_logger) << "triggerContext: scheduler is null";
-
-            // 降级处理：直接在当前线程执行
-            if (cb)
-            {
-                cb();
-            }
-            if (handle && !handle.done())
-            {
-                handle.resume();
             }
         }
     }
@@ -178,6 +184,13 @@ namespace blue
             return -1;
         }
 
+        if (!h && !cb)
+        {
+            // 没有有效的回调和协程句柄
+            BLUE_LOG_ERROR(g_logger) << "addEvent: no callback or handle provided";
+            return -1;
+        }
+
         // 获取或创建 FdContext
         FdContext *fd_ctx = nullptr;
 
@@ -251,6 +264,10 @@ namespace blue
         // 设置事件上下文
         FdContext::EventContext &event_ctx = fd_ctx->getEventContext(event);
         event_ctx.scheduler = Scheduler::GetThis();
+        if (!event_ctx.scheduler)
+        {
+            event_ctx.scheduler = this; // 兜底
+        }
 
         if (cb)
         {
@@ -261,13 +278,6 @@ namespace blue
         {
             event_ctx.handle = h;
             event_ctx.thread_id = thread_id;
-        }
-        else
-        {
-            // 没有有效的回调或协程句柄
-            BLUE_LOG_ERROR(g_logger) << "addEvent: no callback or handle provided";
-            delEvent(fd, event);
-            return -1;
         }
 
         return 0;
@@ -597,19 +607,19 @@ namespace blue
     {
         std::unique_lock<std::mutex> lock(m_doneMutex);
         m_waiting.fetch_add(1, std::memory_order_acq_rel);
-        m_doneCv.wait(lock, [this]
-                      {
+        while (true)
+        {
             size_t total = m_pending.load(std::memory_order_acquire);
-            for (auto& queue : m_threadQueues)
+            for (auto &queue : m_threadQueues)
             {
                 total += queue->pending.load(std::memory_order_acquire);
             }
-            // BLUE_LOG_INFO(g_logger) << "total: " << total << " m_pendingEventCounts: " << m_pendingEventCounts.load(std::memory_order_acquire)
-            //                         << " hasTimer: " << TimerManager::hasTimer();
-            return total == 0 
-                   && m_pendingEventCounts.load(std::memory_order_acquire) == 0
-                   && !TimerManager::hasTimer()
-                   && m_running.load(std::memory_order_acquire) == 0; });
+            if (total == 0 && m_pendingEventCounts.load(std::memory_order_acquire) == 0 && !TimerManager::hasTimer() && m_running.load(std::memory_order_acquire) == 0)
+            {
+                break;
+            }
+            m_doneCv.wait_for(lock, std::chrono::milliseconds(10));
+        }
         m_waiting.fetch_sub(1, std::memory_order_acq_rel);
     }
 

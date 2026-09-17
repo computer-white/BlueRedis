@@ -87,9 +87,10 @@ namespace blue
          */
         struct promise_type
         {
-            std::coroutine_handle<> fa;   // 父协程句柄(用于等待协程)
-            std::exception_ptr exception; // 协程内部异常
-            T val;                        // 协程返回值
+            std::coroutine_handle<> fa;        // 父协程句柄(用于等待协程)
+            std::exception_ptr exception;      // 协程内部异常
+            bool detached = false; // 已被调度器 / 定时器接管
+            T val;                             // 协程返回值
 
             // 都是协程必要函数
             /**
@@ -240,7 +241,6 @@ namespace blue
         //     }
         // }
 
-
         /**
          * @brief 保存父协程，并对子协程对称转移
          */
@@ -275,26 +275,26 @@ namespace blue
          */
         void destroySafe()
         {
-            if (handle)
+            if (!handle)
             {
-                if (handle.done())
-                {
-                    HandleType h = handle;
-                    handle = nullptr;
-                    h.destroy();
-                }
-                else if (handle.promise().fa == nullptr)
-                {
-                    HandleType h = handle;
-                    handle = nullptr;
-                    h.destroy();
-                }
-                // 已交给调度器,由调度器在协程完成后自行清理
-                // else
-                // {
-                //     handle = nullptr; // 协程未完成，仅释放引用(若协程创建但是没有完成会导致协程内存泄漏)
-                // }
+                return;
             }
+            HandleType h = std::exchange(handle, nullptr);
+
+            if (h.done())
+            {
+                h.destroy();
+                return;
+            }
+            if (h.promise().detached)
+            {
+                return; // 调度器管
+            }
+            if (h.promise().fa != nullptr)
+            {
+                return;  // 父协程管
+            }
+            h.destroy(); // 未动过,安全销毁
         }
     };
 
@@ -306,6 +306,7 @@ namespace blue
         {
             std::coroutine_handle<> fa;
             std::exception_ptr exception;
+            bool detached = false;
 
             Task get_return_object()
             {
@@ -417,27 +418,26 @@ namespace blue
 
         void destroySafe()
         {
-            if (handle)
+            if (!handle)
             {
-                if (handle.done())
-                {
-                    HandleType h = handle;
-                    handle = nullptr;
-                    h.destroy();
-                }
-                else if (handle.promise().fa == nullptr)
-                {
-                    HandleType h = handle;
-                    handle = nullptr;
-                    h.destroy();
-                }
-                // 已交给调度器,由调度器在协程完成后自行清理
-
-                // else
-                // {
-                //     handle = nullptr; // 协程未完成，仅释放引用(若协程创建但是没有完成会导致协程内存泄漏)
-                // }
+                return;
             }
+            HandleType h = std::exchange(handle, nullptr);
+
+            if (h.done())
+            {
+                h.destroy();
+                return;
+            }
+            if (h.promise().detached)
+            {
+                return; // 调度器管
+            }
+            if (h.promise().fa != nullptr)
+            {
+                return;  // 父协程管
+            }
+            h.destroy(); // 未动过,安全销毁
         }
     };
 

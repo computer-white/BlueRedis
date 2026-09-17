@@ -22,6 +22,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fcoroutines>)
 endif()
 
+# 需要用Google Test测试test_task.cpp时可以使用
 # 开启ASAN 可以抓捕协程创建但不resume,析构时协程帧泄漏
 # 编译时使用cmake .. -DENABLE_ASAN=ON
 option(ENABLE_ASAN "Address Sanitizer" OFF)
@@ -33,6 +34,7 @@ if(ENABLE_ASAN)
                         -g)
     add_link_options(-fsanitize=address,undefined)
 endif()
+add_compile_options(-Wall -Wextra -Wpedantic)
 
 # ============ 输出目录 ============
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)

@@ -656,7 +656,7 @@ namespace blue
 
     void ByteArray::addCapacity(size_t size)
     {
-        int remain = getCapacity();
+        size_t remain = getCapacity();
         if (size == 0 || remain >= size)
         {
             return;

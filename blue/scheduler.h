@@ -136,13 +136,18 @@ namespace blue
             {
                 return;
             }
-
+            auto h = task_holder->getHandle();
+            h.promise().detached = true;
             schedule([task_holder]() mutable
                      {
                 if (*task_holder && !task_holder->done())
                 {
                     task_holder->resume();
-                } }, thr);
+                } 
+                if (*task_holder && task_holder->done())
+                {
+                    task_holder->destroy();
+                }}, thr);
         }
 
         /**

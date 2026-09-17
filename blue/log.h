@@ -290,7 +290,7 @@ namespace blue
          * @brief 获取是否有设置输出格式
          * @note 原子操作
          */
-        const bool gatHasformatter() const { return m_hasformatter.load(std::memory_order_acquire); }
+        bool gatHasformatter() const { return m_hasformatter.load(std::memory_order_acquire); }
 
     protected:
         mutable MutexType m_mutex;
@@ -513,8 +513,8 @@ namespace blue
         LogFormatter::LogFormatterPtr m_formatter;          // 输出日志格式
     };
 
-    // logger管理类,生成root(默认name = "root",具有formatter格式,\
-通过logger的Appender方法来给没有formatter的Appender设置formatter)
+    // logger管理类,生成root(默认name = "root",具有formatter格式,
+    // 通过logger的Appender方法来给没有formatter的Appender设置formatter)
     class LoggerManager
     {
     public:

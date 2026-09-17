@@ -96,7 +96,7 @@ namespace blue
 
     private:
         T &m_mutex;
-        bool m_locked;
+        bool m_locked = false;
     };
 
     // 读锁模板

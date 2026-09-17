@@ -131,11 +131,12 @@ TEST(TaskStress, ManySequential)
 }
 
 // 让ASAN捕获到没有完成的协程泄漏
-TEST(TaskLeak, UnfinishedTaskDestroyed) {
+TEST(TaskLeak, UnfinishedTaskDestroyed)
+{
     {
         auto t = add_async(1, 2);
         // 故意不 resume
-    }   // ← 析构,如果泄漏 ASAN 会报(已修复task.h内部逻辑)
+    } // ← 析构,如果泄漏 ASAN 会报(已修复task.h内部逻辑)
     SUCCEED();
 }
 
@@ -154,12 +155,15 @@ protected:
 
 TEST_F(CoroutineIOTest, SleepCompletes)
 {
-    std::atomic<bool> done{false};
-    iom_->schedule([&]() -> blue::Task<void>
+    auto done = std::make_shared<std::atomic<bool>>(false);
+
+    iom_->schedule([](std::shared_ptr<std::atomic<bool>> done)
+                       -> blue::Task<void>
                    {
-        co_await blue::sleepForMs(10);
-        done = true;
-        co_return; }());
+    co_await blue::sleepForMs(10);
+    done->store(true);
+    co_return; }(done));
+
     iom_->wait_all();
-    EXPECT_TRUE(done.load());
+    EXPECT_TRUE(done->load());
 }

@@ -73,6 +73,7 @@ endmacro()
 # 单元测试
 add_gtest(test_url)
 add_gtest(test_task)
+add_gtest(test_iomanager)
 # add_gtest(test_config)
 # add_gtest(test_bytearray)
 # add_gtest(test_bytearrayBuffer)

@@ -122,7 +122,8 @@ namespace blue
 
         schedule([h]() mutable
                  {
-            if (h && !h.done()) h.resume(); }, thr);
+            if (h && h.address() && !h.done()) h.resume();
+            if (h.done()) h.destroy(); }, thr);
     }
 
     void Scheduler::schedule(std::function<void()> cb, int thr)
@@ -335,14 +336,17 @@ namespace blue
     {
         std::unique_lock<std::mutex> lock(m_doneMutex);
         m_waiting.fetch_add(1, std::memory_order_acq_rel);
-        m_doneCv.wait(lock, [this]
-                      {
+        while (true)
+        {
             size_t total = m_pending.load(std::memory_order_acquire);
-            for (auto& queue : m_threadQueues)
+            for (auto &queue : m_threadQueues)
             {
                 total += queue->pending.load(std::memory_order_acquire);
             }
-            return total == 0 && m_running.load(std::memory_order_acquire) == 0; });
+            if (total == 0 && m_running.load(std::memory_order_acquire) == 0)
+                break;
+            m_doneCv.wait_for(lock, std::chrono::milliseconds(10));
+        }
         m_waiting.fetch_sub(1, std::memory_order_acq_rel);
     }
 
