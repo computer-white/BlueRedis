@@ -2,9 +2,18 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, dev ]
+    branches: [ main, master ]   # 只在 main 上 push 触发
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/**'             # 改 CI 配置本身不触发
   pull_request:
-    branches: [ main, master, dev ]
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:             # 允许手动触发
 
 jobs:
   build-and-test:
