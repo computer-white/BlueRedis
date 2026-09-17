@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, dev ]
+  pull_request:
+    branches: [ main, master, dev ]
+
+jobs:
+  build-and-test:
+    name: Build & Test (g++-13)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain (g++-13)
+        run: |
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get install -y \
+            cmake ragel pkg-config \
+            libboost-all-dev \
+            libssl-dev \
+            libyaml-cpp-dev \
+            libhiredis-dev \
+            libgtest-dev libgmock-dev \
+            libabsl-dev \
+            nlohmann-json3-dev \
+            libidn2-dev \
+            libgumbo-dev \
+            default-libmysqlclient-dev \
+            zlib1g-dev
+
+      - name: Verify toolchain
+        run: |
+          g++-13 --version
+          cmake --version
+          ragel --version
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-13 \
+            -DCMAKE_C_COMPILER=gcc-13
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run tests
+        working-directory: build
+        run: ctest --output-on-failure --timeout 120
+
+      - name: Upload test logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: build/Testing/Temporary/
