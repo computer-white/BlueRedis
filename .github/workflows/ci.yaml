@@ -20,6 +20,10 @@ jobs:
     name: Build & Test (g++-13)
     runs-on: ubuntu-22.04
 
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true       # ← 新的 push 会取消旧的运行
+    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
