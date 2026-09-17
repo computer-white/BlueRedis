@@ -143,11 +143,7 @@ namespace blue
                 if (*task_holder && !task_holder->done())
                 {
                     task_holder->resume();
-                } 
-                if (*task_holder && task_holder->done())
-                {
-                    task_holder->destroy();
-                }}, thr);
+                } }, thr);
         }
 
         /**

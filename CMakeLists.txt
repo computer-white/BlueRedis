@@ -27,11 +27,13 @@ option(ENABLE_ASAN  "Address Sanitizer"              OFF)
 option(ENABLE_UBSAN "Undefined Behavior Sanitizer"   OFF)
 
 if(ENABLE_ASAN)
+    message("ASAN ON")
     add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
     add_link_options(-fsanitize=address)
 endif()
 
 if(ENABLE_UBSAN)
+    message("UBSAN ON")
     add_compile_options(-fsanitize=undefined -fno-sanitize-recover=all -g)
     add_link_options(-fsanitize=undefined)
 endif()
