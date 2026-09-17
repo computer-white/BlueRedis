@@ -179,6 +179,256 @@ ctest --output-on-failure
 
 ---
 
+## ⚠️ 开发注意事项
+
+> 以下是踩过坑之后总结的经验。**写协程代码前请读一遍**,能省几小时调试。
+
+---
+
+### 1. 协程 lambda 捕获栈变量 → 悬空引用
+
+C++20 协程帧**只保存 lambda 对象的 `this` 指针**,不保存 lambda 对象本身。如果 lambda 是临时对象且协程挂起,捕获的变量会在挂起点之后悬空。
+
+**禁止**:
+
+```cpp
+// ❌ 危险:协程帧只保存 lambda 的 this,挂起后 lambda 对象可能已析构
+iom.schedule([x, y]() -> blue::Task<void> {
+    co_await sleepForMs(10);
+    use(x, y);   // 💥 可能访问已析构的 lambda 对象
+}());
+```
+
+**正确做法**:把数据通过**函数参数**传入(参数会被拷贝到协程帧,生命周期与协程一致):
+
+```cpp
+// ✅ 安全
+// 同时注意协程参数不能使用&引用，一般我会使用值传递加上std::move()来避免不必要的拷贝
+blue::Task<void> do_thing(X x, Y y) {
+    co_await sleepForMs(10);
+    use(x, y);
+    co_return;
+}
+iom.schedule(do_thing(x, y));
+```
+
+**判断标准**:只要是"会挂起"的协程,就**不能用 lambda 捕获**。无捕获的 lambda 或普通函数才安全。
+
+---
+
+### 2. 协程句柄所有权规则
+
+协程句柄在生命周期中会被**多方持有**。每一方都必须清楚"什么时候我持有,什么时候我交出去"。
+
+| 阶段 | 持有者 | 谁负责 destroy |
+|---|---|---|
+| `Task` 创建到 `schedule` | `Task` 对象 | `Task::destroySafe` |
+| 已 `schedule`,在队列里 | `Scheduler` 队列 | worker 取出执行后 |
+| 挂起在 timer 里 | `TimerManager` | 到期后转交 Scheduler |
+| 挂起在 fd 上 | `FdContext` | 触发后转交 Scheduler |
+| `co_await` 嵌套 | 父协程 | 父协程 `await_resume` 后 |
+| **顶层协程完成** | **Scheduler** | **worker 里 `h.destroy()`** |
+
+**三条铁律**:
+
+1. **同一个句柄不能同时被 timer 和 fd 持有**(会 double destroy)
+2. **recurring timer 只支持回调,不支持协程句柄**(句柄被消费后清空)
+3. **`SubCorroutine` 不自毁**,由 `Scheduler::schedule(handle)` 的 worker 负责最终 destroy
+
+---
+
+### 3. `detached` 标记的真正含义
+
+**`detached = true` 是"句柄所有权声明"**,不是"让协程能在任意线程跑"的魔法。
+
+它表示:
+
+> 这个协程句柄的**所有权已经交给外部**(调度器 / timer / fd / 父协程),
+> **`Task` 对象析构时不应该 destroy 它**。
+
+**什么时候需要 `detached = true`?**
+
+| 场景 | 需要 detached? |
+|---|---|
+| 协程会挂起在 timer 上(`co_await sleepForMs`) | ✅ 需要 |
+| 协程会挂起在 fd 上(`co_await FdAwaiter`) | ✅ 需要 |
+| 协程只手动 `resume` 到底,不挂起 | ❌ 不需要 |
+| 通过 `iom.schedule(Task)` 提交 | ✅ 自动设置,不用手动 |
+
+**什么时候 `detached` 不够?**
+
+**`detached` 只管"句柄销毁",不管"运行上下文"。** 如果协程要挂起在 timer / fd 上,还需要**当前线程有 `t_Scheduler` 上下文**(见第 4 条)。
+
+---
+
+### 4. `co_await` 挂起操作依赖线程局部上下文(这块可以看tests/test_taskbt.cpp)
+
+`co_await sleepForMs(ms)` / `co_await FdAwaiter(...)` 内部会调 `IOManager::GetThis()`,
+它依赖**当前线程**的 `t_Scheduler`(线程局部变量)。
+
+**在 worker 线程里**:`setThis` 由 `Scheduler::start` 自动完成,直接 `iom.schedule(coro)` 即可。
+
+**在调度器外的线程里**(比如 `main` 手动 `resume`),必须**手动设置 `Scheduler::setThis(&iom)`**:
+
+```cpp
+blue::IOManager iom(2);
+
+// ⚠️ 必须:让 main 线程的 t_Scheduler 指向 iom（没有这个就会导致下面紧接着的症状）
+blue::Scheduler::setThis(&iom);
+
+auto y = tem1();
+auto h = y.getHandle();
+h.promise().detached = true;   // 句柄会被 timer 接管,Task 析构时不要 destroy
+y.resume();
+
+// ⚠️ iom 必须活到所有协程完成
+sleep(5);
+```
+
+**症状**:崩溃在 `TimerManager::addTimer` 或 `IOManager::addEvent`,
+gdb 里 `this` 是个**很小的值**(如 `0x168`),本质是 `nullptr->成员` 访问。
+
+**原因**:`IOManager::GetThis()` 返回 `nullptr`,`nullptr->addTimer(...)` 里
+`this->m_mutex` 的地址变成 `nullptr + 偏移量`,直接段错误。
+
+**推荐做法**:**能用 `iom.schedule(coro)` 就别手动 `resume`。** `schedule` 会自动设 `detached` 并运行在正确的线程上。
+
+---
+
+### 5. `Task` 是懒启动的
+
+因为 `initial_suspend` 返回 `suspend_always`,创建后协程体**不会自动执行**:
+
+```cpp
+auto t = add_async(1, 2);   // ← 此时协程体一行都没跑
+t.resume();                 // ← 需要显式驱动
+t.get();                    // ← 拿结果 / 重抛异常
+```
+
+**这带来的好处**:可以精确控制何时启动,避免意外的同步执行。
+
+**这带来的注意点**:忘了 `resume` 会导致协程永远不执行;`Task` 析构时如果协程未完成,
+`destroySafe` 会判断是否 `detached` 来决定是否销毁帧(见第 2、3 条)。
+
+---
+
+### 6. 不要在协程里用 GTest 的 `ASSERT_*`
+
+`ASSERT_*` 会 `return`,协程里可能不走清理路径,导致句柄泄漏或状态不一致。
+
+**用 `EXPECT_*`**(不提前返回,记录失败后继续执行)。
+
+如果确实需要"提前中止",用 `if (!cond) co_return;` 或抛异常。
+
+---
+
+### 7. ASAN + UBSAN 是强制的
+
+开发新功能时**至少**跑一次:
+
+```bash
+cmake .. -DENABLE_ASAN=ON
+make -j$(nproc)
+ctest --output-on-failure
+```
+
+**以下 bug 都是 ASAN / UBSAN 抓到的(靠功能测试根本发现不了)**:
+
+| Bug | 检测器 | 说明 |
+|---|---|---|
+| 协程帧泄漏(72 字节 × N) | LeakSanitizer | `Task` 未 resume 或挂起后没人 destroy |
+| 协程 lambda 捕获栈变量 | ASAN | `stack-use-after-scope` |
+| `bool` 成员未初始化 | UBSAN | `load of value 64, which is not a valid value for type 'bool'` |
+| 调度器重复 resume 已销毁句柄 | ASAN | `heap-use-after-free` |
+| 句柄被 timer + fd 同时持有 | ASAN | `heap-use-after-free` |
+
+**关于 UBSAN + absl 的已知冲突**:
+
+`-fsanitize=undefined` 和 absl 的某些 `consteval` 模板代码(GCC 12/13)不兼容,
+表现为 `hash_policy_traits.h: '(... == 0)' is not a constant expression`。
+
+**解决方案**:
+
+```cmake
+option(ENABLE_ASAN  "Address Sanitizer"              OFF)
+option(ENABLE_UBSAN "Undefined Behavior Sanitizer"   OFF)
+
+if(ENABLE_ASAN)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=address)
+endif()
+
+if(ENABLE_UBSAN)
+    add_compile_options(-fsanitize=undefined -fno-sanitize-recover=all -g)
+    add_link_options(-fsanitize=undefined)
+endif()
+```
+
+**用法**:
+
+```bash
+cmake .. -DENABLE_ASAN=ON                  # 日常:ASAN 抓内存
+cmake .. -DENABLE_UBSAN=ON                 # 定期:UBSAN 抓 UB(可能和 absl 冲突)
+```
+
+**UBSAN 冲突时**,给触发冲突的 target 单独关:
+
+```cmake
+if(ENABLE_UBSAN)
+    target_compile_options(blueRedis PRIVATE -fno-sanitize=undefined)
+endif()
+```
+
+---
+
+### 8. `wait_all` 的语义
+
+- 阻塞到**所有任务 + fd 事件 + timer** 都结束
+- **不能**在 worker 线程里调(会死锁)
+- 多次调用是安全的
+- 内部用 `wait_for(10ms)` 兜底,避免条件变量的"丢失唤醒"导致偶发卡死
+
+**丢失唤醒**是条件变量的经典陷阱:
+
+- worker 修改状态后 `notify`,但 `wait_all` 还没真正进入 `wait`
+- `notify` 丢失 → `wait_all` 永久阻塞
+- **修法**:`wait_for` 加超时,即使丢失唤醒也能定期重试
+
+---
+
+### 9. 不要在 `IOManager` 析构前关闭它管理的 fd
+
+`FdContext` 里记录了 fd,`~IOManager` 会 `close` 自己内部创建的 `eventfd` 和 `epfd`,
+但**不负责关你注册进来的业务 fd**。
+
+**正确做法**:先 `iom.wait_all()`,再关业务 fd,最后析构 `iom`:
+
+```cpp
+{
+    blue::IOManager iom(2);
+    
+    int sock = socket(...);
+    iom.addEvent(sock, READ, handle);
+    // ...
+    
+    iom.wait_all();    // ← 先等所有任务结束
+    close(sock);       // ← 再关业务 fd
+}                      // ← iom 析构
+```
+
+---
+
+### 10. 快速排查清单
+
+遇到协程相关的问题,按这个顺序查:
+
+1. **崩溃在 `addTimer` / `addEvent`,gdb 里 `this` 是小数值** → 当前线程 `t_Scheduler` 为 `nullptr`,见第 4 条
+2. **ASAN 报 `stack-use-after-scope`** → 协程 lambda 捕获栈变量,见第 1 条
+3. **ASAN 报 `heap-use-after-free`** → 句柄被多处持有或提前销毁,见第 2、3 条
+4. **LeakSanitizer 报泄漏** → `Task` 未 resume 或挂起后没人 destroy,见第 2、3 条
+5. **`wait_all` 偶发卡死** → 条件变量丢失唤醒,见第 8 条
+6. **UBSAN 报 absl 的 `consteval` 错误** → ASAN / UBSAN 拆开,见第 7 条
+
 ## 快速开始
 
 ```cpp
@@ -200,7 +450,7 @@ int main()
 }
 ```
 
-## 启动服务器
+## 启动Redis服务器(保证没有开UBSAN,会与absl冲突)
 
 ### 1. Default (Localhost)
 ```bash
