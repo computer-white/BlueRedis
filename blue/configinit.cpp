@@ -72,8 +72,8 @@ namespace blue
                         blue::Logger::LoggerPtr new_logger;
                         if (it == old_val.end())
                         {
-                            // 新增,利用名字查找,这样就会将新增的放入到\
-                    Message管理的logger里面,同时设置了默认的Appender
+                            // 新增,利用名字查找,这样就会将新增的放入到
+                            // Message管理的logger里面,同时设置了默认的Appender
                             new_logger = BLUE_LOG_NAME(n_val.name);
                         }
                         else

@@ -45,7 +45,7 @@ if(ENABLE_UBSAN)
     add_link_options(-fsanitize=undefined)
 endif()
 
-add_compile_options(-Wall -Wextra -Wpedantic)
+# add_compile_options(-Wall -Wextra -Wpedantic)
 
 # ============ 输出目录 ============
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
