@@ -621,6 +621,7 @@ namespace blue
             m_doneCv.wait_for(lock, std::chrono::milliseconds(10));
         }
         m_waiting.fetch_sub(1, std::memory_order_acq_rel);
+        clearFinishedTasks();
     }
 
     IOManager *IOManager::GetThis()

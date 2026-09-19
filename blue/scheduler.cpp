@@ -122,8 +122,7 @@ namespace blue
 
         schedule([h]() mutable
                  {
-            if (h && h.address() && !h.done()) h.resume();
-            if (h.done()) h.destroy(); }, thr);
+            if (h && h.address() && !h.done()) h.resume();}, thr);
     }
 
     void Scheduler::schedule(std::function<void()> cb, int thr)
@@ -292,7 +291,7 @@ namespace blue
         drainLocalQueue(myIndex);
     }
 
-    void Scheduler::drainLocalQueue(size_t index)
+    void Scheduler::drainLocalQueue(int index)
     {
         auto &queue = m_threadQueues[index];
         std::vector<FuncAndId> remaining;
@@ -348,6 +347,7 @@ namespace blue
             m_doneCv.wait_for(lock, std::chrono::milliseconds(10));
         }
         m_waiting.fetch_sub(1, std::memory_order_acq_rel);
+        clearFinishedTasks();
     }
 
     int Scheduler::GetThreadIndex()

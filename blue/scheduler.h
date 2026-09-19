@@ -33,6 +33,7 @@
 #include <condition_variable>
 #include <functional>
 #include <atomic>
+#include <list>
 #include "blue/task.h"
 #include "blue/mthread.h"
 
@@ -131,19 +132,22 @@ namespace blue
         template <typename T>
         void schedule(Task<T> task, int thr = -1)
         {
-            auto task_holder = std::make_shared<Task<T>>(std::move(task));
-            if (!(*task_holder) || task_holder->done())
+            auto h = task.getHandleNoType(); // 保存裸句柄用于 lambda
+
+            auto task_base = blue::makeTaskBase<T>(std::move(task));
             {
-                return;
+                std::lock_guard<std::mutex> lock(m_runningMutex);
+                m_runningTasks.push_back(task_base);
             }
-            auto h = task_holder->getHandle();
-            h.promise().detached = true;
-            schedule([task_holder]() mutable
-                     {
-                if (*task_holder && !task_holder->done())
+
+            schedule([task_base, h]() mutable
+            {
+                if (h && h.address() && !h.done())
                 {
-                    task_holder->resume();
-                } }, thr);
+                    h.resume();
+                }
+                // 统一在 wait_all 里清理。
+            }, thr);
         }
 
         /**
@@ -167,6 +171,28 @@ namespace blue
          */
         bool stealTask(FuncAndId &task, int max_attempts = 3);
 
+        /**
+         * @brief m_running + val
+         * @note 即将有一个正在运行的协程(类似go的WaitGroup 的 Add())
+         */
+        void runAdd(int val = 1) noexcept { m_running.fetch_add(val, std::memory_order_acq_rel); }
+
+        /**
+         * @brief m_running - val
+         */
+        void runSub(int val = 1) noexcept { m_running.fetch_sub(val, std::memory_order_acq_rel); }
+
+        /**
+         * @brief 清理已完成的顶层 Task（在 wait_all 里调用）
+         */
+        void clearFinishedTasks()
+        {
+            std::lock_guard<std::mutex> lock(m_runningMutex);
+            m_runningTasks.remove_if([](const std::shared_ptr<blue::TaskBase> &t)
+                                     { return t->done(); });
+        }
+
+    public:
         /**
          * @brief 设置调度器指针
          */
@@ -199,7 +225,7 @@ namespace blue
          * @param index 线程索引
          * @note 内部还是提交给全局调度器去调度.防止一些任务时间很长拖慢当前线程
          */
-        void drainLocalQueue(size_t index);
+        void drainLocalQueue(int index);
 
     protected:
         // iomanager需要使用
@@ -218,6 +244,9 @@ namespace blue
         std::mutex m_Schemutex;           // 互斥变量
         std::condition_variable m_Schecv; // 条件变量
         std::deque<FuncAndId> m_queue;    // 全局任务队列
+
+        std::mutex m_runningMutex;
+        std::list<std::shared_ptr<blue::TaskBase>> m_runningTasks; // 持有顶层 Task 直到完成/清理
     private:
         static thread_local Scheduler *t_Scheduler; // 线程局部调度器指针
         static thread_local int t_threadIndex;      // 线程索引,切换线程队列

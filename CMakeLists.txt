@@ -1,16 +1,13 @@
 cmake_minimum_required(VERSION 3.14)
-project(blue)
-
 # ============ 编译器 ============
-# set(CMAKE_CXX_COMPILER "g++-12")
-# set(CMAKE_C_COMPILER   "gcc-12")
 if(NOT DEFINED CMAKE_CXX_COMPILER)
-    find_program(GXX13 g++-13)
-    if(GXX13)
-        set(CMAKE_CXX_COMPILER "g++-13")
-        set(CMAKE_C_COMPILER   "gcc-13")
-    endif()
+    set(CMAKE_CXX_COMPILER "g++-13")
+    set(CMAKE_C_COMPILER   "gcc-13")
+else()
+    set(CMAKE_CXX_COMPILER "g++-12")
+    set(CMAKE_C_COMPILER   "gcc-12")
 endif()
+project(blue)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

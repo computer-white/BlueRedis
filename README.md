@@ -223,84 +223,42 @@ iom.schedule(do_thing(x, y));
 
 ### 2. 协程句柄所有权规则
 
-协程句柄在生命周期中会被**多方持有**。每一方都必须清楚"什么时候我持有,什么时候我交出去"。
+```bash
+我重新设计了架构，或者说改正了架构，让顶层Task的生命周期跟随Handle的生命周期
+我最开始用的是把Task设计为shared_ptr然后同promise_type绑定(在promise_type中保存为self),
+在通过schedule提交给调度器时，通过std::coroutine_handle<typename blue::Task<T>::promise_type>::from_address(h.address())
+来拿到带有promise类型的handle并将handle.promise().self = shared_ptr(Task<T>)
+以此来拉长Task的生命周期，并当final_suspend时（即协程结束了）调用self.reset()。
+期间顶层Task需要co_await SleepFor()时 需要通过拿到带有promise类型的handle并拿到 auto task = handle.promise().self
+之后通过提交给定时器一个lambda捕获task来提升生命周期。
 
-| 阶段 | 持有者 | 谁负责 destroy |
-|---|---|---|
-| `Task` 创建到 `schedule` | `Task` 对象 | `Task::destroySafe` |
-| 已 `schedule`,在队列里 | `Scheduler` 队列 | worker 取出执行后 |
-| 挂起在 timer 里 | `TimerManager` | 到期后转交 Scheduler |
-| 挂起在 fd 上 | `FdContext` | 触发后转交 Scheduler |
-| `co_await` 嵌套 | 父协程 | 父协程 `await_resume` 后 |
-| **顶层协程完成** | **Scheduler** | **worker 里 `h.destroy()`** |
+这是个屎山设计，在一部分测试中（可以看tests/test_taskbt.cpp中当child()没有co_await SleepFor(1)时）
+他会正常运行，但是当出现 a co_await b; b co_await SleepFor()时
+就会出现内存泄漏，原因我想是因为b是一个临时的Task，它并没有设置self，导致临时Task在定时器中没有被延长存储就被析构了
+之后导致顶层协程不会被恢复从而导致内存泄漏
 
-**三条铁律**:
+仔细想，目的就是要去延迟顶层Task的生命周期，我不希望Task被提交给调度器后在handle变为done之前就析构了
+至于临时的那些Task他们结束后handle被destroy就行，无需担心。（另外测试中有一些测试是当协程被创建但是没有被执行
+当Task析构时，handle也应该destroy）
 
-1. **同一个句柄不能同时被 timer 和 fd 持有**(会 double destroy)
-2. **recurring timer 只支持回调,不支持协程句柄**(句柄被消费后清空)
-3. **`SubCorroutine` 不自毁**,由 `Scheduler::schedule(handle)` 的 worker 负责最终 destroy
+所以最终设计为Task只管理对称转移，Task的生命周期由调度器统一管理，由于最初的Task是一个模板，而调度器不是一个模板
+导致我一开始就pass了这个想法，但是被AI敲打后，发现这应该才是合理的解耦的设计。感叹模板编程的强大，赞美AI
 
----
-
-### 3. `detached` 标记的真正含义
-
-**`detached = true` 是"句柄所有权声明"**,不是"让协程能在任意线程跑"的魔法。
-
-它表示:
-
-> 这个协程句柄的**所有权已经交给外部**(调度器 / timer / fd / 父协程),
-> **`Task` 对象析构时不应该 destroy 它**。
-
-**什么时候需要 `detached = true`?**
-
-| 场景 | 需要 detached? |
-|---|---|
-| 协程会挂起在 timer 上(`co_await sleepForMs`) | ✅ 需要 |
-| 协程会挂起在 fd 上(`co_await FdAwaiter`) | ✅ 需要 |
-| 协程只手动 `resume` 到底,不挂起 | ❌ 不需要 |
-| 通过 `iom.schedule(Task)` 提交 | ✅ 自动设置,不用手动 |
-
-**什么时候 `detached` 不够?**
-
-**`detached` 只管"句柄销毁",不管"运行上下文"。** 如果协程要挂起在 timer / fd 上,还需要**当前线程有 `t_Scheduler` 上下文**(见第 4 条)。
-
----
-
-### 4. `co_await` 挂起操作依赖线程局部上下文(这块可以看tests/test_taskbt.cpp)
-
-`co_await sleepForMs(ms)` / `co_await FdAwaiter(...)` 内部会调 `IOManager::GetThis()`,
-它依赖**当前线程**的 `t_Scheduler`(线程局部变量)。
-
-**在 worker 线程里**:`setThis` 由 `Scheduler::start` 自动完成,直接 `iom.schedule(coro)` 即可。
-
-**在调度器外的线程里**(比如 `main` 手动 `resume`),必须**手动设置 `Scheduler::setThis(&iom)`**:
-
-```cpp
-blue::IOManager iom(2);
-
-// ⚠️ 必须:让 main 线程的 t_Scheduler 指向 iom（没有这个就会导致下面紧接着的症状）
-blue::Scheduler::setThis(&iom);
-
-auto y = tem1();
-auto h = y.getHandle();
-h.promise().detached = true;   // 句柄会被 timer 接管,Task 析构时不要 destroy
-y.resume();
-
-// ⚠️ iom 必须活到所有协程完成
-sleep(5);
+在我目前代码的协程架构上，协程之间会出现以下情况:
+1. 协程内部只进行业务逻辑，处理完就退出
+2. 协程内部的业务逻辑需要`等待单个子协程完成`
+3. 协程内部需要co_await sleepFor(1)来等待异步sleep
+4. 协程内部需要`等待多个子协程完成`
+5. 协程内部既需要`等待多个子协程又需要等待异步sleep`
+6. 协程相互等待 a co_await b; b co_await c; c co_await d;
+7. 协程相互等待，子协程又在等待异步sleep
+目前我知道的协程之间用法就这么多，那么对应的测试文件为 tests/test_taskbt.cpp
+详细细节请看测试文件。此外其他带有协程的测试文件有tests/test_task.cpp、test_iomanager.cpp、test_defer.cpp
+test_defer.cpp是模拟go语言的defer的一个简单的defer
 ```
-
-**症状**:崩溃在 `TimerManager::addTimer` 或 `IOManager::addEvent`,
-gdb 里 `this` 是个**很小的值**(如 `0x168`),本质是 `nullptr->成员` 访问。
-
-**原因**:`IOManager::GetThis()` 返回 `nullptr`,`nullptr->addTimer(...)` 里
-`this->m_mutex` 的地址变成 `nullptr + 偏移量`,直接段错误。
-
-**推荐做法**:**能用 `iom.schedule(coro)` 就别手动 `resume`。** `schedule` 会自动设 `detached` 并运行在正确的线程上。
-
 ---
 
-### 5. `Task` 是懒启动的
+### 3. `Task` 是懒启动的
 
 因为 `initial_suspend` 返回 `suspend_always`,创建后协程体**不会自动执行**:
 
@@ -312,127 +270,7 @@ t.get();                    // ← 拿结果 / 重抛异常
 
 **这带来的好处**:可以精确控制何时启动,避免意外的同步执行。
 
-**这带来的注意点**:忘了 `resume` 会导致协程永远不执行;`Task` 析构时如果协程未完成,
-`destroySafe` 会判断是否 `detached` 来决定是否销毁帧(见第 2、3 条)。
-
----
-
-### 6. 不要在协程里用 GTest 的 `ASSERT_*`
-
-`ASSERT_*` 会 `return`,协程里可能不走清理路径,导致句柄泄漏或状态不一致。
-
-**用 `EXPECT_*`**(不提前返回,记录失败后继续执行)。
-
-如果确实需要"提前中止",用 `if (!cond) co_return;` 或抛异常。
-
----
-
-### 7. ASAN + UBSAN 是强制的
-
-开发新功能时**至少**跑一次:
-
-```bash
-cmake .. -DENABLE_ASAN=ON
-make -j$(nproc)
-ctest --output-on-failure
-```
-
-**以下 bug 都是 ASAN / UBSAN 抓到的(靠功能测试根本发现不了)**:
-
-| Bug | 检测器 | 说明 |
-|---|---|---|
-| 协程帧泄漏(72 字节 × N) | LeakSanitizer | `Task` 未 resume 或挂起后没人 destroy |
-| 协程 lambda 捕获栈变量 | ASAN | `stack-use-after-scope` |
-| `bool` 成员未初始化 | UBSAN | `load of value 64, which is not a valid value for type 'bool'` |
-| 调度器重复 resume 已销毁句柄 | ASAN | `heap-use-after-free` |
-| 句柄被 timer + fd 同时持有 | ASAN | `heap-use-after-free` |
-
-**关于 UBSAN + absl 的已知冲突**:
-
-`-fsanitize=undefined` 和 absl 的某些 `consteval` 模板代码(GCC 12/13)不兼容,
-表现为 `hash_policy_traits.h: '(... == 0)' is not a constant expression`。
-
-**解决方案**:
-
-```cmake
-option(ENABLE_ASAN  "Address Sanitizer"              OFF)
-option(ENABLE_UBSAN "Undefined Behavior Sanitizer"   OFF)
-
-if(ENABLE_ASAN)
-    add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
-    add_link_options(-fsanitize=address)
-endif()
-
-if(ENABLE_UBSAN)
-    add_compile_options(-fsanitize=undefined -fno-sanitize-recover=all -g)
-    add_link_options(-fsanitize=undefined)
-endif()
-```
-
-**用法**:
-
-```bash
-cmake .. -DENABLE_ASAN=ON                  # 日常:ASAN 抓内存
-cmake .. -DENABLE_UBSAN=ON                 # 定期:UBSAN 抓 UB(可能和 absl 冲突)
-```
-
-**UBSAN 冲突时**,给触发冲突的 target 单独关:
-
-```cmake
-if(ENABLE_UBSAN)
-    target_compile_options(blueRedis PRIVATE -fno-sanitize=undefined)
-endif()
-```
-
----
-
-### 8. `wait_all` 的语义
-
-- 阻塞到**所有任务 + fd 事件 + timer** 都结束
-- **不能**在 worker 线程里调(会死锁)
-- 多次调用是安全的
-- 内部用 `wait_for(10ms)` 兜底,避免条件变量的"丢失唤醒"导致偶发卡死
-
-**丢失唤醒**是条件变量的经典陷阱:
-
-- worker 修改状态后 `notify`,但 `wait_all` 还没真正进入 `wait`
-- `notify` 丢失 → `wait_all` 永久阻塞
-- **修法**:`wait_for` 加超时,即使丢失唤醒也能定期重试
-
----
-
-### 9. 不要在 `IOManager` 析构前关闭它管理的 fd
-
-`FdContext` 里记录了 fd,`~IOManager` 会 `close` 自己内部创建的 `eventfd` 和 `epfd`,
-但**不负责关你注册进来的业务 fd**。
-
-**正确做法**:先 `iom.wait_all()`,再关业务 fd,最后析构 `iom`:
-
-```cpp
-{
-    blue::IOManager iom(2);
-    
-    int sock = socket(...);
-    iom.addEvent(sock, READ, handle);
-    // ...
-    
-    iom.wait_all();    // ← 先等所有任务结束
-    close(sock);       // ← 再关业务 fd
-}                      // ← iom 析构
-```
-
----
-
-### 10. 快速排查清单
-
-遇到协程相关的问题,按这个顺序查:
-
-1. **崩溃在 `addTimer` / `addEvent`,gdb 里 `this` 是小数值** → 当前线程 `t_Scheduler` 为 `nullptr`,见第 4 条
-2. **ASAN 报 `stack-use-after-scope`** → 协程 lambda 捕获栈变量,见第 1 条
-3. **ASAN 报 `heap-use-after-free`** → 句柄被多处持有或提前销毁,见第 2、3 条
-4. **LeakSanitizer 报泄漏** → `Task` 未 resume 或挂起后没人 destroy,见第 2、3 条
-5. **`wait_all` 偶发卡死** → 条件变量丢失唤醒,见第 8 条
-6. **UBSAN 报 absl 的 `consteval` 错误** → ASAN / UBSAN 拆开,见第 7 条
+**这带来的注意点**:忘了 `resume` 会导致协程永远不执行;
 
 ## 快速开始
 

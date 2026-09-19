@@ -27,286 +27,76 @@
 #include <coroutine>
 #include <exception>
 #include <utility>
+#include <memory>
+#include <variant>
+#include <type_traits>
 
 namespace blue
 {
-    template <typename T = void>
+    template <typename T>
     struct Task;
 
     /**
      * @brief 子协程 final_suspend 的返回类型，用于对称转移
-     *
-     * 当子协程执行完毕后，不回到调度器，而是直接跳转到父协程继续执行。
-     * 减少了调度开销，调用栈更浅。
      */
     struct SubCorroutine
     {
-        std::coroutine_handle<> fa; // 待恢复的父协程句柄
+        std::coroutine_handle<> fa;
 
-        /**
-         * @brief 不提前返回，总是进入 await_suspend
-         */
         bool await_ready() const noexcept { return false; }
 
-        /**
-         * @brief 对称转移：有父协程则直接跳转，否则挂起在 noop 上
-         * @param caller 当前正在挂起的协程（子协程自身）
-         *  下一个要恢复的协程句柄
-         */
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> caller) const noexcept
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<>) const noexcept
         {
             if (fa && fa.address() && !fa.done())
             {
-                return fa; // 直接跳转到父协程（对称转移）
+                return fa;
             }
-            // caller.destroy();
-            return std::noop_coroutine(); // 没有父协程，挂起在空操作上
+            return std::noop_coroutine();
         }
 
-        /**
-         * @brief 恢复时无需额外操作
-         */
         void await_resume() const noexcept {}
 
-        /**
-         * @brief 构造函数
-         * @param p 父协程句柄（可为空）
-         */
         explicit SubCorroutine(std::coroutine_handle<> p = nullptr) : fa(p) {}
     };
 
     /**
-     * @brief 协程任务模板（有返回值）
-     * @tparam T 协程返回值类型
+     * @brief 类型擦除基类：让调度器能持有任意 Task<T>
      */
-    template <typename T>
-    struct Task
+    struct TaskBase
     {
-        /**
-         * @brief 协程要求的 promise_type，控制协程生命周期
-         */
-        struct promise_type
-        {
-            std::coroutine_handle<> fa;        // 父协程句柄(用于等待协程)
-            std::exception_ptr exception;      // 协程内部异常
-            bool detached = false; // 已被调度器 / 定时器接管
-            T val;                             // 协程返回值
-
-            // 都是协程必要函数
-            /**
-             * @brief 协程创建时调用，返回 Task 对象
-             */
-            Task get_return_object()
-            {
-                return Task{std::coroutine_handle<promise_type>::from_promise(*this)};
-            }
-
-            /**
-             * @brief 协程创建后先挂起，由调度器决定何时启动
-             */
-            std::suspend_always initial_suspend() { return {}; }
-
-            /**
-             * @brief 协程结束时挂起，通过 SubCorroutine 对称转移回父协程
-             */
-            SubCorroutine final_suspend() noexcept
-            {
-                return SubCorroutine{fa};
-            }
-
-            /**
-             * @brief co_return value 时调用
-             */
-            void return_value(T v) { val = std::move(v); }
-
-            /**
-             * @brief 协程内部抛出未捕获异常时调用
-             */
-            void unhandled_exception() { exception = std::current_exception(); }
-
-            ~promise_type() = default;
-        };
-
-        using HandleType = std::coroutine_handle<promise_type>;
-
-        // ==================== 构造 / 析构 ====================
-
-        Task() : handle(nullptr) {}
-        explicit Task(HandleType h) : handle(h) {}
-
-        // ~Task() = default;
-        ~Task()
-        {
-            destroySafe();
-        }
-
-        // 禁止拷贝
-        Task(const Task &) = delete;
-        Task &operator=(const Task &) = delete;
-
-        // 允许移动
-        Task(Task &&other) noexcept : handle(std::exchange(other.handle, nullptr)) {}
-
-        Task &operator=(Task &&other) noexcept
-        {
-            if (this != &other)
-            {
-                destroySafe();
-                handle = std::exchange(other.handle, nullptr);
-            }
-            return *this;
-        }
-
-        /**
-         * @brief 协程是否已完成
-         */
-        bool done() const noexcept { return !handle || handle.done(); }
-
-        /**
-         * @brief 手动恢复协程执行（调度器调用）
-         * @throws 如果协程内部有未捕获异常，重新抛出
-         */
-        void resume() const
-        {
-            if (handle && !handle.done())
-            {
-                if (handle.promise().exception)
-                {
-                    std::rethrow_exception(handle.promise().exception);
-                }
-                handle.resume();
-            }
-        }
-
-        /**
-         * @brief 获取协程返回值（只能在协程完成后调用）
-         * @throws 如果协程内部有未捕获异常，重新抛出
-         */
-        T get() const
-        {
-            if (handle && handle.promise().exception)
-            {
-                std::rethrow_exception(handle.promise().exception);
-            }
-            return std::move(handle.promise().val);
-        }
-
-        /**
-         * @brief 获取类型化句柄（不转移所有权）
-         */
-        HandleType getHandle() const noexcept { return handle; }
-
-        /**
-         * @brief 获取无类型句柄（用于跨类型传递）
-         */
-        std::coroutine_handle<> getHandleNoType() const noexcept { return handle; }
-
-        /**
-         * @brief 立即销毁协程帧（谨慎使用，需确保协程已完成）
-         */
-        void destroy() { destroySafe(); }
-
-        /**
-         * @brief 判断 Task 是否有效（持有协程句柄）
-         */
-        explicit operator bool() const noexcept { return handle != nullptr; }
-
-        /**
-         * @brief 清空 Task（若协程已完成则销毁帧）
-         */
-        Task &operator=(std::nullptr_t) noexcept
-        {
-            destroySafe();
-            handle = nullptr;
-            return *this;
-        }
-
-        /**
-         * @brief 若协程已完成，不挂起
-         */
-        bool await_ready() const noexcept { return !handle || handle.done(); }
-
-        // /**
-        //  * @brief 挂起当前协程，设置父协程关系，启动子协程
-        //  * @param call 父协程句柄
-        //  */
-        // void await_suspend(std::coroutine_handle<> call) const noexcept
-        // {
-        //     if (handle && !handle.done())
-        //     {
-        //         handle.promise().fa = call; // 记录父协程
-        //         handle.resume();            // 启动子协程
-        //         // printf("schedule coroutine %p, parent %p\n", handle.address(), call.address());
-        //         // schedule_coroutine(getHandleNoType());
-        //     }
-        // }
-
-        /**
-         * @brief 保存父协程，并对子协程对称转移
-         */
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> call) const noexcept
-        {
-            if (handle && !handle.done())
-            {
-                handle.promise().fa = call;
-                return handle;
-            }
-            return std::noop_coroutine();
-        }
-
-        /**
-         * @brief 子协程完成后获取返回值
-         * @throws 如果子协程内部有异常，重新抛出
-         */
-        T await_resume() const
-        {
-            if (handle && handle.promise().exception)
-            {
-                std::rethrow_exception(handle.promise().exception);
-            }
-            return std::move(handle.promise().val);
-        }
-
-    private:
-        HandleType handle;
-
-        /**
-         * @brief 安全销毁协程帧
-         */
-        void destroySafe()
-        {
-            if (!handle)
-            {
-                return;
-            }
-            HandleType h = std::exchange(handle, nullptr);
-
-            if (h.done())
-            {
-                h.destroy();
-                return;
-            }
-            if (h.promise().detached)
-            {
-                return; // 调度器管
-            }
-            if (h.promise().fa != nullptr)
-            {
-                return;  // 父协程管
-            }
-            h.destroy(); // 未动过,安全销毁
-        }
+        virtual ~TaskBase() = default;
+        virtual void resume() = 0;
+        virtual bool done() const noexcept = 0;
     };
 
-    // ==================== Task<void> 特化（无返回值） ====================
-    template <>
-    struct Task<void>
+    namespace detail
     {
-        struct promise_type
+        // 有返回值：提供 return_value
+        template <typename T>
+        struct PromiseReturnValue
         {
-            std::coroutine_handle<> fa;
+            T val{};
+            void return_value(T v) { val = std::move(v); }
+        };
+
+        // void：提供 return_void
+        template <>
+        struct PromiseReturnValue<void>
+        {
+            void return_void() {}
+        };
+    }
+
+    /**
+     * @brief 协程任务模板（统一处理 T 和 void）
+     */
+    template <typename T = void>
+    struct Task
+    {
+        struct promise_type : detail::PromiseReturnValue<T>
+        {
+            std::coroutine_handle<> fa = nullptr; // 父协程句柄
             std::exception_ptr exception;
-            bool detached = false;
 
             Task get_return_object()
             {
@@ -320,11 +110,7 @@ namespace blue
                 return SubCorroutine{fa};
             }
 
-            void return_void() {} // co_return 无值
-
             void unhandled_exception() { exception = std::current_exception(); }
-
-            ~promise_type() = default;
         };
 
         using HandleType = std::coroutine_handle<promise_type>;
@@ -332,11 +118,7 @@ namespace blue
         Task() : handle(nullptr) {}
         explicit Task(HandleType h) : handle(h) {}
 
-        // ~Task() = default;
-        ~Task()
-        {
-            destroySafe();
-        }
+        ~Task() { destroySafe(); }
 
         Task(const Task &) = delete;
         Task &operator=(const Task &) = delete;
@@ -359,16 +141,23 @@ namespace blue
         {
             if (handle && !handle.done())
             {
-                if (handle.promise().exception)
-                {
-                    std::rethrow_exception(handle.promise().exception);
-                }
                 handle.resume();
             }
         }
 
-        HandleType getHandle() const noexcept { return handle; }
+        // 有返回值
+        template <typename U = T>
+            requires(!std::is_void_v<U>)
+        U get() const
+        {
+            if (handle && handle.promise().exception)
+            {
+                std::rethrow_exception(handle.promise().exception);
+            }
+            return std::move(handle.promise().val);
+        }
 
+        HandleType getHandle() const noexcept { return handle; }
         std::coroutine_handle<> getHandleNoType() const noexcept { return handle; }
 
         void destroy() { destroySafe(); }
@@ -384,17 +173,6 @@ namespace blue
 
         bool await_ready() const noexcept { return !handle || handle.done(); }
 
-        // void await_suspend(std::coroutine_handle<> call) const noexcept
-        // {
-        //     if (handle && !handle.done())
-        //     {
-        //         handle.promise().fa = call;
-        //         handle.resume();
-        //         // printf("schedule coroutine %p, parent %p\n", handle.address(), call.address());
-        //         // schedule_coroutine(getHandleNoType());
-        //     }
-        // }
-
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> call) const noexcept
         {
             if (handle && !handle.done())
@@ -405,6 +183,21 @@ namespace blue
             return std::noop_coroutine();
         }
 
+        // 有返回值
+        template <typename U = T>
+            requires(!std::is_void_v<U>)
+        U await_resume() const
+        {
+            if (handle && handle.promise().exception)
+            {
+                std::rethrow_exception(handle.promise().exception);
+            }
+            return std::move(handle.promise().val);
+        }
+
+        // void 返回值
+        template <typename U = T>
+            requires std::is_void_v<U>
         void await_resume() const
         {
             if (handle && handle.promise().exception)
@@ -424,21 +217,38 @@ namespace blue
             }
             HandleType h = std::exchange(handle, nullptr);
 
+            // 销毁已完成的帧
             if (h.done())
             {
                 h.destroy();
                 return;
             }
-            if (h.promise().detached)
-            {
-                return; // 调度器管
-            }
-            if (h.promise().fa != nullptr)
-            {
-                return;  // 父协程管
-            }
-            h.destroy(); // 未动过,安全销毁
+            // 在目前的设计中，帧没有完成就代表他没有被执行，只是被声明定义了
+            // 可以安全的destroy()
+            h.destroy();
         }
     };
+
+    /**
+     * @brief 把 Task<T> move 进 TaskBase 的 shared_ptr，供调度器类型擦除持有
+     */
+    template <typename T>
+    struct TaskModel : TaskBase
+    {
+        Task<T> task;
+        explicit TaskModel(Task<T> t) : task(std::move(t)) {}
+
+        void resume() override { task.resume(); }
+        bool done() const noexcept override { return task.done(); }
+    };
+
+    /**
+     * @brief 把 Task<T> 转换为 shared_ptr<TaskBase>
+     */
+    template <typename T>
+    inline std::shared_ptr<TaskBase> makeTaskBase(Task<T> task)
+    {
+        return std::make_shared<TaskModel<T>>(std::move(task));
+    }
 
 } // namespace blue
