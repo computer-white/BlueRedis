@@ -62,10 +62,13 @@ namespace blue
                 void reset()
                 {
                     scheduler = nullptr;
-                    if (handle && handle.address())
-                    {
-                        handle.destroy();
-                    }
+                    // 注意：handle 不 destroy。
+                    // 协程帧的所有权属于 Task，IOManager 只临时持有引用用于恢复。
+                    // 帧的销毁由 Task::destroySafe() 负责。
+                    // if (handle && handle.address())
+                    // {
+                    //     handle.destroy();
+                    // }
                     handle = nullptr;
                     cb = nullptr;       // cb中的对象会被析构，但是协程句柄不会被释放，我没有使用RAII包装句柄
                     thread_id = -1;
