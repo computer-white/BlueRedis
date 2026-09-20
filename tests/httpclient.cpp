@@ -76,7 +76,7 @@ blue::Task<void> test_connectionPool()
 int main()
 {
     blue::IOManager iom(2);
-    // iom.scheduleMul(-1, test_stream(), test_baidu());
+    // iom.scheduleMul(test_stream(), test_baidu());
     iom.schedule(test_connectionPool());
     iom.wait_all();
 }

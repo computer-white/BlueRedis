@@ -53,6 +53,6 @@ int main()
     std::signal(SIGINT, handle);
     std::signal(SIGTERM, handle);
     blue::IOManager iom(2);
-    iom.scheduleMul(-1, helloblue());
+    iom.scheduleMul(helloblue());
     iom.wait_all();
 }

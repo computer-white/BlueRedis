@@ -119,9 +119,9 @@ namespace blue
          * @param thr 指定工作线程
          */
         template <typename... Args>
-        void scheduleMul(int thr, Args &&...args)
+        void scheduleMul(Args &&...args)
         {
-            (schedule(std::forward<Args>(args), thr), ...);
+            (schedule(std::forward<Args>(args), -1), ...);
         }
 
         /**
@@ -146,7 +146,7 @@ namespace blue
             m_runningTasks.remove(task_base);
             m_finishedTasks.push_back(task_base); });
 
-            schedule([task_base, h]() mutable
+            schedule([h]() mutable
                      {
                          if (h && h.address() && !h.done())
                          {

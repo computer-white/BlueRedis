@@ -61,7 +61,7 @@ blue::Task<void> test_onlySleepFor()
 int main()
 {
     blue::IOManager iom(2);
-    iom.scheduleMul(-1, test_onlyonlyTask(), test_MulTask(), test_onlySleepFor(), simple());
+    iom.scheduleMul(test_onlyonlyTask(), test_MulTask(), test_onlySleepFor(), simple());
 
     iom.wait_all();
 }// touch Thu Sep 17 18:50:15 CST 2026
