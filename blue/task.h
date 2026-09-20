@@ -30,6 +30,7 @@
 #include <memory>
 #include <variant>
 #include <type_traits>
+#include <functional>
 
 namespace blue
 {
@@ -67,6 +68,7 @@ namespace blue
         virtual ~TaskBase() = default;
         virtual void resume() = 0;
         virtual bool done() const noexcept = 0;
+        virtual void setOnComplete(std::function<void()>) = 0;
     };
 
     namespace detail
@@ -96,7 +98,8 @@ namespace blue
         struct promise_type : detail::PromiseReturnValue<T>
         {
             std::coroutine_handle<> fa = nullptr; // 父协程句柄
-            std::exception_ptr exception;
+            std::exception_ptr exception = nullptr;
+            std::function<void()> on_complete = nullptr;
 
             Task get_return_object()
             {
@@ -107,6 +110,12 @@ namespace blue
 
             SubCorroutine final_suspend() noexcept
             {
+                if (on_complete)
+                {
+                    auto cb = std::move(on_complete);
+                    on_complete = nullptr;
+                    cb();
+                }
                 return SubCorroutine{fa};
             }
 
@@ -240,6 +249,15 @@ namespace blue
 
         void resume() override { task.resume(); }
         bool done() const noexcept override { return task.done(); }
+
+        void setOnComplete(std::function<void()> cb) override
+        {
+            auto h = task.getHandle();
+            if (h)
+            {
+                h.promise().on_complete = std::move(cb);
+            }
+        }        
     };
 
     /**

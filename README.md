@@ -293,6 +293,23 @@ int main()
 }
 ```
 
+### 4.协程的完成只能通知外部去清理，但是不能自己清理，所以在final_suspend里面不能调用任何可能删除当前协程帧的操作或回调
+```cpp
+// 函数内部不能调用或使用可能导致当前即将进行对称转移的协程帧被销毁的操作
+// 这个外部回调会包含清理即将使用的协程帧的操作，跟上面的self.reset()本质
+// 一样
+SubCorroutine final_suspend() noexcept
+{
+    if (on_complete)
+    {
+        auto cb = std::move(on_complete);
+        on_complete = nullptr;
+        cb();
+    }
+    return SubCorroutine{fa};
+}
+```
+
 ## 启动Redis服务器(保证没有开UBSAN,会与absl冲突)
 
 ### 1. Default (Localhost)

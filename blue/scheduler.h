@@ -140,14 +140,21 @@ namespace blue
                 m_runningTasks.push_back(task_base);
             }
 
+            task_base->setOnComplete([this, task_base]()
+                                     {
+            std::lock_guard<std::mutex> lock(m_runningMutex);
+            m_runningTasks.remove(task_base);
+            m_finishedTasks.push_back(task_base); });
+
             schedule([task_base, h]() mutable
-            {
-                if (h && h.address() && !h.done())
-                {
-                    h.resume();
-                }
-                // 统一在 wait_all 里清理。
-            }, thr);
+                     {
+                         if (h && h.address() && !h.done())
+                         {
+                             h.resume();
+                         }
+                         // 统一在 wait_all 里清理。
+                     },
+                     thr);
         }
 
         /**
@@ -187,9 +194,14 @@ namespace blue
          */
         void clearFinishedTasks()
         {
-            std::lock_guard<std::mutex> lock(m_runningMutex);
-            m_runningTasks.remove_if([](const std::shared_ptr<blue::TaskBase> &t)
-                                     { return t->done(); });
+            std::list<std::shared_ptr<blue::TaskBase>> to_destroy;
+            {
+                std::lock_guard<std::mutex> lock(m_runningMutex);
+                m_runningTasks.remove_if([](const std::shared_ptr<blue::TaskBase> &t)
+                                         { return t->done(); });
+                to_destroy.swap(m_finishedTasks);
+            }
+            to_destroy.clear(); // 锁外销毁
         }
 
     public:
@@ -247,6 +259,8 @@ namespace blue
 
         std::mutex m_runningMutex;
         std::list<std::shared_ptr<blue::TaskBase>> m_runningTasks; // 持有顶层 Task 直到完成/清理
+        std::list<std::shared_ptr<blue::TaskBase>> m_finishedTasks;
+
     private:
         static thread_local Scheduler *t_Scheduler; // 线程局部调度器指针
         static thread_local int t_threadIndex;      // 线程索引,切换线程队列

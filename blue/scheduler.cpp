@@ -271,6 +271,16 @@ namespace blue
                 break;
             }
 
+            // 清理已完成的 Task
+            {
+                std::list<std::shared_ptr<TaskBase>> to_destroy;
+                {
+                    std::lock_guard<std::mutex> lock(m_runningMutex);
+                    to_destroy.swap(m_finishedTasks);
+                }
+                to_destroy.clear();
+            }
+
             // 无任务：阻塞等待本地队列 / 全局队列 / 停止
             {
                 std::unique_lock<std::mutex> lock(myQueue->mutex);
