@@ -62,13 +62,15 @@ namespace blue
             -1 = 111...111 -> (-2 = 111...110 ^ 111...111) = 000...001 = 1
         */
         // 如果是负数那么异或一个全1
-        return (val << 1) ^ (val >> 31);
+        uint32_t u = static_cast<uint32_t>(val);
+        return (u << 1) ^ (static_cast<uint32_t>(val >> 31));
     }
 
     // 64位 Varint + Zigzag编码
     static uint64_t EncodeZigzag64(int64_t val)
     {
-        return (val << 1) ^ (val >> 63);
+        uint64_t u = static_cast<uint64_t>(val);
+        return (u << 1) ^ (static_cast<uint64_t>(val >> 63));
     }
 
     // 32位 Varint + ZigZag 解码
@@ -227,14 +229,14 @@ namespace blue
     {
         uint32_t tem;
         memcpy(&tem, &val, sizeof(tem));
-        writeUint32(tem);
+        writeFint32(tem);
     }
 
     void ByteArray::writeDouble(double val)
     {
         uint64_t tem;
         memcpy(&tem, &val, sizeof(tem));
-        writeUint64(tem);
+        writeFint64(tem);
     }
 
     void ByteArray::writeString16(const std::string &val)
@@ -257,7 +259,7 @@ namespace blue
 
     void ByteArray::writeStringVint(const std::string &val)
     {
-        writeUint64(val.size());
+        writeFuint64(val.size());
         write(val.c_str(), val.size());
     }
 
@@ -359,7 +361,7 @@ namespace blue
 
     float ByteArray::readFloat()
     {
-        uint32_t v = readUint32();
+        uint32_t v = readFint32();
         float val;
         memcpy(&val, &v, sizeof(val));
         return val;
@@ -367,7 +369,7 @@ namespace blue
 
     double ByteArray::readDouble()
     {
-        uint64_t v = readUint64();
+        uint64_t v = readFint64();
         double val;
         memcpy(&val, &v, sizeof(val));
         return val;
@@ -470,6 +472,10 @@ namespace blue
 
     void ByteArray::read(void *buf, size_t size)
     {
+        if (size == 0)
+        {
+            return;
+        }
         if (size > getReadSize())
         {
             std::__throw_out_of_range("not enough len");
@@ -507,6 +513,10 @@ namespace blue
 
     void ByteArray::read(void *buf, size_t size, size_t position) const
     {
+        if (size == 0)
+        {
+            return;
+        }
         if (size > m_size - position)
         {
             std::__throw_out_of_range("not enough len");
@@ -765,6 +775,15 @@ namespace blue
             vect.push_back(iov);
         }
         return realreadsize;
+    }
+
+    size_t ByteArray::getCapacity() const
+    { 
+        if (m_size > m_capacity)
+        {
+            std::__throw_out_of_range("size > capacity");
+        }
+        return m_capacity - m_size;
     }
 
     uint64_t ByteArray::getReadBuffers(std::vector<iovec> &vect, uint64_t size, size_t position) const

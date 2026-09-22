@@ -464,12 +464,12 @@ namespace blue
          */
         void addCapacity(size_t capacity);
 
+    public:
         /**
          * @brief 获取还剩多少容量
          * @return 还剩多少容量
          */
-        size_t getCapacity() const { return m_capacity - m_size; }
-
+        size_t getCapacity() const;
     private:
         // 想象成一本便利签,必须保证m_baseSize == Node中的size
         Node *m_root;      // 第一页
