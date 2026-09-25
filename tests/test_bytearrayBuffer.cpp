@@ -3,272 +3,314 @@
  * Copyright (C) 2026 blue
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-#include "blue/bytearray.h"
-#include "blue/log.h"
-#include "blue/macro.h"
+#include <gtest/gtest.h>
 #include <random>
 #include <memory>
 #include <cstring>
+#include "blue/bytearray.h"
+#include "blue/log.h"
+#include "blue/macro.h"
 
-static blue::Logger::LoggerPtr g_Logger = BLUE_LOG_MASSAGE_ROOT();
-
-void test_getReadBuffers()
+namespace
 {
-    BLUE_LOG_INFO(g_Logger) << "========== test getReadBuffers ==========";
+    static blue::Logger::LoggerPtr g_Logger = BLUE_LOG_MASSAGE_ROOT();
     
-#define TEST_READ_BUFFERS(base_len, write_size, read_req) { \
-    /* 1. 写入测试数据 */ \
-    blue::ByteArray::ByteArrayPtr byte(new blue::ByteArray(base_len)); \
-    std::string original; \
-    for (size_t i = 0; i < write_size; i++) { \
-        char ch = 'A' + (rand() % 26); \
-        byte->writeFint8(ch); \
-        original += ch; \
-    } \
-    BLUE_LOG_INFO(g_Logger) << "write " << write_size << " bytes, size=" << byte->getSize(); \
-    \
-    /* 2. 获取可读缓冲区 */ \
-    byte->setPosition(0); \
-    std::vector<iovec> vec; \
-    uint64_t ret = byte->getReadBuffers(vec, read_req); \
-    BLUE_LOG_INFO(g_Logger) << "getReadBuffers(request=" << read_req \
-                            << ") return=" << ret \
-                            << " iov_cnt=" << vec.size(); \
-    \
-    /* 3. 从 iovec 中读取数据并验证 */ \
-    std::string read_data; \
-    size_t total_read = 0; \
-    for (auto& iov : vec) { \
-        BLUE_LOG_INFO(g_Logger) << "  iov[" << (&iov - &vec[0]) << "] base=" << iov.iov_base \
-                                << " len=" << iov.iov_len; \
-        read_data.append((char*)iov.iov_base, iov.iov_len); \
-        total_read += iov.iov_len; \
-    } \
-    BLUE_ASSERT(total_read == ret); \
-    BLUE_ASSERT(read_data == original.substr(0, ret)); \
-    BLUE_LOG_INFO(g_Logger) << "getReadBuffers PASS: read_data matches original"; \
-}
-
-    // 测试1: 小 base_len，正好一个 block
-    TEST_READ_BUFFERS(4, 4, 10);
-    
-    // 测试2: 跨多个 block
-    TEST_READ_BUFFERS(4, 13, 100);
-    
-    // 测试3: 请求量小于可读量
-    TEST_READ_BUFFERS(8, 20, 5);
-    
-    // 测试4: 请求量等于可读量
-    TEST_READ_BUFFERS(8, 16, 16);
-    
-    // 测试5: 大量数据
-    TEST_READ_BUFFERS(16, 100, 1000);
-    
-    // 测试6: 从中间位置读取
+    // 生成随机数据
+    template <typename T, typename Generator>
+    std::vector<T> makeData(size_t n, Generator gen)
     {
-        blue::ByteArray::ByteArrayPtr byte(new blue::ByteArray(4));
-        std::string original;
-        for (int i = 0; i < 20; i++) {
-            char ch = 'a' + i;
-            byte->writeFint8(ch);
-            original += ch;
+        std::vector<T> data;
+        data.reserve(n);
+        for (size_t i = 0; i < n; i++)
+        {
+            data.push_back(gen());
         }
-        
-        // 设置读取位置到第5个字节
-        byte->setPosition(5);
-        std::vector<iovec> vec;
-        uint64_t ret = byte->getReadBuffers(vec, 100);
-        
-        BLUE_LOG_INFO(g_Logger) << "position=5, getReadBuffers return=" << ret 
-                                << " iov_cnt=" << vec.size();
-        
-        std::string read_data;
-        for (auto& iov : vec) {
-            read_data.append((char*)iov.iov_base, iov.iov_len);
+        return data;
+    }
+
+    // 固定种子随机数，保证可复现
+    std::mt19937 &rng()
+    {
+        // 2026.9.21
+        static std::mt19937 engine(20260925);
+        return engine;
+    }
+}
+
+class TestReadBuffer : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        original.clear();
+        res.clear();
+        total_read = 0;
+    }
+
+    void TearDown() override
+    {
+        ba.reset();
+        original.clear();
+        res.clear();
+        total_read = 0;
+    }
+
+    void writeDataUnit8(size_t writesize)
+    {
+        auto data = makeData<uint8_t>(writesize, [] { return static_cast<uint8_t>(rng()()); });
+        for (auto x : data)
+        {
+            ba->writeFuint8(x);
         }
-        BLUE_ASSERT(read_data == original.substr(5));
-        BLUE_LOG_INFO(g_Logger) << "offset read PASS";
+        original = std::string(data.begin(), data.end());
     }
-    
-    // 测试7: 空 ByteArray
+
+    uint64_t readFromBuffer(size_t readsize)
     {
-        blue::ByteArray::ByteArrayPtr byte(new blue::ByteArray(4));
-        std::vector<iovec> vec;
-        uint64_t ret = byte->getReadBuffers(vec, 100);
-        BLUE_ASSERT(ret == 0);
-        BLUE_ASSERT(vec.empty());
-        BLUE_LOG_INFO(g_Logger) << "empty ByteArray PASS";
+        ba->setPosition(0);
+        std::vector<iovec> data;
+        auto n = ba->getReadBuffers(data, readsize);
+        for (auto &iov : data)
+        {
+            res.append((char*)iov.iov_base, iov.iov_len);
+            total_read += iov.iov_len;
+        }
+        return n;
     }
-    
-#undef TEST_READ_BUFFERS
-}
 
-void test_getWriteBuffers()
+    blue::ByteArray::ByteArrayPtr ba;
+    std::string original;
+    std::string res;
+    uint64_t total_read = 0;
+};
+
+TEST_F(TestReadBuffer, SmallBase)
 {
-    BLUE_LOG_INFO(g_Logger) << "========== test getWriteBuffers ==========";
-    
-#define TEST_WRITE_BUFFERS(base_len, init_size, req_size) { \
-    blue::ByteArray::ByteArrayPtr byte(new blue::ByteArray(base_len)); \
-    /* 先写入一些数据占位 */ \
-    for (size_t i = 0; i < init_size; i++) { \
-        byte->writeFint8('X'); \
-    } \
-    BLUE_LOG_INFO(g_Logger) << "init: base_len=" << base_len \
-                            << " init_size=" << init_size \
-                            << " size=" << byte->getSize(); \
-    \
-    /* 获取可写缓冲区 */ \
-    std::vector<iovec> vec; \
-    uint64_t ret = byte->getWriteBuffers(vec, req_size); \
-    BLUE_LOG_INFO(g_Logger) << "getWriteBuffers(request=" << req_size \
-                            << ") return=" << ret \
-                            << " iov_cnt=" << vec.size(); \
-    \
-    /* 验证 iovec 总大小 */ \
-    size_t total_cap = 0; \
-    for (auto& iov : vec) { \
-        BLUE_LOG_INFO(g_Logger) << "  iov[" << (&iov - &vec[0]) << "] base=" << iov.iov_base \
-                                << " len=" << iov.iov_len; \
-        total_cap += iov.iov_len; \
-    } \
-    BLUE_ASSERT(total_cap == ret); \
-    \
-    /* 向可写缓冲区写入数据 */ \
-    char fill_char = 'A'; \
-    size_t written = 0; \
-    for (auto& iov : vec) { \
-        memset(iov.iov_base, fill_char, iov.iov_len); \
-        written += iov.iov_len; \
-        fill_char++; \
-    } \
-    BLUE_LOG_INFO(g_Logger) << "write to buffers: " << written << " bytes"; \
-    BLUE_LOG_INFO(g_Logger) << "getWriteBuffers PASS"; \
+    ba = std::make_shared<blue::ByteArray>(4);
+    writeDataUnit8(4);
+    auto n = readFromBuffer(10);
+    EXPECT_EQ(n, 4);
+    EXPECT_EQ(total_read, n);
+    EXPECT_EQ(res, original.substr(0, n));
 }
 
-    // 测试1: 刚好一个 block
-    TEST_WRITE_BUFFERS(8, 0, 8);
-    
-    // 测试2: 超过一个 block
-    TEST_WRITE_BUFFERS(4, 0, 20);
-    
-    // 测试3: 已有数据，追加写入
-    TEST_WRITE_BUFFERS(4, 3, 10);
-    
-    // 测试4: 大量写入
-    TEST_WRITE_BUFFERS(16, 0, 100);
-    
-    // 测试5: 已有数据跨多个 block
-    TEST_WRITE_BUFFERS(4, 13, 50);
-    
-    // 测试6: 请求 0 字节
+TEST_F(TestReadBuffer, ManyBlock)
+{
+    ba = std::make_shared<blue::ByteArray>(4);
+    writeDataUnit8(18); // 5个分区
+    auto n = readFromBuffer(18);
+    EXPECT_EQ(n, 18);
+    EXPECT_EQ(total_read, n);
+    EXPECT_EQ(res, original.substr(0, n));
+}
+
+TEST_F(TestReadBuffer, ManyBlockAndReadlessWrite)
+{
+    ba = std::make_shared<blue::ByteArray>(4);
+    writeDataUnit8(18); // 5个分区
+    auto n = readFromBuffer(10);
+    EXPECT_EQ(n, 10);
+    EXPECT_EQ(total_read, n);
+    EXPECT_EQ(res, original.substr(0, n));
+}
+
+TEST_F(TestReadBuffer, BigDataWrite)
+{
+    ba = std::make_shared<blue::ByteArray>(1);
+    writeDataUnit8(1000);
+    auto n = readFromBuffer(10000);
+    EXPECT_EQ(n, 1000);
+    EXPECT_EQ(total_read, n);
+    EXPECT_EQ(res, original.substr(0, n));
+}
+
+TEST_F(TestReadBuffer, FromMidRead)
+{
+    ba = std::make_shared<blue::ByteArray>(4);
+    writeDataUnit8(400);    // 100个分区
+    ba->setPosition(200);   // 中间开始读
+    std::vector<iovec> data;
+    auto n = ba->getReadBuffers(data, 1000);
+    for (auto &iov : data)
     {
-        blue::ByteArray::ByteArrayPtr byte(new blue::ByteArray(4));
-        byte->writeFint8('X');
-        std::vector<iovec> vec;
-        uint64_t ret = byte->getWriteBuffers(vec, 0);
-        BLUE_ASSERT(ret == 0);
-        BLUE_LOG_INFO(g_Logger) << "request 0 bytes PASS";
+        res.append((char*)(iov.iov_base), iov.iov_len);
+        total_read += iov.iov_len;
     }
-    
-#undef TEST_WRITE_BUFFERS
+    EXPECT_EQ(n, 200);
+    EXPECT_EQ(total_read, n);
+    EXPECT_EQ(res, original.substr(200, n));
 }
 
-void test_read_write_buffers_roundtrip()
+TEST_F(TestReadBuffer, EmptyArray)
 {
-    BLUE_LOG_INFO(g_Logger) << "========== test roundtrip ==========";
-    
-    // 模拟 SocketStream 的读写流程
-    blue::ByteArray::ByteArrayPtr read_ba(new blue::ByteArray(4));
-    blue::ByteArray::ByteArrayPtr write_ba(new blue::ByteArray(4));
-    
-    // 1. 准备发送数据
-    std::string send_data = "Hello, this is a test message for roundtrip!";
-    for (char c : send_data) {
-        write_ba->writeFint8(c);
+    ba = std::make_shared<blue::ByteArray>(4);
+    auto n = readFromBuffer(1000);
+    EXPECT_EQ(n, 0);
+    EXPECT_EQ(total_read, n);
+    EXPECT_EQ(res, original.substr(0, n));
+    EXPECT_TRUE(res.empty());
+    EXPECT_TRUE(original.empty());
+}
+
+// writeBuffers
+
+class TestWriteBuffer : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        total_cap = 0;
+        origin.clear();
+        res.clear();
     }
-    write_ba->setPosition(0);
-    
-    // 2. 模拟 write：从 write_ba 获取读缓冲区
-    std::vector<iovec> read_vec;
-    uint64_t read_ret = write_ba->getReadBuffers(read_vec, send_data.size());
-    BLUE_LOG_INFO(g_Logger) << "write_ba getReadBuffers: " << read_ret << " bytes"
-                            << " iov_cnt=" << read_vec.size();
-    
-    // 3. 模拟 read：获取写缓冲区
-    std::vector<iovec> write_vec;
-    uint64_t write_ret = read_ba->getWriteBuffers(write_vec, read_ret);
-    BLUE_LOG_INFO(g_Logger) << "read_ba getWriteBuffers: " << write_ret << " bytes"
-                            << " iov_cnt=" << write_vec.size();
-    
-    BLUE_ASSERT(write_ret >= read_ret);
-    
-    // 4. 拷贝数据（把分散的读缓冲区拷贝到分散的写缓冲区）
-    size_t copy_offset = 0;  // 当前拷贝到原始数据的哪个位置
-    for (auto& w_iov : write_vec) {
-        if (copy_offset >= read_ret) break;
-        
-        size_t w_offset = 0;  // 当前写缓冲区的偏移
-        while (w_offset < w_iov.iov_len && copy_offset < read_ret) {
-            // 找到 copy_offset 对应的读缓冲区
-            size_t r_offset = copy_offset;
-            iovec* r_iov = nullptr;
-            size_t r_iov_offset = 0;
-            
-            for (auto& r : read_vec) {
-                if (r_offset < r.iov_len) {
-                    r_iov = &r;
-                    r_iov_offset = r_offset;
-                    break;
-                }
-                r_offset -= r.iov_len;
-            }
-            
-            BLUE_ASSERT(r_iov != nullptr);
-            
-            // 计算本次拷贝大小
-            size_t r_avail = r_iov->iov_len - r_iov_offset;
-            size_t w_avail = w_iov.iov_len - w_offset;
-            size_t to_copy = std::min({r_avail, w_avail, read_ret - copy_offset});
-            
-            // 拷贝
-            memcpy((char*)w_iov.iov_base + w_offset,
-                   (char*)r_iov->iov_base + r_iov_offset,
-                   to_copy);
-            
-            w_offset += to_copy;
-            copy_offset += to_copy;
+
+    void TearDown() override
+    {
+        ba.reset();
+        total_cap = 0;
+        origin.clear();
+        res.clear();
+    }
+
+    void writeData(size_t writesize)
+    {
+        auto data = makeData<uint8_t>(writesize, [] { return static_cast<uint8_t>(rng()()); });
+        for (auto x : data)
+        {
+            ba->writeFint8(x);
+            origin += x;
         }
     }
-    
-    BLUE_ASSERT(copy_offset == read_ret);
-    
-    // 5. 更新位置（模拟 SocketStream）
-    write_ba->setPosition(write_ba->getPosition() + read_ret);
-    read_ba->setSize(read_ba->getSize() + read_ret);
-    read_ba->setPosition(read_ba->getPosition() + read_ret);
-    
-    // 6. 验证：从 read_ba 读回数据
-    read_ba->setPosition(0);
-    std::string received;
-    for (size_t i = 0; i < send_data.size(); i++) {
-        received += read_ba->readFint8();
+
+    std::pair<uint64_t, std::vector<iovec>> WriteFromBuffer(size_t reqsize)
+    {
+        std::vector<iovec> data;
+        auto n = ba->getWriteBuffers(data, reqsize);
+        for (auto &iov : data)
+        {
+            total_cap += iov.iov_len;
+        }
+        return std::make_pair(total_cap, data);
     }
-    
-    BLUE_LOG_INFO(g_Logger) << "received: " << received;
-    BLUE_LOG_INFO(g_Logger) << "expected: " << send_data;
-    
-    BLUE_ASSERT(received == send_data);
-    BLUE_LOG_INFO(g_Logger) << "roundtrip PASS";
+
+    void WriteToVec(std::vector<iovec> &data)
+    {
+        for (auto &iov : data)
+        {
+            auto ch = static_cast<uint8_t>(rng()());
+            memset(iov.iov_base, ch, iov.iov_len);
+            origin.append((char*)(iov.iov_base), iov.iov_len);
+        }
+        ba->setSize(origin.size());
+    }
+
+    uint64_t ReadFromBuffer(size_t readsize)
+    {
+        ba->setPosition(0);
+        std::vector<iovec> data;
+        auto readn = ba->getReadBuffers(data, readsize);
+        for (auto &iov : data)
+        {
+            res.append((char*)(iov.iov_base), iov.iov_len);
+        }
+        return readn;
+    }
+
+    blue::ByteArray::ByteArrayPtr ba;
+    uint64_t total_cap; // 用于验证还可以写入的大小
+    std::string origin;
+    std::string res;
+};
+
+TEST_F(TestWriteBuffer, OnlyOneBlock)
+{
+    ba = std::make_shared<blue::ByteArray>(8);
+    auto [n, buffer] = WriteFromBuffer(8);
+    EXPECT_EQ(n, 8);
+    EXPECT_EQ(n, total_cap);
+    WriteToVec(buffer);
+    auto read_n = ReadFromBuffer(8);
+    EXPECT_EQ(read_n, 8);
+    EXPECT_EQ(res, origin);
 }
 
-int main(int argc, char* argv[])
+TEST_F(TestWriteBuffer, ManyBlock)
 {
-    srand(time(nullptr));
-    
-    test_getReadBuffers();
-    test_getWriteBuffers();
-    test_read_write_buffers_roundtrip();
-    
-    BLUE_LOG_INFO(g_Logger) << "All tests passed!";
-    return 0;
+    ba = std::make_shared<blue::ByteArray>(4);
+    auto [n, buffer] = WriteFromBuffer(20); // 会扩容
+    EXPECT_GE(ba->getCapacity(), 20);
+    EXPECT_EQ(n, 20);
+    EXPECT_EQ(n, total_cap);
+    WriteToVec(buffer);
+    auto read_n = ReadFromBuffer(40);   // 实际不够40
+    EXPECT_EQ(read_n, 20);
+    EXPECT_EQ(res, origin);
+}
+
+TEST_F(TestWriteBuffer, ManyBlockAndReadLessWrite)
+{
+    ba = std::make_shared<blue::ByteArray>(4);
+    auto [n, buffer] = WriteFromBuffer(30); // 会扩容
+    EXPECT_GE(ba->getCapacity(), 30);
+    EXPECT_EQ(n, 30);
+    EXPECT_EQ(n, total_cap);
+    WriteToVec(buffer);
+    auto read_n = ReadFromBuffer(10);
+    EXPECT_EQ(read_n, 10);
+    EXPECT_EQ(res, origin.substr(0, read_n));
+}
+
+TEST_F(TestWriteBuffer, ManyBlockAndReadEqWrite)
+{
+    ba = std::make_shared<blue::ByteArray>(4);
+    auto [n, buffer] = WriteFromBuffer(30); // 会扩容
+    EXPECT_GE(ba->getCapacity(), 30);
+    EXPECT_EQ(n, 30);
+    EXPECT_EQ(n, total_cap);
+    WriteToVec(buffer);
+    auto read_n = ReadFromBuffer(30);
+    EXPECT_EQ(read_n, 30);
+    EXPECT_EQ(res, origin);
+}
+
+TEST_F(TestWriteBuffer, ManyBlockAndLargeData)
+{
+    ba = std::make_shared<blue::ByteArray>(4);
+    auto [n, buffer] = WriteFromBuffer(1000); // 会扩容
+    EXPECT_GE(ba->getCapacity(), 1000);
+    EXPECT_EQ(n, 1000);
+    EXPECT_EQ(n, total_cap);
+    WriteToVec(buffer);
+    auto read_n = ReadFromBuffer(10000);
+    EXPECT_EQ(read_n, 1000);
+    EXPECT_EQ(res, origin.substr(0, read_n));
+}
+
+TEST_F(TestWriteBuffer, ManyBlockAndHavedData)
+{
+    ba = std::make_shared<blue::ByteArray>(4);
+    writeData(100);
+    EXPECT_EQ(ba->getSize(), 100);
+    EXPECT_EQ(ba->getCapacity(), 0);
+    auto [n, buffer] = WriteFromBuffer(100); // 在索要100空间
+    EXPECT_GE(ba->getCapacity(), 100);
+    EXPECT_EQ(n, 100);
+    EXPECT_EQ(n, total_cap);
+    WriteToVec(buffer);
+    auto read_n = ReadFromBuffer(10000);
+    EXPECT_EQ(read_n, 200);
+    EXPECT_EQ(res, origin.substr(0, read_n));
+}
+
+TEST_F(TestWriteBuffer, GetZeroData)
+{
+    ba = std::make_shared<blue::ByteArray>(4);
+    writeData(1);
+    EXPECT_EQ(ba->getSize(), 1);
+    EXPECT_GE(ba->getCapacity(), 2);
+    auto [n, buffer] = WriteFromBuffer(0);
+    EXPECT_EQ(n, 0);
+    EXPECT_EQ(n, total_cap);
+    EXPECT_TRUE(buffer.empty());
+    EXPECT_FALSE(origin.empty());
 }

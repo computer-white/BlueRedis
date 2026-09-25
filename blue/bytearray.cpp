@@ -468,6 +468,11 @@ namespace blue
         {
             m_size = m_position;
         }
+        
+        if (m_size > m_capacity)
+        {
+            m_capacity = m_size;
+        }
     }
 
     void ByteArray::read(void *buf, size_t size)
