@@ -2,55 +2,41 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]   # 只在 main 上 push 触发
+    branches: [ main, master ]
     paths-ignore:
       - '**.md'
       - 'LICENSE'
       - '.gitignore'
-      - '.github/**'             # 改 CI 配置本身不触发
   pull_request:
     branches: [ main, master ]
     paths-ignore:
       - '**.md'
       - 'LICENSE'
-  workflow_dispatch:             # 允许手动触发
+  workflow_dispatch:
+
+concurrency:                          # ← 移到顶层
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     name: Build & Test (g++-13)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04             # ← 自带 gcc-13，省 PPA
 
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}
-      cancel-in-progress: true       # ← 新的 push 会取消旧的运行
-    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install toolchain (g++-13)
-        run: |
-          sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
-          sudo apt-get update
-          sudo apt-get install -y gcc-13 g++-13
-
       - name: Install dependencies
         run: |
+          sudo apt-get update
           sudo apt-get install -y \
-            cmake ragel pkg-config \
-            libboost-all-dev \
-            libssl-dev \
-            libyaml-cpp-dev \
-            libhiredis-dev \
-            libgtest-dev libgmock-dev \
-            libabsl-dev \
-            nlohmann-json3-dev \
-            libidn2-dev \
-            libgumbo-dev \
-            default-libmysqlclient-dev \
-            zlib1g-dev
+            g++-13 cmake ragel pkg-config \
+            libboost-all-dev libssl-dev libyaml-cpp-dev \
+            libhiredis-dev libgtest-dev libgmock-dev \
+            libabsl-dev nlohmann-json3-dev libidn2-dev \
+            libgumbo-dev default-libmysqlclient-dev zlib1g-dev
 
       - name: Verify toolchain
         run: |
@@ -58,7 +44,7 @@ jobs:
           cmake --version
           ragel --version
 
-      - name: Configure (Release)
+      - name: Configure
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
@@ -70,7 +56,7 @@ jobs:
 
       - name: Run tests
         working-directory: build
-        run: ctest --output-on-failure --timeout 120
+        run: ctest --output-on-failure --timeout 120 --parallel $(nproc)
 
       - name: Upload test logs (on failure)
         if: failure()
