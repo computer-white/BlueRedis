@@ -3,113 +3,114 @@
  * Copyright (C) 2026 blue
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
+#include <gtest/gtest.h>
 #include <iostream>
 #include <cassert>
 #include "blue/resp_parser.h"
 
 using namespace blue;
 
-void test_simple_string() {
+TEST(TestRespParser, SimpleString)
+{
     std::string data = "+OK\r\n";
     auto [val, consumed] = RespValue::parse(data);
-    assert(val.type == RespValue::Type::SIMPLE_STRING);
-    assert(val.str == "OK");
-    assert(consumed == 5);
-    std::cout << "✅ test_simple_string passed\n";
+    EXPECT_EQ(val.type, RespValue::Type::SIMPLE_STRING);
+    EXPECT_EQ(val.str, "OK");
+    EXPECT_EQ(consumed, data.size());
 }
 
-void test_error() {
+TEST(TestRespParser, Error)
+{
     std::string data = "-ERR unknown command\r\n";
-    auto [val, consumed] = RespValue::parse(data);
-    assert(val.type == RespValue::Type::ERROR);
-    assert(val.str == "ERR unknown command");
-    assert(consumed == 22);
-    std::cout << "✅ test_error passed\n";
+    auto [val, comsumed] = RespValue::parse(data);
+    EXPECT_EQ(val.type, RespValue::Type::ERROR);
+    EXPECT_EQ(val.str, "ERR unknown command");
+    EXPECT_EQ(comsumed, data.size());
 }
 
-void test_integer() {
+TEST(TestRespParser, Integer)
+{
     std::string data = ":1000\r\n";
     auto [val, consumed] = RespValue::parse(data);
-    assert(val.type == RespValue::Type::INTEGER);
-    assert(val.integ == 1000);
-    assert(consumed == 7);
-    std::cout << "✅ test_integer passed\n";
+    EXPECT_EQ(val.type, RespValue::Type::INTEGER);
+    EXPECT_EQ(val.integ, 1000);
+    EXPECT_EQ(consumed, data.size());
 }
 
-void test_bulk_string() {
+TEST(TestRespParser, BlukString)
+{
     std::string data = "$5\r\nhello\r\n";
     auto [val, consumed] = RespValue::parse(data);
-    assert(val.type == RespValue::Type::BULK_STRING);
-    assert(val.str == "hello");
-    assert(consumed == 11);
-    std::cout << "✅ test_bulk_string passed\n";
+    EXPECT_EQ(val.type, RespValue::Type::BULK_STRING);
+    EXPECT_EQ(val.str, "hello");
+    EXPECT_EQ(consumed, data.size());
 }
 
-void test_null_bulk() {
+TEST(TestRespParser, NullBluk)
+{
     std::string data = "$-1\r\n";
     auto [val, consumed] = RespValue::parse(data);
-    assert(val.type == RespValue::Type::NULL_VAL);
-    assert(consumed == 5);
-    std::cout << "✅ test_null_bulk passed\n";
+    EXPECT_EQ(val.type, RespValue::Type::NULL_VAL);
+    EXPECT_EQ(consumed, data.size());
 }
 
-void test_array() {
+TEST(TestRespParser, Array)
+{
     std::string data = "*2\r\n$3\r\nGET\r\n$4\r\nkey1\r\n";
     auto [val, consumed] = RespValue::parse(data);
-    assert(val.type == RespValue::Type::ARRAY);
-    assert(val.arr.size() == 2);
-    assert(val.arr[0].type == RespValue::Type::BULK_STRING);
-    assert(val.arr[0].str == "GET");
-    assert(val.arr[1].type == RespValue::Type::BULK_STRING);
-    assert(val.arr[1].str == "key1");
-    assert(consumed == data.size());
-    std::cout << "✅ test_array passed\n";
+    EXPECT_EQ(val.type, RespValue::Type::ARRAY);
+    EXPECT_EQ(val.arr.size(), 2);
+    EXPECT_EQ(val.arr[0].type, RespValue::Type::BULK_STRING);
+    EXPECT_EQ(val.arr[0].str, "GET");
+    EXPECT_EQ(val.arr[1].type, RespValue::Type::BULK_STRING);
+    EXPECT_EQ(val.arr[1].str, "key1");
+    EXPECT_EQ(consumed, data.size());
 }
 
-void test_incomplete_data() {
+TEST(TestRespParser, IncompleteData)
+{
     RespStreamParser parser;
     
     // 发送不完整的数据
     parser.feed("*2\r\n$3\r\nGET\r\n$4\r\nke");
     RespValue cmd;
-    assert(!parser.next(cmd));
-    
+    EXPECT_FALSE(parser.next(cmd));
+
     // 发送剩余数据
     parser.feed("y1\r\n");
-    assert(parser.next(cmd));
-    assert(cmd.arr[1].str == "key1");
-    std::cout << "✅ test_incomplete_data passed\n";
+    EXPECT_TRUE(parser.next(cmd));
+    EXPECT_EQ(cmd.arr[1].str, "key1");
 }
 
-void test_multiple_commands() {
+TEST(TestRespParser, MultipleCommands)
+{
     RespStreamParser parser;
-    
+
     // 一次发送多个命令
     parser.feed("*1\r\n$4\r\nPING\r\n*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n");
-    
+
     RespValue cmd;
-    assert(parser.next(cmd));
-    assert(cmd.arr[0].str == "PING");
-    
-    assert(parser.next(cmd));
-    assert(cmd.arr[0].str == "GET");
-    assert(cmd.arr[1].str == "key");
-    
-    assert(!parser.next(cmd));
-    std::cout << "✅ test_multiple_commands passed\n";
+    EXPECT_TRUE(parser.next(cmd));
+    EXPECT_EQ(cmd.type, RespValue::Type::ARRAY);
+    EXPECT_EQ(cmd.arr[0].str, "PING");
+
+    EXPECT_TRUE(parser.next(cmd));
+
+    EXPECT_EQ(cmd.type, RespValue::Type::ARRAY);
+    EXPECT_EQ(cmd.arr[0].str, "GET");
+    EXPECT_EQ(cmd.arr[1].str, "key");
 }
 
-void test_buffer_overflow_protection() {
+TEST(TestRespParser, BufferOverflowProtection)
+{
     RespStreamParser parser(100);  // 小缓冲区用于测试
     
     std::string large_data(200, 'a');
-    bool result = parser.feed(large_data);
-    assert(!result);  // 应该失败
-    
-    std::cout << "✅ test_buffer_overflow_protection passed\n";
+    EXPECT_FALSE(parser.feed(large_data));
 }
 
-void test_encoding() {
+TEST(TestRespParser, Encoding)
+{
     // 测试编码和解码的一致性
     AutoRespValue original = RespValue::array({
         *RespValue::bulk_string("SET"),
@@ -119,30 +120,10 @@ void test_encoding() {
     
     std::string encoded = RespValue::encode(*original);
     auto [decoded, consumed] = RespValue::parse(encoded);
-    
-    assert(decoded.type == RespValue::Type::ARRAY);
-    assert(decoded.arr.size() == 3);
-    assert(decoded.arr[0].str == "SET");
-    assert(decoded.arr[1].str == "key");
-    assert(decoded.arr[2].str == "value");
-    
-    std::cout << "✅ test_encoding passed\n";
-}
 
-int main() {
-    std::cout << "Running RESP parser tests...\n\n";
-    
-    test_simple_string();
-    test_error();
-    test_integer();
-    test_bulk_string();
-    test_null_bulk();
-    test_array();
-    test_incomplete_data();
-    test_multiple_commands();
-    test_buffer_overflow_protection();
-    test_encoding();
-    
-    std::cout << "\n🎉 All tests passed!\n";
-    return 0;
+    EXPECT_EQ(decoded.type, RespValue::Type::ARRAY);
+    EXPECT_EQ(decoded.arr.size(), 3);
+    EXPECT_EQ(decoded.arr[0].str, "SET");
+    EXPECT_EQ(decoded.arr[1].str, "key");
+    EXPECT_EQ(decoded.arr[2].str, "value");
 }
