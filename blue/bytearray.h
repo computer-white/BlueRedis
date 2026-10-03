@@ -470,6 +470,12 @@ namespace blue
          * @return 还剩多少容量
          */
         size_t getCapacity() const;
+
+        /**
+         * @brief 获取总容量
+         */
+        size_t getTotalCapacity() const noexcept { return m_capacity; }
+
     private:
         // 想象成一本便利签,必须保证m_baseSize == Node中的size
         Node *m_root;      // 第一页

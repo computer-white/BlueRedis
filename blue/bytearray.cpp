@@ -793,6 +793,10 @@ namespace blue
 
     uint64_t ByteArray::getReadBuffers(std::vector<iovec> &vect, uint64_t size, size_t position) const
     {
+        if (position < m_size)
+        {
+            std::__throw_out_of_range("m_size < position");
+        }
         size_t readsize = m_size - position;
         size = size > readsize ? readsize : size;
         if (size == 0)
