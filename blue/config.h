@@ -127,7 +127,7 @@ namespace blue
                 ss << node[i];
                 vec.push_back(LexicalCast<std::string, T>()(ss.str()));
             }
-            return vec; // RVO(返回值优化),若返回的类型与局部对象类型相同,且返回的就是局部对象,则c++11会优化
+            return vec;
         }
     };
 
@@ -184,7 +184,7 @@ namespace blue
                 ss << node[i];
                 lis.push_back(LexicalCast<std::string, T>()(ss.str()));
             }
-            return lis; // RVO(返回值优化),若返回的类型与局部对象类型相同,且返回的就是局部对象,则c++11会优化
+            return lis;
         }
     };
 
@@ -223,7 +223,7 @@ namespace blue
                 ss << node[i];
                 set_.insert(LexicalCast<std::string, T>()(ss.str()));
             }
-            return set_; // RVO(返回值优化),若返回的类型与局部对象类型相同,且返回的就是局部对象,则c++11会优化
+            return set_;
         }
     };
 
@@ -262,7 +262,7 @@ namespace blue
                 ss << node[i];
                 unorset_.insert(LexicalCast<std::string, T>()(ss.str()));
             }
-            return unorset_; // RVO(返回值优化),若返回的类型与局部对象类型相同,且返回的就是局部对象,则c++11会优化
+            return unorset_;
         }
     };
 
@@ -299,11 +299,9 @@ namespace blue
                 ss.str(""); // 每次清空流
                 ss.clear();
                 ss << it->second;
-                // map_.insert(std::make_pair(it->first.Scalar(),
-                // LexicalCast<std::string,T>() (ss.str())));
                 map_.emplace(it->first.Scalar(), LexicalCast<std::string, T>()(ss.str()));
             }
-            return map_; // RVO(返回值优化),若返回的类型与局部对象类型相同,且返回的就是局部对象,则c++11会优化
+            return map_;
         }
     };
 
@@ -340,11 +338,9 @@ namespace blue
                 ss.str(""); // 每次清空流
                 ss.clear();
                 ss << it->second;
-                // map_.insert(std::make_pair(it->first.Scalar(),
-                // LexicalCast<std::string,T>() (ss.str())));
                 map_.emplace(it->first.Scalar(), LexicalCast<std::string, T>()(ss.str()));
             }
-            return map_; // RVO(返回值优化),若返回的类型与局部对象类型相同,且返回的就是局部对象,则c++11会优化
+            return map_;
         }
     };
 
@@ -662,6 +658,12 @@ namespace blue
         static void LoadFromYAML(const YAML::Node &root);
 
         /**
+         * @brief 加载yaml配置
+         * @param yaml_file_path yaml文件路径
+         */
+        static void LoadFromYAML(const std::string &yaml_file_path);
+
+        /**
          * @brief 从 JSON 文件加载配置
          * @param json_file_path JSON 文件路径
          */
@@ -674,7 +676,6 @@ namespace blue
          */
         static ConfigVarBase::ConfigVarBasePtr LookUpBase(const std::string &name);
 
-        // 拿出m_datas数据来检查
         /**
          * @brief 取出存储在配置名称和配置信息的maps中的配置信息的内容做检查
          * @param cb 检查配置信息的函数
@@ -686,7 +687,6 @@ namespace blue
         /**
          * @brief 获取静态map数据,存放着配置的名称以及配置基类指针
          * @return m_datas
-         * @note 必须返回引用或指针,否则相当于每次调用修改的是副本导致错误(他妈的，让我改了一个多小时)
          */
         static ConfigVarMaps &_GetConfigVarMaps()
         {

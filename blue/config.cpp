@@ -17,7 +17,7 @@
  */
 #include <iostream>
 #include "config.h"
-#include <nlohmann/json.hpp> 
+#include <nlohmann/json.hpp>
 
 // 配置
 namespace blue
@@ -90,14 +90,75 @@ namespace blue
         }
     }
 
+    void Config::LoadFromYAML(const std::string &yaml_file_path)
+    {
+        YAML::Node root;
+        try
+        {
+            root = YAML::LoadFile(yaml_file_path);
+        }
+        catch (const YAML::Exception &e)
+        {
+            BLUE_LOG_ERROR(BLUE_LOG_MASSAGE_ROOT())
+                << "LoadFromYAML: cannot load " << yaml_file_path
+                << " : " << e.what();
+            throw;
+        }
+        LoadFromYAML(root);
+    }
+
+    inline YAML::Node jsonToYaml(const nlohmann::json &j)
+    {
+        YAML::Node node;
+        if (j.is_object())
+        {
+            for (auto it = j.begin(); it != j.end(); ++it)
+            {
+                node[it.key()] = jsonToYaml(it.value());
+            }
+        }
+        else if (j.is_array())
+        {
+            for (const auto &item : j)
+            {
+                node.push_back(jsonToYaml(item));
+            }
+        }
+        else if (j.is_string())
+        {
+            node = j.get<std::string>();
+        }
+        else if (j.is_boolean())
+        {
+            node = j.get<bool>();
+        }
+        else if (j.is_number_integer())
+        {
+            node = j.get<int64_t>();
+        }
+        else if (j.is_number_float())
+        {
+            node = j.get<double>();
+        }
+        else if (j.is_null())
+        {
+            node = YAML::Node(YAML::NodeType::Null);
+        }
+        else
+        {
+            node = j.dump();
+        }
+        return node;
+    }
+
     void Config::LoadFromJson(const std::string &json_file_path)
     {
         std::ifstream ifs(json_file_path);
         if (!ifs.is_open())
         {
-            BLUE_LOG_ERROR(BLUE_LOG_MASSAGE_ROOT())
-                << "LoadFromJson: cannot open file: " << json_file_path;
-            return;
+            std::string msg = "LoadFromJson: cannot open " + json_file_path;
+            BLUE_LOG_ERROR(BLUE_LOG_MASSAGE_ROOT()) << msg;
+            throw std::invalid_argument(msg);
         }
 
         nlohmann::json root;
@@ -107,72 +168,13 @@ namespace blue
         }
         catch (const std::exception &e)
         {
-            BLUE_LOG_ERROR(BLUE_LOG_MASSAGE_ROOT())
-                << "LoadFromJson: parse error: " << e.what();
-            return;
+            std::string msg = "LoadFromJson: parse error in " + json_file_path
+                        + " : " + e.what();
+            BLUE_LOG_ERROR(BLUE_LOG_MASSAGE_ROOT()) << msg;
+            throw std::invalid_argument(msg);
         }
-
-        // 递归遍历 JSON，将 key-value 转为 YAML::Node 再复用 LoadFromYAML
-        std::function<void(const nlohmann::json&, const std::string&)> traverse =
-            [&](const nlohmann::json &j, const std::string &prefix)
-        {
-            if (j.is_object())
-            {
-                for (auto it = j.begin(); it != j.end(); ++it)
-                {
-                    std::string key = prefix.empty() ? it.key() : prefix + "." + it.key();
-                    traverse(it.value(), key);
-                }
-            }
-            else if (j.is_array())
-            {
-                // 数组序列化为 YAML 格式的字符串，再用 LoadFromYAML 解析
-                YAML::Node node;
-                for (const auto &item : j)
-                {
-                    if (item.is_string())
-                        node.push_back(item.get<std::string>());
-                    else if (item.is_number_integer())
-                        node.push_back(item.get<int64_t>());
-                    else if (item.is_number_float())
-                        node.push_back(item.get<double>());
-                    else if (item.is_boolean())
-                        node.push_back(item.get<bool>());
-                    else
-                        node.push_back(item.dump());  // 复杂类型存 JSON 字符串
-                }
-                // 将 YAML Node 序列化后，通过 fromString 写入配置
-                auto &datas = _GetConfigVarMaps();
-                auto it = datas.find(prefix);
-                if (it != datas.end())
-                {
-                    std::stringstream ss;
-                    ss << node;
-                    it->second->fromString(ss.str());
-                }
-            }
-            else
-            {
-                // 叶子节点：string / int / float / bool
-                auto &datas = _GetConfigVarMaps();
-                auto it = datas.find(prefix);
-                if (it != datas.end())
-                {
-                    if (j.is_string())
-                        it->second->fromString(j.get<std::string>());
-                    else if (j.is_number_integer())
-                        it->second->fromString(std::to_string(j.get<int64_t>()));
-                    else if (j.is_number_float())
-                        it->second->fromString(std::to_string(j.get<double>()));
-                    else if (j.is_boolean())
-                        it->second->fromString(j.get<bool>() ? "1" : "0");
-                    else
-                        it->second->fromString(j.dump());
-                }
-            }
-        };
-
-        traverse(root, "");
+        auto node = blue::jsonToYaml(root);
+        LoadFromYAML(node);
         BLUE_LOG_INFO(BLUE_LOG_MASSAGE_ROOT())
             << "LoadFromJson: " << json_file_path << " loaded successfully";
     }

@@ -17,7 +17,6 @@
  */
 #include <exception>
 #include "mthread.h"
-#include "log.h"
 #include "util.h"
 
 #ifdef __linux__
@@ -29,7 +28,6 @@ namespace blue
 {
     static thread_local Mthread *t_thread = nullptr;
     static thread_local std::string t_thread_name = "NOKNOW";
-    static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
 
     Mthread *Mthread::GetThis()
     {
