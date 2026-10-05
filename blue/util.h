@@ -30,6 +30,9 @@
 #include <sys/types.h>
 #include <sys/syscall.h>
 #include <stdint.h>
+#include <cstdlib>
+#include <iostream>
+#include <optional>
 #include <vector>
 #include <string>
 
@@ -66,6 +69,9 @@ namespace blue
     
     // 获取当前北京时间
     std::string GetCurrentBeiJingTime();
+
+    // 获取环境变量
+    std::optional<std::string> getEnv(const std::string &key);
 }
 
 #endif // __BLUE_UTIL_H__

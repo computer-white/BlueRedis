@@ -131,4 +131,12 @@ namespace blue
         return os.str();
     }
 
+    std::optional<std::string> getEnv(const std::string &key)
+    {
+        if (const char* val = std::getenv(key.c_str()); val != nullptr)
+        {
+            return std::string(val);
+        }
+        return std::nullopt;
+    }
 }
