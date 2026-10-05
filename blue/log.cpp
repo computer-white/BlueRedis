@@ -24,6 +24,7 @@
 #include "blue/log.h"
 #include "blue/config.h"
 #include "blue/configinit.h"
+#include "blue/config_parser.h"
 
 // 日志模块
 namespace blue
@@ -294,7 +295,7 @@ namespace blue
         std::list<blue::LogAppender::LogAppenderPtr> appenders_copy;
         {
             MutexType::ReadlockSco lock(m_mutex);
-            appenders_copy = m_Appenders;         // 复制 shared_ptr，引用计数增加
+            appenders_copy = m_Appenders; // 复制 shared_ptr，引用计数增加
         }
         if (!appenders_copy.empty())
         {
@@ -319,7 +320,7 @@ namespace blue
         std::list<blue::LogAppender::LogAppenderPtr> appenders_copy;
         {
             MutexType::ReadlockSco lock(m_mutex);
-            appenders_copy = m_Appenders;         // 复制 shared_ptr，引用计数增加
+            appenders_copy = m_Appenders; // 复制 shared_ptr，引用计数增加
         }
         for (auto &it : appenders_copy)
         {
@@ -867,7 +868,16 @@ namespace blue
             return it->second;
         }
         Logger::LoggerPtr new_logger = std::make_shared<blue::Logger>(name);
-        auto new_appender = std::make_shared<StdoutLogAppender>();
+        auto outToFile = getEnv("LOG_TO_FILE_NAME");
+        LogAppender::LogAppenderPtr new_appender;
+        if (outToFile.has_value())
+        {
+            new_appender = std::make_shared<FileoutLogAppender>(*outToFile);
+        }
+        else
+        {
+            new_appender = std::make_shared<StdoutLogAppender>();
+        }
         new_logger->addAppender(new_appender);
         m_logger[name] = new_logger;
         return new_logger;
