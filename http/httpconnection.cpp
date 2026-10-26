@@ -373,6 +373,19 @@ namespace blue
         {
         }
 
+        HttpConnectionPool::~HttpConnectionPool()
+        {
+            for (auto conn : m_pool)
+            {
+                if (conn)
+                {
+                    conn->reset();
+                    delete conn;
+                }
+            }
+            m_pool.clear();
+        }
+
         uint32_t HttpConnectionPool::getIdleCounts() const
         {
             MmutexType::lockSco lock(m_mutex);

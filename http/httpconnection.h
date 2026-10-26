@@ -252,6 +252,9 @@ namespace blue
                                const std::string &scheme = "http",
                                uint32_t maxSize = s_httpconnpool_mxsize);
 
+            
+            ~HttpConnectionPool();
+
             /**
              * @brief get 请求
              * @param url 请求目标url
