@@ -606,7 +606,6 @@ namespace blue
     void IOManager::wait_all()
     {
         std::unique_lock<std::mutex> lock(m_doneMutex);
-        m_waiting.fetch_add(1, std::memory_order_acq_rel);
         while (true)
         {
             size_t total = m_pending.load(std::memory_order_acquire);
@@ -614,13 +613,16 @@ namespace blue
             {
                 total += queue->pending.load(std::memory_order_acquire);
             }
+            // BLUE_LOG_INFO(g_logger) << "total = " << total << " "
+            //                         << "m_pendingEventCounts = " << m_pendingEventCounts.load() << " "
+            //                         << "hasTimer = " << TimerManager::hasTimer() << " "
+            //                         << "m_running = " << m_running.load();
             if (total == 0 && m_pendingEventCounts.load(std::memory_order_acquire) == 0 && !TimerManager::hasTimer() && m_running.load(std::memory_order_acquire) == 0)
             {
                 break;
             }
             m_doneCv.wait_for(lock, std::chrono::milliseconds(10));
         }
-        m_waiting.fetch_sub(1, std::memory_order_acq_rel);
         clearFinishedTasks();
     }
 

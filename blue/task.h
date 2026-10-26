@@ -31,6 +31,7 @@
 #include <variant>
 #include <type_traits>
 #include <functional>
+#include <atomic>
 
 namespace blue
 {
@@ -69,6 +70,7 @@ namespace blue
         virtual void resume() = 0;
         virtual bool done() const noexcept = 0;
         virtual void setOnComplete(std::function<void()>) = 0;
+        virtual bool finalizing() const noexcept = 0;
     };
 
     namespace detail
@@ -100,6 +102,8 @@ namespace blue
             std::coroutine_handle<> fa = nullptr; // 父协程句柄
             std::exception_ptr exception = nullptr;
             std::function<void()> on_complete = nullptr;
+            // 用于确保在进入 final_suspend 之后和成功调用完cb之前 保证不去清理 Task 的协程帧
+            std::atomic<bool> finalizing{false};
 
             Task get_return_object()
             {
@@ -110,12 +114,16 @@ namespace blue
 
             SubCorroutine final_suspend() noexcept
             {
+                // 标记：帧已进入 final suspend，但 final_suspend 还没返回
+                finalizing.store(true, std::memory_order_release);
                 if (on_complete)
                 {
                     auto cb = std::move(on_complete);
                     on_complete = nullptr;
+                    // cb 里面永远不做删除帧的操作，只做转移
                     cb();
                 }
+                finalizing.store(false, std::memory_order_release);
                 return SubCorroutine{fa};
             }
 
@@ -257,7 +265,13 @@ namespace blue
             {
                 h.promise().on_complete = std::move(cb);
             }
-        }        
+        }
+
+        bool finalizing() const noexcept override
+        {
+            auto h = task.getHandle();
+            return h && h.promise().finalizing.load(std::memory_order_acquire);
+        }
     };
 
     /**

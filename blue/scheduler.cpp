@@ -93,7 +93,6 @@ namespace blue
         m_stop.store(true, std::memory_order_release);
 
         m_Schecv.notify_all();
-        m_doneCv.notify_all();
         for (auto &queue : m_threadQueues)
         {
             queue->cv.notify_all();
@@ -105,12 +104,6 @@ namespace blue
             worker->join();
         }
         m_workers.clear();
-
-        // join 完成后，把仍然滞留在本地队列的任务搬到全局队列
-        for (size_t i = 0; i < m_threadQueues.size(); ++i)
-        {
-            drainLocalQueue(i);
-        }
     }
 
     void Scheduler::schedule(std::coroutine_handle<> h, int thr)
@@ -122,7 +115,7 @@ namespace blue
 
         schedule([h]() mutable
                  {
-            if (h && h.address() && !h.done()) h.resume();}, thr);
+            if (h && h.address() && !h.done()) h.resume(); }, thr);
     }
 
     void Scheduler::schedule(std::function<void()> cb, int thr)
@@ -255,14 +248,19 @@ namespace blue
                 {
                     BLUE_LOG_ERROR(g_logger) << "Unknown task error in thread " << myIndex;
                 }
+                // BLUE_LOG_INFO(g_logger) << "task.cb back but is not finished, m_running will sub one, now m_running is " << m_running.load();
                 m_running.fetch_sub(1, std::memory_order_acq_rel);
+                // BLUE_LOG_INFO(g_logger) << "m_running subed one, now m_running is " << m_running.load();
 
-                // 只有确实有人在等 wait_all 时才唤醒，避免每次任务 notify_all
-                if (m_waiting.load(std::memory_order_acquire) > 0)
-                {
-                    m_doneCv.notify_all();
-                }
+                // 任务执行完就去执行下一个任务直到没有任务
                 continue;
+            }
+
+            // 没有任务时清理已完成的 Task
+            {
+                std::list<std::shared_ptr<TaskBase>> to_destroy;
+                drainFinished(to_destroy);
+                to_destroy.clear();
             }
 
             // 退出检查
@@ -271,34 +269,31 @@ namespace blue
                 break;
             }
 
-            // 清理已完成的 Task
-            {
-                std::list<std::shared_ptr<TaskBase>> to_destroy;
-                {
-                    std::lock_guard<std::mutex> lock(m_runningMutex);
-                    to_destroy.swap(m_finishedTasks);
-                }
-                to_destroy.clear();
-            }
-
             // 无任务：阻塞等待本地队列 / 全局队列 / 停止
             {
                 std::unique_lock<std::mutex> lock(myQueue->mutex);
                 myQueue->cv.wait_for(lock, std::chrono::milliseconds(5), [&]
                                      { return !myQueue->tasks.empty() ||
-                                              m_stopping.load(std::memory_order_acquire) ||
-                                              m_pending.load(std::memory_order_acquire) > 0; });
+                                              m_stopping.load(std::memory_order_acquire); });
+
+                std::unique_lock<std::mutex> Sche_lock(m_Schemutex);
+                m_Schecv.wait_for(Sche_lock, std::chrono::milliseconds(5), [&]
+                                  { return m_stopping.load(std::memory_order_acquire) ||
+                                           m_pending.load(std::memory_order_acquire) > 0; });
             }
 
-            // 若全局队列有东西，及时让出，让循环下次去抢
-            if (m_pending.load(std::memory_order_acquire) > 0)
+            if (m_stopping.load(std::memory_order_acquire))
             {
-                std::this_thread::yield();
+                break;
+            }
+
+            // 没有任务就让出CPU
+            std::lock_guard<std::mutex> lock(myQueue->mutex);
+            if (myQueue->tasks.empty() && m_pending.load(std::memory_order_acquire) == 0)
+            {
+                std::this_thread::yield();  // 让出CPU
             }
         }
-
-        // 退出前把本线程剩余任务交给全局队列
-        drainLocalQueue(myIndex);
     }
 
     void Scheduler::drainLocalQueue(int index)
@@ -344,7 +339,6 @@ namespace blue
     void Scheduler::wait_all()
     {
         std::unique_lock<std::mutex> lock(m_doneMutex);
-        m_waiting.fetch_add(1, std::memory_order_acq_rel);
         while (true)
         {
             size_t total = m_pending.load(std::memory_order_acquire);
@@ -358,7 +352,6 @@ namespace blue
             }
             m_doneCv.wait_for(lock, std::chrono::milliseconds(10));
         }
-        m_waiting.fetch_sub(1, std::memory_order_acq_rel);
         clearFinishedTasks();
     }
 

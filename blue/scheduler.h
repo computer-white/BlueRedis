@@ -140,11 +140,18 @@ namespace blue
                 m_runningTasks.push_back(task_base);
             }
 
-            task_base->setOnComplete([this, task_base]()
+            task_base->setOnComplete([this, wp = std::weak_ptr<TaskBase>(task_base)]()
                                      {
-            std::lock_guard<std::mutex> lock(m_runningMutex);
-            m_runningTasks.remove(task_base);
-            m_finishedTasks.push_back(task_base); });
+                auto tb = wp.lock();
+                if (!tb)
+                {
+                    return;
+                }
+                std::lock_guard<std::mutex> lock(m_runningMutex);
+                // 先去 push_back 再去 remove
+                // 不进行 任何的 clear 或 swap 操作
+                m_finishedTasks.push_back(tb);
+                m_runningTasks.remove(tb);});
 
             schedule([h]() mutable
                      {
@@ -190,17 +197,12 @@ namespace blue
         void runSub(int val = 1) noexcept { m_running.fetch_sub(val, std::memory_order_acq_rel); }
 
         /**
-         * @brief 清理已完成的顶层 Task（在 wait_all 里调用）
+         * @brief 清理已完成的顶层 Task
          */
         void clearFinishedTasks()
         {
             std::list<std::shared_ptr<blue::TaskBase>> to_destroy;
-            {
-                std::lock_guard<std::mutex> lock(m_runningMutex);
-                m_runningTasks.remove_if([](const std::shared_ptr<blue::TaskBase> &t)
-                                         { return t->done(); });
-                to_destroy.swap(m_finishedTasks);
-            }
+            drainFinished(to_destroy);
             to_destroy.clear(); // 锁外销毁
         }
 
@@ -239,11 +241,31 @@ namespace blue
          */
         void drainLocalQueue(int index);
 
+        /**
+         * @brief 把 m_finishedTasks 中"已不在 final_suspend 执行中"的项摘到 to_destroy
+         *        调用者负责在锁外 clear() to_destroy
+         */
+        void drainFinished(std::list<std::shared_ptr<blue::TaskBase>> &to_destroy)
+        {
+            std::lock_guard<std::mutex> lock(m_runningMutex);
+            for (auto it = m_finishedTasks.begin(); it != m_finishedTasks.end(); )
+            {
+                if ((*it)->finalizing())
+                {
+                    // 还在 final_suspend 栈上，留到下一轮
+                    ++it;
+                }
+                else
+                {
+                    to_destroy.splice(to_destroy.end(), m_finishedTasks, it++);
+                }
+            }
+        }
+
     protected:
         // iomanager需要使用
         std::mutex m_doneMutex;                                      // wait_all用
         std::condition_variable m_doneCv;                            // wait_all用
-        std::atomic<size_t> m_waiting{0};                            // 记录正在等 m_Schecv 的线程数，用于精准 notify
         std::vector<std::unique_ptr<blue::Mthread>> m_workers;       // 工作线程
         std::vector<std::unique_ptr<PerThreadQueue>> m_threadQueues; // 工作线程任务队列
         std::atomic<size_t> m_pending{0};                            // 全局队列任务计数
