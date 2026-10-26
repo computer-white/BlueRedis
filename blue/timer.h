@@ -143,6 +143,14 @@ namespace blue
         void clear()
         {
             std::unique_lock<std::shared_mutex> lock(m_mutex);
+            for (auto& timer : m_timers)
+            {
+                if (timer)
+                {
+                    timer->m_handle = nullptr;
+                    timer->m_cb = nullptr;
+                }
+            }
             m_timers.clear();
         }
 
