@@ -313,7 +313,8 @@ namespace blue
     template <typename T>
     inline auto from(std::initializer_list<T> list)
     {
-        return Pipeline(list,
+        std::vector<T> owned(list);
+        return Pipeline(std::move(owned),
                         [](auto &&c) -> Generator<T>
                         {
                             for (const auto &item : c)
