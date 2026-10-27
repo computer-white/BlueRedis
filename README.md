@@ -73,8 +73,21 @@ sudo apt install -y \
     ragel
 ```
 ```bash
+abseil-cpp编译：
+cd /path/to/abseil-cpp
+rm -rf build && mkdir build && cd build
+
+cmake .. \
+  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+  -DCMAKE_INSTALL_PREFIX=/usr/local \
+  -DCMAKE_BUILD_TYPE=Release
+
+make -j$(nproc)
+sudo make install
+```
+```bash
 **第三方源码**:`thirdparty/llhttp-release-v9.2.0/` 已 vendor 进仓库,
-克隆后无需额外下载。
+克隆后无需额外下载。`
 ```
 
 ## 支持命令
