@@ -20,9 +20,9 @@ void signalHandler(int signum)
 }
 blue::Task<void> test()
 {
-    auto httpserver = std::make_shared<blue::http::HttpServer<int>>();
+    auto httpserver = std::make_shared<blue::http::HttpServer>();
     auto address = blue::Address::LookupAny("0.0.0.0:8082");
-    while (!httpserver->bind(address))
+    while (!httpserver->bind<int>(address))
     {
         co_await blue::sleepFor(2);
     }

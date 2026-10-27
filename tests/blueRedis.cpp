@@ -30,8 +30,8 @@ Task<void> runServer(const std::string host)
         BLUE_LOG_ERROR(g_logger) << "address is empty";
         co_return;
     }
-    auto comm = std::make_shared<CommandHandler<int>>();
-    while (!comm->bind(address))
+    auto comm = std::make_shared<CommandHandler>();
+    while (!comm->bind<int>(address))
     {
         co_await sleepFor(2);
     }

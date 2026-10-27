@@ -20,9 +20,9 @@ void handle(int sig)
 
 blue::Task<void> helloblue()
 {
-    auto server = std::make_shared<blue::http::HttpServer<int>>();
+    auto server = std::make_shared<blue::http::HttpServer>();
     auto addr = blue::Address::LookupAnyIpAddress("0.0.0.0:8888");
-    while (!server->bind(addr))
+    while (!server->bind<int>(addr))
     {
         co_await blue::sleepFor(1);
     }
