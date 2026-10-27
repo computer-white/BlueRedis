@@ -1,4 +1,4 @@
- /*
+/*
  * BlueRedis - High Performance Redis Server based on C++20 Coroutine
  * Copyright (C) 2026 blue
  *
@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
- /**
+/**
  * @file command_register.h
  * @brief 宏定义redis命令处理函数和插入命令表
  * @author blue
@@ -28,16 +28,16 @@
 
 namespace blue
 {
-    // 注册自定义检测的宏
-    #define REGISTER_COMMAND_T(Name, Handler) \
-        static AutoRespValue Handler(std::vector<RespValue>& args, \
-                                MSocket::MSocketPtr sock, \
-                                bool aof, \
-                                std::shared_ptr<ServerData<int>> self);
-    // 插入自定义检测命令的宏
-    #define CMD_ENTRY_T(Name, Handler, IsWrite, Argv) \
-        builder.insert(#Name, \
-                    Handler, \
-                    blue::fnv1a_hash(#Name), \
-                    IsWrite, Argv);
+// 注册自定义检测的宏
+#define REGISTER_COMMAND_T(Name, Handler)                      \
+    static AutoRespValue Handler(std::vector<RespValue> &args, \
+                                 MSocket::MSocketPtr sock,     \
+                                 bool aof,                     \
+                                 std::shared_ptr<ServerData> self);
+// 插入自定义检测命令的宏
+#define CMD_ENTRY_T(Name, Handler, IsWrite, Argv) \
+    builder.insert(#Name,                         \
+                   Handler,                       \
+                   blue::fnv1a_hash(#Name),       \
+                   IsWrite, Argv);
 }

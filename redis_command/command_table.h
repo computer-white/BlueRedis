@@ -1,4 +1,4 @@
- /*
+/*
  * BlueRedis - High Performance Redis Server based on C++20 Coroutine
  * Copyright (C) 2026 blue
  *
@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
- /**
+/**
  * @file command_table.h
  * @brief 编译期插入命令，排序，构建命令表
  * @author blue
@@ -31,14 +31,15 @@
 
 namespace blue
 {
-    template<typename T> class CommandHandler;
-    template <size_t N> class CommandTable;
+    class CommandHandler;
+    template <size_t N>
+    class CommandTable;
 
-    using ArgValidator = bool(*)(size_t argc);
+    using ArgValidator = bool (*)(size_t argc);
     using CommandHandlerFunc = blue::AutoRespValue (*)(std::vector<RespValue> &,
-                                              MSocket::MSocketPtr,
-                                              bool,
-                                              std::shared_ptr<ServerData<int>> self);
+                                                       MSocket::MSocketPtr,
+                                                       bool,
+                                                       std::shared_ptr<ServerData> self);
     // 编译器命令表构建器
     template <size_t MaxCommands = 256>
     struct CommandTableBuilder
@@ -116,11 +117,11 @@ namespace blue
             size_t pivot_idx = choosePivot(left, right);
             Entry pivot = entries[pivot_idx];
             swap(entries[pivot_idx], entries[right]);
-            
+
             size_t i = left;
             for (size_t j = left; j < right; ++j)
             {
-                if (entries[j].hash < pivot.hash) 
+                if (entries[j].hash < pivot.hash)
                 {
                     swap(entries[i], entries[j]);
                     ++i;
@@ -137,12 +138,12 @@ namespace blue
                 return;
             }
             int pivot = partition(left, right);
-            if (pivot - left < right - pivot) 
+            if (pivot - left < right - pivot)
             {
                 process(left, pivot - 1);
                 process(pivot + 1, right);
-            } 
-            else 
+            }
+            else
             {
                 process(pivot + 1, right);
                 process(left, pivot - 1);
@@ -162,7 +163,7 @@ namespace blue
         {
             quicksort();
             std::array<Entry, MaxCommands> result{};
-            for (size_t i = 0; i < count; ++i) 
+            for (size_t i = 0; i < count; ++i)
             {
                 result[i] = entries[i];
             }
@@ -174,53 +175,53 @@ namespace blue
     template <size_t N>
     class CommandTable
     {
-        public:
-            using Entry = typename CommandTableBuilder<>::Entry;
+    public:
+        using Entry = typename CommandTableBuilder<>::Entry;
 
-            constexpr CommandTable(const std::array<Entry, N>& table, size_t count)
+        constexpr CommandTable(const std::array<Entry, N> &table, size_t count)
             : m_table(table), m_count(count) {}
 
-            constexpr size_t lowerbound(uint32_t hash) const
+        constexpr size_t lowerbound(uint32_t hash) const
+        {
+            size_t l = 0, r = m_count;
+            while (l < r)
             {
-                size_t l = 0, r = m_count;
-                while (l < r)
+                // r 恒大于 l
+                size_t mid = l + (r - l) / 2;
+                if (m_table[mid].hash < hash)
                 {
-                    // r 恒大于 l
-                    size_t mid = l + (r - l) / 2;
-                    if (m_table[mid].hash < hash)
-                    {
-                        l = mid + 1;
-                    }
-                    else
-                    {
-                        r = mid;
-                    }
+                    l = mid + 1;
                 }
-                return r;
+                else
+                {
+                    r = mid;
+                }
             }
+            return r;
+        }
 
-            // 运行时二分(>= hash的第一个位置)
-            constexpr const Entry* find_lowerbound(uint32_t hash) const 
+        // 运行时二分(>= hash的第一个位置)
+        constexpr const Entry *find_lowerbound(uint32_t hash) const
+        {
+            if (m_count == 0)
             {
-                if (m_count == 0)
-                {
-                    return nullptr;
-                }
-                size_t l = lowerbound(hash);
-                if (l == m_count || m_table[l].hash != hash)
-                {
-                    return nullptr;
-                }
-                return &m_table[l];
+                return nullptr;
             }
+            size_t l = lowerbound(hash);
+            if (l == m_count || m_table[l].hash != hash)
+            {
+                return nullptr;
+            }
+            return &m_table[l];
+        }
 
-            constexpr size_t size() const { return m_count; }
-            constexpr const Entry* begin() const { return m_table.data(); }
-            constexpr const Entry* end() const { return m_table.data() + m_count; }
+        constexpr size_t size() const { return m_count; }
+        constexpr const Entry *begin() const { return m_table.data(); }
+        constexpr const Entry *end() const { return m_table.data() + m_count; }
 
-        private:
-            std::array<Entry, N> m_table;
-            size_t m_count;
+    private:
+        std::array<Entry, N> m_table;
+        size_t m_count;
     };
 
 }
