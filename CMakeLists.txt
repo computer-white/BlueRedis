@@ -11,6 +11,7 @@ project(blue)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ============ 全局编译选项 ============
 set(CMAKE_VERBOSE_MAKEFILE ON)
@@ -27,19 +28,30 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 # 编译时使用cmake .. -DENABLE_ASAN=ON
-option(ENABLE_ASAN  "Address Sanitizer"              OFF)
-option(ENABLE_UBSAN "Undefined Behavior Sanitizer"   OFF)
+option(ENABLE_ASAN  "Address Sanitizer"            OFF)
+option(ENABLE_UBSAN "Undefined Behavior Sanitizer" OFF)
+option(ENABLE_TSAN  "Thread Sanitizer"             OFF)
+
+if(ENABLE_ASAN AND ENABLE_TSAN)
+    message(FATAL_ERROR "ASAN and TSAN cannot be enabled together")
+endif()
 
 if(ENABLE_ASAN)
-    message("ASAN ON")
+    message(STATUS "ASAN ON")
     add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
     add_link_options(-fsanitize=address)
 endif()
 
 if(ENABLE_UBSAN)
-    message("UBSAN ON")
+    message(STATUS "UBSAN ON")
     add_compile_options(-fsanitize=undefined -fno-sanitize-recover=all -g)
     add_link_options(-fsanitize=undefined)
+endif()
+
+if(ENABLE_TSAN)
+    message(STATUS "TSAN ON")
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
 endif()
 
 # add_compile_options(-Wall -Wextra -Wpedantic)
@@ -139,6 +151,9 @@ set(LIB_SRC
     blue/timer.cpp
     blue/resp_parser.cpp
     blue/config_parser.cpp
+    redis_command/command_handler.cpp
+    redis_command/server_data.cpp
+    redis_command/command/command_handler_table.cpp
     redis_command/modules/subscription.cpp
     redis_command/modules/slowlog.cpp
     redis_command/modules/monitor.cpp
