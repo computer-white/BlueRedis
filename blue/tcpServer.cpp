@@ -26,82 +26,40 @@ namespace blue
 {
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
 
-    template <typename T>
-    TcpServer<T>::TcpServer(int level, int option_name, T option, IOManager *manager, IOManager *acceptmanager)
-        : m_level(level),
-          m_option_name(option_name),
-          m_option(std::move(option)),
-          m_worker(manager),
+    TcpServer::TcpServer(IOManager *manager, IOManager *acceptmanager)
+        : m_worker(manager),
           m_acceptworker(acceptmanager)
     {
     }
 
-    template <typename T>
-    TcpServer<T>::~TcpServer()
+    TcpServer::~TcpServer()
     {
+        if (m_worker)
+        {
+            delete m_worker;
+        }
         m_isStop.store(true, std::memory_order_release);
         if (m_socks.empty())
         {
             return;
         }
+        closeAllFds();
+    }
+
+    void TcpServer::closeAllFds()
+    {
         for (auto &sock : m_socks)
         {
             sock->cancelAll();
-            sock->shutdown(SHUT_RDWR);
+            sock->shutdown(SHUT_RDWR); // 关闭读写端不在接收连接
             sock->close();
         }
         m_socks.clear();
     }
 
-    template <typename T>
-    bool TcpServer<T>::bind(Address::AddressPtr address)
+    Task<void> TcpServer::startAccept(MSocket::MSocketPtr sock)
     {
-        std::vector<Address::AddressPtr> adds, fails;
-        adds.push_back(address);
-        return bind(adds, fails);
-    }
-
-    template <typename T>
-    bool TcpServer<T>::bind(std::vector<Address::AddressPtr> &address, std::vector<Address::AddressPtr> &fails)
-    {
-        for (auto &add : address)
-        {
-            MSocket::MSocketPtr sock = MSocket::CreateTcp(add);
-            if (!sock->bind(add))
-            {
-                BLUE_LOG_ERROR(g_logger) << "tcp server bind error : " << errno
-                                         << " strerror : " << strerror(errno)
-                                         << " addr : [" << add->toString();
-                fails.push_back(add);
-                continue;
-            }
-            if (m_level != -1 && m_option_name != -1 &&
-                m_option_name != SO_REUSEADDR && m_option_name != SO_REUSEPORT &&
-                m_option_name != (SO_REUSEADDR | SO_REUSEPORT))
-            {
-                sock->setOption(m_level, m_option_name, m_option);
-            }
-            if (!sock->listen())
-            {
-                BLUE_LOG_ERROR(g_logger) << "tcp server listen error: " << errno
-                                         << " strerror: " << strerror(errno)
-                                         << " addr: [" << add->toString();
-                fails.push_back(add);
-                continue;
-            }
-            m_socks.push_back(sock);
-        }
-        if (!fails.empty())
-        {
-            m_socks.clear();
-            return false;
-        }
-        return true;
-    }
-
-    template <typename T>
-    Task<void> TcpServer<T>::startAccept(MSocket::MSocketPtr sock)
-    {
+        auto self = this->shared_from_this();
         sock->setNoBlocking();
         // 处在连接状态
         while (!m_isStop.load(std::memory_order_acquire))
@@ -148,8 +106,7 @@ namespace blue
         co_return;
     }
 
-    template <typename T>
-    Task<bool> TcpServer<T>::start()
+    Task<bool> TcpServer::start()
     {
         if (!m_isStop.load(std::memory_order_acquire))
         {
@@ -163,27 +120,20 @@ namespace blue
         co_return true;
     }
 
-    template <typename T>
-    Task<bool> TcpServer<T>::stop()
+    Task<bool> TcpServer::stop()
     {
         if (m_connections.load(std::memory_order_acquire))
         {
             co_return false;
         }
         m_isStop.store(true, std::memory_order_release);
-        for (auto &sock : m_socks)
-        {
-            sock->cancelAll();
-            sock->shutdown(SHUT_RDWR); // 关闭读写端不在接收连接
-            sock->close();
-        }
-        m_socks.clear();
+        closeAllFds();
         co_return true;
     }
 
-    template <typename T>
-    Task<void> TcpServer<T>::handleClient(MSocket::MSocketPtr sock)
+    Task<void> TcpServer::handleClient(MSocket::MSocketPtr sock)
     {
+        // auto self = this->shared_from_this();
         BLUE_LOG_INFO(g_logger) << "handleClient : " << sock->toString();
         char buf[1024];
         while (true)
@@ -204,7 +154,4 @@ namespace blue
         BLUE_LOG_INFO(g_logger) << "handleClient done";
         co_return;
     }
-
-    template class blue::TcpServer<int>;
-    template class blue::TcpServer<timeval>;
 }

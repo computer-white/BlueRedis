@@ -32,30 +32,27 @@
 #include "io_manager.h"
 #include "msocket.h"
 #include "task.h"
+#include "macro.h"
 
 // tcp server
 namespace blue
 {
     /* 对TCP 服务的封装 */
-    template <typename T>
-    class TcpServer : public std::enable_shared_from_this<TcpServer<T>>
+    class TcpServer : public std::enable_shared_from_this<TcpServer>
     {
     public:
-        using TcpServerPtr = std::shared_ptr<TcpServer<T>>;
+        using TcpServerPtr = std::shared_ptr<TcpServer>;
         TcpServer(const TcpServer &) = delete;
         TcpServer &operator=(const TcpServer &) = delete;
 
     public:
         /**
          * @brief 构造一个TcpServer对象
-         * @param level 协议例如SOL_SOCKET 默认 -1
-         * @param option_name 选项名称 例如SO_REUSEADDR 默认 -1
-         * @param option 选项值 1开启 0禁用 默认 0
          * @param manager 工作iomanager
          * @param acceptmanager 处理accpet的iomanager
          * @note 默认已经设置了SO_REUSEADDR, SO_RESUEPORT, TCP_NODELAY,默认超时时长2分钟
          */
-        TcpServer(int level = -1, int option_name = -1, T option = T(), IOManager *manager = IOManager::GetThis(),
+        TcpServer(IOManager *manager = IOManager::GetThis(),
                   IOManager *acceptmanager = IOManager::GetThis());
 
         /**
@@ -66,19 +63,86 @@ namespace blue
         /**
          * @brief bind一个地址
          * @param address 需要bind的地址
+         * @param level 协议例如SOL_SOCKET 默认 -1
+         * @param option_name 选项名称 例如SO_REUSEADDR 默认 -1
+         * @param option 选项值 1开启 0禁用 默认 0
          * @return 成功返回true
          * @note bind成功紧接着直接进行listen
          */
-        virtual bool bind(Address::AddressPtr address);
+        template <typename T>
+        bool bind(Address::AddressPtr address, int level = -1, int option_name = -1, T option = T())
+        {
+            std::vector<Address::AddressPtr> adds, fails;
+            adds.push_back(address);
+            return bind(adds, fails, level, option_name, std::move(option));
+        }
 
         /**
          * @brief bind 一组地址
          * @param address 需要绑定的一组地址
          * @param fails 返回失败的地址
+         * @param level 协议例如SOL_SOCKET 默认 -1
+         * @param option_name 选项名称 例如SO_REUSEADDR 默认 -1
+         * @param option 选项值 1开启 0禁用 默认 0
          * @return 成功返回true
          * @note 若有地址错误,将不会有任何地址被绑定.bind成功紧接着直接listen
          */
-        virtual bool bind(std::vector<Address::AddressPtr> &address, std::vector<Address::AddressPtr> &fails);
+        template <typename T>
+        bool bind(std::vector<Address::AddressPtr> &address, std::vector<Address::AddressPtr> &fails,
+                  int level = -1, int option_name = -1, T option = T())
+        {
+            blue::Logger::LoggerPtr logger = BLUE_LOG_NAME("system");
+            for (auto &add : address)
+            {
+                MSocket::MSocketPtr sock = MSocket::CreateTcp(add);
+                // 将fd设置为有效的
+                if (BLUE_UNLIKELY(!(sock->setValidFd())))
+                {
+                    BLUE_LOG_ERROR(logger) << "tcp server setValidFd error : " << errno
+                                             << " strerror : " << strerror(errno)
+                                             << " addr : [" << add->toString();
+                    fails.push_back(add);
+                    continue;
+                }
+                if (level != -1 && option_name != -1 &&
+                    option_name != SO_REUSEADDR && option_name != SO_REUSEPORT &&
+                    option_name != (SO_REUSEADDR | SO_REUSEPORT))
+                {
+                    if (BLUE_UNLIKELY(!(sock->setOption(level, option_name, option))))
+                    {
+                        BLUE_LOG_ERROR(logger) << "tcp server setOption error : " << errno
+                                                 << " strerror : " << strerror(errno)
+                                                 << " addr : [" << add->toString();
+                        fails.push_back(add);
+                        continue;
+                    }
+                }
+
+                if (!sock->bind(add))
+                {
+                    BLUE_LOG_ERROR(logger) << "tcp server bind error : " << errno
+                                             << " strerror : " << strerror(errno)
+                                             << " addr : [" << add->toString();
+                    fails.push_back(add);
+                    continue;
+                }
+                if (!sock->listen())
+                {
+                    BLUE_LOG_ERROR(logger) << "tcp server listen error: " << errno
+                                             << " strerror: " << strerror(errno)
+                                             << " addr: [" << add->toString();
+                    fails.push_back(add);
+                    continue;
+                }
+                m_socks.push_back(sock);
+            }
+            if (!fails.empty())
+            {
+                closeAllFds();
+                return false;
+            }
+            return true;
+        }
 
         /**
          * @brief start 开始tcpserver
@@ -120,6 +184,23 @@ namespace blue
          * @return 当前连接数量
          */
         uint32_t getRejectConnection() const noexcept { return m_rejected_connections.load(std::memory_order_acquire); }
+
+        /**
+         * @brief 关闭所有的sock fd
+         */
+        void closeAllFds();
+
+        /**
+         * @brief 停止sock上的事件
+         */
+        void cancelSocketEvent()
+        {
+            for (auto sock : m_socks)
+            {
+                sock->cancelAll();
+            }
+        }
+
     protected:
         /**
          * @brief 处理client事件
@@ -139,9 +220,6 @@ namespace blue
         virtual const int getMaxClientCount() const noexcept { return -1; };
 
     private:
-        int m_level;
-        int m_option_name;
-        T m_option;
         IOManager *m_worker;
         IOManager *m_acceptworker;
         std::atomic<bool> m_isStop{true};
