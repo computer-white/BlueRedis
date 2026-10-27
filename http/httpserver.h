@@ -39,23 +39,19 @@ namespace blue
     namespace http
     {
         /* 服务器端 */
-        template <typename T>
-        class HttpServer : public TcpServer<T>
+        class HttpServer : public TcpServer
         {
         public:
-            using HttpServerPtr = std::shared_ptr<HttpServer<T>>;
+            using HttpServerPtr = std::shared_ptr<HttpServer>;
 
         public:
             /**
              * @brief http服务构造函数
              * @param keepAlive 服务器是否选择保持长连接,true表示保持长连接
-             * @param level 协议例如SOL_SOCKET 默认 -1
-             * @param option_name 选项名称 例如SO_REUSEADDR 默认 -1
-             * @param option 选项值 1开启 0禁用 默认 0
              * @param manager 工作iomanager
              * @param acceptmanager 处理accpet的iomanager
              */
-            HttpServer(bool keepAlive = false, int level = -1, int option_name = -1, T option = T(), IOManager *manager = IOManager::GetThis(),
+            HttpServer(bool keepAlive = false, IOManager *manager = IOManager::GetThis(),
                        IOManager *acceptmanager = IOManager::GetThis());
 
             /**

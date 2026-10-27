@@ -62,35 +62,32 @@ namespace blue
             return result;
         }
 
-        template <typename T>
-        HttpServer<T>::HttpServer(bool keepAlive, int level, int option_name, T option, IOManager *manager, IOManager *acceptmanager)
-            : TcpServer<T>(level, option_name, option, manager, acceptmanager),
+        HttpServer::HttpServer(bool keepAlive, IOManager *manager, IOManager *acceptmanager)
+            : TcpServer(manager, acceptmanager),
               m_keepAlive(keepAlive)
         {
             m_dispatch.reset(new ServletDispatch());
         }
 
-        template <typename T>
-        bool HttpServer<T>::ShutDownServer()
+        bool HttpServer::ShutDownServer()
         {
             for (auto wptr : m_clients)
             {
-                if (wptr.expired())
-                {
-                    continue;
-                }
+                if (wptr.expired()) continue;
                 auto ptr = wptr.lock();
                 if (ptr)
                 {
                     ptr->shutdown(SHUT_RDWR);
+                    ptr->close();
                 }
             }
+            m_clients.clear();
             return true;
         }
 
-        template <typename T>
-        Task<void> HttpServer<T>::handleClient(MSocket::MSocketPtr sock)
+        Task<void> HttpServer::handleClient(MSocket::MSocketPtr sock)
         {
+            // auto self = this->shared_from_this();
             m_clients.push_back(sock);
             auto remoteAddress = std::dynamic_pointer_cast<IPAddress>(sock->getRemoteAddress());
             auto localAddress = std::dynamic_pointer_cast<IPAddress>(sock->getLocalAddress());
@@ -111,7 +108,7 @@ namespace blue
                 {
                     BLUE_LOG_ERROR(g_logger) << "SSLSocket creation failed (cert not found?)";
                     sock->close();
-                    TcpServer<T>::subConnection();
+                    this->subConnection();
                     co_return;
                 }
                 bool tem = co_await ssl_sock->handshake();
@@ -119,7 +116,7 @@ namespace blue
                 {
                     BLUE_LOG_ERROR(g_logger) << "SSL handshake failed";
                     sock->close();
-                    TcpServer<T>::subConnection();
+                    this->subConnection();
                     co_return;
                 }
                 session = std::make_shared<HttpSession>(ssl_sock);
@@ -167,12 +164,12 @@ namespace blue
             } while (temkeepAlive);
 
             session->close();
-            TcpServer<T>::subConnection();
+            this->subConnection();
             
             // 如果正在关闭且没有活跃连接，停止服务器
-            if (m_shutdown.load(std::memory_order_acquire) && TcpServer<T>::getConnection() == 0)
+            if (m_shutdown.load(std::memory_order_acquire) && this->getConnection() == 0)
             {
-                bool end = co_await TcpServer<T>::stop();
+                bool end = co_await this->stop();
                 if (end)
                 {
                     BLUE_LOG_INFO(xx::g_logger) << "Http Server Stoped";
@@ -181,8 +178,7 @@ namespace blue
             co_return;
         }
 
-        template <typename T>
-        void HttpServer<T>::_setIpAndPort(blue::IPAddress::IPAddressPtr address, std::string &ip, std::string &port)
+        void HttpServer::_setIpAndPort(blue::IPAddress::IPAddressPtr address, std::string &ip, std::string &port)
         {
             if (address->getFamily() == AF_INET)
             {
@@ -199,8 +195,7 @@ namespace blue
             port = std::to_string(address->getPort());
         }
 
-        template <typename T>
-        Task<void> HttpServer<T>::_forwardRequest(HttpRequest::HttpRequestPtr request,
+        Task<void> HttpServer::_forwardRequest(HttpRequest::HttpRequestPtr request,
                                                   HttpResponse::HttpResponsePtr response,
                                                   std::string targeturl,
                                                   bool isForwardProxy)
@@ -306,8 +301,7 @@ namespace blue
             co_return;
         }
 
-        template <typename T>
-        void HttpServer<T>::_handleAdmin(HttpRequest::HttpRequestPtr request,
+        void HttpServer::_handleAdmin(HttpRequest::HttpRequestPtr request,
                                          HttpResponse::HttpResponsePtr response,
                                          HttpSession::HttpSessionPtr session)
         {
@@ -529,7 +523,7 @@ namespace blue
                 <div class="stat"><div class="val">)" +
                        std::to_string(s_pools.size()) + R"(</div><div class="label">Connection Pools</div></div>
                 <div class="stat"><div class="val">)" +
-                       std::to_string(TcpServer<T>::getConnection()) + R"(</div><div class="label">Active Connections</div></div>
+                       std::to_string(this->getConnection()) + R"(</div><div class="label">Active Connections</div></div>
                 </div>
                 <div class="card">
                 <h2>📊 Requests Per Minute</h2>
@@ -696,8 +690,7 @@ namespace blue
             response->setStatus(HttpStatus::OK);
         }
 
-        template <typename T>
-        Task<void> HttpServer<T>::_handleConnect(MSocket::MSocketPtr sock,
+        Task<void> HttpServer::_handleConnect(MSocket::MSocketPtr sock,
                                                  HttpRequest::HttpRequestPtr request)
         {
             // CONNECT 的 path 是 host:port
@@ -746,8 +739,7 @@ namespace blue
             co_return;
         }
 
-        template <typename T>
-        Task<void> HttpServer<T>::_handleWebSocket(MSocket::MSocketPtr sock,
+        Task<void> HttpServer::_handleWebSocket(MSocket::MSocketPtr sock,
                                                    HttpRequest::HttpRequestPtr request,
                                                    HttpResponse::HttpResponsePtr response,
                                                    std::string targeturl)
@@ -779,8 +771,7 @@ namespace blue
             co_return;
         }
 
-        template <typename T>
-        void HttpServer<T>::PrepareHeaders(HttpRequest::HttpRequestPtr request, std::map<std::string, std::string> &headers)
+        void HttpServer::PrepareHeaders(HttpRequest::HttpRequestPtr request, std::map<std::string, std::string> &headers)
         {
             for (auto &[key, val] : request->getHeaders())
             {
@@ -800,8 +791,7 @@ namespace blue
             }
         }
 
-        template <typename T>
-        std::tuple<std::string, bool, std::string> HttpServer<T>::tryCache(const std::string &targeturl, HttpResponse::HttpResponsePtr response,
+        std::tuple<std::string, bool, std::string> HttpServer::tryCache(const std::string &targeturl, HttpResponse::HttpResponsePtr response,
                                                                            HttpMethod method, bool isForwardProxy)
         {
             std::string cache_key;
@@ -837,8 +827,7 @@ namespace blue
             return std::make_tuple(cache_key, use_cache, "");
         }
 
-        template <typename T>
-        void HttpServer<T>::setXForwardedFor(const std::string &targeturl, HttpRequest::HttpRequestPtr request, HttpResponse::HttpResponsePtr response)
+        void HttpServer::setXForwardedFor(const std::string &targeturl, HttpRequest::HttpRequestPtr request, HttpResponse::HttpResponsePtr response)
         {
             std::string xxf = request->getHeader("X-Forwarded-For");
             if (!xxf.empty())
@@ -850,8 +839,7 @@ namespace blue
             return;
         }
 
-        template <typename T>
-        HttpConnectionPool::HttpConnectionPoolPtr HttpServer<T>::getConnectionPool(blue::Url::UrlPtr UrlPtr)
+        HttpConnectionPool::HttpConnectionPoolPtr HttpServer::getConnectionPool(blue::Url::UrlPtr UrlPtr)
         {
             std::string poolKey = UrlPtr->getScheme() + "://" + UrlPtr->getHost() + ":" + std::to_string(UrlPtr->getPort());
             blue::http::HttpConnectionPool::MmutexType::lockSco lock(s_poolMutex);
@@ -866,8 +854,7 @@ namespace blue
             return pool;
         }
 
-        template <typename T>
-        void HttpServer<T>::logRequest(HttpRequest::HttpRequestPtr request, const std::string &targeturl,
+        void HttpServer::logRequest(HttpRequest::HttpRequestPtr request, const std::string &targeturl,
                                        blue::Url::UrlPtr UrlPtr, std::shared_ptr<HttpResult> result, int64_t duration, bool isForwardProxy)
         {
             if (s_dbmanager_ptr)
@@ -896,8 +883,7 @@ namespace blue
             }
         }
 
-        template <typename T>
-        void HttpServer<T>::processResponseContent(HttpResponse::HttpResponsePtr response,
+        void HttpServer::processResponseContent(HttpResponse::HttpResponsePtr response,
                                                    std::shared_ptr<HttpResult> result, const std::string &targeturl,
                                                    int status)
         {
@@ -940,14 +926,12 @@ namespace blue
             }
         }
 
-        template <typename T>
-        bool HttpServer<T>::isRedirect(int status)
+        bool HttpServer::isRedirect(int status)
         {
             return status == 301 || status == 302 || status == 307 || status == 308;
         }
 
-        template <typename T>
-        bool HttpServer<T>::handleRedirect(HttpResponse::HttpResponsePtr response,
+        bool HttpServer::handleRedirect(HttpResponse::HttpResponsePtr response,
                                            const std::string &location, const std::string &targeturl,
                                            const std::string &cache_key, bool use_cache,
                                            int status)
@@ -978,7 +962,5 @@ namespace blue
             }
             return true;
         }
-        template class blue::http::HttpServer<int>;
-        template class blue::http::HttpServer<timeval>;
     }
 }
