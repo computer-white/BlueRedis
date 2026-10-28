@@ -33,9 +33,9 @@
 #include "redis_command/loadRedisSlowLogConfig.h"
 #include "redis_command/loadRedisClientConfig.h"
 #include "redis_command/loadRedisReplicationConfig.h"
-#include "http/loadHttpParserConfig.h"
-#include "http/loadHttpDbConfig.h"
-#include "http/loadHttpRedisConfig.h"
+#include "src/http/loadHttpParserConfig.h"
+#include "src/http/loadHttpDbConfig.h"
+#include "src/http/loadHttpRedisConfig.h"
 
 // 数据库和redis配置
 namespace blue

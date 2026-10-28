@@ -19,7 +19,7 @@
 #include "dbmanager.h"
 #include "redismanager.h"
 #include "mysqlpool.h"
-#include "http/httpconnection.h"
+#include "src/http/httpconnection.h"
 
 // 数据库和redis配置
 namespace blue
