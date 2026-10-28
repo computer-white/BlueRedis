@@ -2,6 +2,130 @@
 [![CI](https://github.com/computer-white/BlueRedis/actions/workflows/ci.yml/badge.svg)](https://github.com/computer-white/BlueRedis/actions/workflows/ci.yml)
 
 基于 C++20 无栈协程的异步网络框架，支持 epoll 事件驱动、HTTP 客户端/服务端、连接池。
+本项目实现了一个支持 `co_await` 的无栈协程类型 `Task<T>`（支持 `T` 与 `void`），专为高并发网络服务设计。不同于常见的教学级单线程协程 Demo，本模块重点解决了**多线程调度下协程帧（Coroutine Frame）的生命周期与悬垂引用问题**。
+
+## ✨ 核心架构设计
+
+### 1. 类型擦除与所有权提升（Type Erasure & Ownership Lift）
+`Task<T>` 本身是一个轻量级的移动语义对象。当任务被提交给 `Scheduler` 时，通过 `TaskModel<T>`（继承自 `TaskBase`），将具体的协程句柄提升为 `std::shared_ptr<TaskBase>`。
+- **解决的问题**：避免因为用户栈帧销毁，导致协程帧被意外连坐销毁。
+
+### 2. 延迟销毁与安全转移（Deferred Destruction & Safe Handoff）
+在 `final_suspend` 阶段，协程通过预先注册的 `on_complete` 回调，将自身的 `shared_ptr` 从 `m_runningTasks`（运行中列表）转移到 `m_finishedTasks`（已完成列表）。
+- **设计精妙点**：转移过程严格遵循“先 `push` 到 finished 列表，后 `remove` 从 running 列表”，这一操作顺序保证了在极端多线程竞态下，协程对象的引用计数永远不会瞬间归零，彻底杜绝了并发导致的空悬指针（UAF）。
+
+### 3. `finalizing` 原子免死金牌（Atomic UAF Prevention）
+由于 C++20 协程的机制，在进入 `final_suspend` 后，协程依然在执行内部逻辑（例如调用完成回调）。如果此时外部调度器因为引用计数归零而执行 `destroy()`，会发生“摧毁正在执行自身的函数”的致命 UAF。
+- **解决方案**：在 `promise_type` 中引入 `std::atomic<bool> finalizing`。进入 `final_suspend` 时置为 `true`，完全退出前置为 `false`。调度器的清理逻辑（`drainFinished`）在销毁协程前必须检查此标志位，实现安全的延迟回收。
+
+## 架构
+
+```mermaid
+graph TD
+    App["HTTP / Redis"] --> Task["Task&lt;T&gt;<br/>对称转移 / 类型擦除"]
+    Task --> Awaiter["sleepFor / AsyncIo / defer"]
+    Awaiter --> IOM["IOManager<br/>epoll + eventfd"]
+    Task --> Sched["Scheduler<br/>本地队列 + 全局队列 + 窃取"]
+    Sched --> Own["m_runningTasks<br/>持有顶层 Task"]
+    Sched --> Fin["m_finishedTasks<br/>延迟销毁"]
+    IOM --> Timer["TimerManager<br/>最小堆"]
+    IOM --> Fd["FdContext<br/>只持 handle 引用"]
+    Own --> Life["Task 生命周期<br/>final_suspend 只通知不销毁"]
+    Fin --> Life
+```
+
+## 协程生命周期
+
+```mermaid
+stateDiagram-v2
+    [*] --> 挂起等待: get_return_object
+    挂起等待 --> 运行中: initial_suspend()\n返回 suspend_always
+
+    运行中 --> 挂起等待: co_await (释放CPU)
+    挂起等待 --> 运行中: Scheduler 调度 resume()
+
+    运行中 --> 进入FinalSuspend: 协程体执行完毕
+    note right of 进入FinalSuspend
+        finalizing = true
+        回调 on_complete 触发
+        (从 running 移入 finished)
+    end note
+
+    进入FinalSuspend --> 等待销毁: final_suspend 返回\n(finalizing = false)
+
+    等待销毁 --> [*]: drainFinished()\n安全 destroy()
+```
+
+## 协程所有权关系
+
+```mermaid
+graph LR
+    subgraph Own["拥有"]
+        T1["Task&lt;T&gt;"] -->|owns| H1["coroutine_handle"]
+        H1 -->|points to| F1["coroutine frame"]
+        RT["Scheduler::m_runningTasks"] -->|owns| TB["TaskBase"]
+        TB -->|owns| T2["Task&lt;T&gt;"]
+        FT["Scheduler::m_finishedTasks"] -->|owns| TB2["TaskBase"]
+    end
+
+    subgraph Ref["只引用，不拥有"]
+        IOM["IOManager::FdContext"] -->|handle reference| H2["coroutine_handle"]
+        TIMER["Timer::m_handle"] -->|handle reference| H3["coroutine_handle"]
+        CB["schedule lambda"] -->|weak_ptr| TB3["TaskBase"]
+    end
+
+    subgraph Forbid["禁止"]
+        X1["IOManager::reset()<br/>handle.destroy()"] -.->|❌ 越权| F1
+        X2["Timer::cancel()<br/>handle.destroy()"] -.->|❌ 越权| F1
+        X3["on_complete<br/>捕获 task_base 强引用"] -.->|❌ 闭环| TB3
+    end
+```
+
+### 更加详细的所有权和流程
+
+```mermaid
+graph TD
+    %% 外部驱动
+    UserCode["用户代码 (如 httpserver.cpp)"]
+    Scheduler["Scheduler (调度器)"]
+    Worker["Mthread (工作线程)"]
+
+    %% 核心桥梁
+    TaskBase["TaskBase (纯虚接口)"]
+    TaskModel["TaskModel<T> (类型擦除包装)"]
+    Task["Task<T> (协程句柄持有者)"]
+    Promise["promise_type (协程帧内部)"]
+
+    %% 状态容器
+    RunningList["m_runningTasks (std::list)"]
+    FinishedList["m_finishedTasks (std::list)"]
+    LocalQueue["PerThreadQueue (任务队列)"]
+
+    %% 关系连线
+    UserCode -- "1. 创建并 schedule(Task<T>)" --> Scheduler
+    UserCode -- "co_await / 返回值" --> Task
+
+    Scheduler -- "2. 提升所有权 makeTaskBase" --> TaskModel
+    TaskModel -->|public 继承| TaskBase
+    TaskModel -->|成员持有| Task
+    Task -->|只持有一个 handle| Promise
+
+    Scheduler -- "3. 强引用存入" --> RunningList
+    RunningList -. "持有 shared_ptr" .-> TaskBase
+
+    TaskModel -- "4. 设置回调 setOnComplete" --> Promise
+
+    Scheduler -- "5. 投递 lambda 到队列" --> LocalQueue
+    Worker -- "6. 取出 lambda 执行 resume()" --> LocalQueue
+
+    Worker -- "7. 协程执行完毕, 触发回调" --> Promise
+    Promise -- "8. 将自身转入 finished 并移除 running" --> Scheduler
+    Scheduler -- "9. 强引用存入" --> FinishedList
+    FinishedList -. "持有 shared_ptr" .-> TaskBase
+
+    Worker -- "10. 空闲时 drainFinished" --> Scheduler
+    Scheduler -- "11. 检查 finalizing() == false 则销毁" --> FinishedList
+```
 
 ## 特性
 
