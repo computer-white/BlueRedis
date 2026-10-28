@@ -15,13 +15,13 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include <blue/url.h>
+#include "src/util/url.h"
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <exception>
 #include "httpParser.h"
-#include "blue/log.h"
-#include "blue/config.h"
+#include "src/util/log.h"
+#include "src/util/config.h"
 
 static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
 

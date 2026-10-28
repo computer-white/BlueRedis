@@ -22,7 +22,7 @@
 #include <sys/types.h>
 #include <arpa/inet.h>
 #include <sys/un.h>
-#include "blue/log.h"
+#include "src/util/log.h"
 #include "newblue/io_manager.h"
 
 namespace newblue

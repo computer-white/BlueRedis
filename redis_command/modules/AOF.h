@@ -32,9 +32,9 @@
 #include <shared_mutex>
 #include <atomic>
 #include <condition_variable>
-#include "blue/task.h"
-#include "blue/resp_parser.h"
-#include "blue/msocket.h"
+#include "src/core/task.h"
+#include "src/util/resp_parser.h"
+#include "src/net/msocket.h"
 
 namespace blue
 {

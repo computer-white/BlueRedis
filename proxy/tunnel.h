@@ -24,8 +24,8 @@
  * @copyright Copyright (c) 2026年 blue
  */
 #pragma once
-#include "blue/msocket.h"
-#include "blue/task.h"
+#include "src/net/msocket.h"
+#include "src/core/task.h"
 
 namespace blue
 {

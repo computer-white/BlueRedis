@@ -15,10 +15,10 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "blue/log.h"
-#include "blue/io_manager.h"
-#include "blue/configinit.h"
-#include "blue/configinit.h"
+#include "src/util/log.h"
+#include "src/core/io_manager.h"
+#include "src/util/configinit.h"
+#include "src/util/configinit.h"
 #include "replication.h"
 
 namespace blue

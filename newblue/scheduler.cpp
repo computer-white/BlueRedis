@@ -16,8 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "scheduler.h"
-#include "blue/log.h"
-#include "blue/macro.h"
+#include "src/util/log.h"
+#include "src/util/macro.h"
 
 // 协程调度模块:分配协程到对应的线程
 namespace newblue

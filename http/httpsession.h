@@ -27,9 +27,9 @@
 #define BLUE_HTTP_HTTPSESSION_H
 #include <string>
 #include <vector>
-#include "blue/msocketstream.h"
-#include "blue/sslsocket.h"
-#include "blue/task.h"
+#include "src/net/msocketstream.h"
+#include "src/net/sslsocket.h"
+#include "src/core/task.h"
 #include "http.h"
 #include "httpParser.h"
 

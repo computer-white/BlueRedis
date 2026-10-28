@@ -16,9 +16,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <string>
-#include "blue/log.h"
+#include "src/util/log.h"
 #include "httpsession.h"
-#include "blue/configinit.h"
+#include "src/util/configinit.h"
 
 // session
 namespace blue

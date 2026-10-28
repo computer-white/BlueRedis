@@ -18,9 +18,9 @@
 #include "httpconnection.h"
 #include <string>
 #include <fcntl.h>
-#include "blue/log.h"
-#include "blue/asyncio.h"
-#include "blue/configinit.h"
+#include "src/util/log.h"
+#include "src/core/asyncio.h"
+#include "src/util/configinit.h"
 
 // http connnection
 namespace blue

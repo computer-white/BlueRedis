@@ -22,8 +22,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include "io_manager.h"
-#include "blue/macro.h"
-#include "blue/log.h"
+#include "src/util/macro.h"
+#include "src/util/log.h"
 
 namespace newblue
 {

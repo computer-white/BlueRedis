@@ -18,7 +18,7 @@
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include "http/http.h"
-#include "blue/log.h"
+#include "src/util/log.h"
 
 static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
 

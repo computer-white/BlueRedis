@@ -28,7 +28,7 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
-#include "blue/msocket.h"
+#include "src/net/msocket.h"
 
 namespace blue
 {

@@ -30,8 +30,8 @@
 #include "httpconnection.h"
 #include "httpsession.h"
 #include "httpservlet.h"
-#include "blue/tcpServer.h"
-#include "blue/task.h"
+#include "src/net/tcpServer.h"
+#include "src/core/task.h"
 
 // http server
 namespace blue

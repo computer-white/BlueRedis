@@ -25,8 +25,8 @@
  */
 #pragma once
 #include <iostream>
-#include "blue/config.h"
-#include "blue/config_parser.h"
+#include "src/util/config.h"
+#include "src/util/config_parser.h"
 
 namespace blue
 {

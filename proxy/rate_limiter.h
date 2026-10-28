@@ -25,7 +25,7 @@
  */
 #pragma once
 #include <unordered_set>
-#include "blue/redismanager.h"
+#include "src/util/redismanager.h"
 
 namespace blue
 {

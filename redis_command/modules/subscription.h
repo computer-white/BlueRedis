@@ -29,7 +29,7 @@
 #include <vector>
 #include <shared_mutex>
 #include <string>
-#include "blue/msocket.h"
+#include "src/net/msocket.h"
 
 namespace blue
 {

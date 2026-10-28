@@ -16,8 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "command_handler.h"
-#include "blue/asyncio.h"
-#include "blue/await.h"
+#include "src/core/asyncio.h"
+#include "src/core/await.h"
 
 namespace blue
 {

@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "url_rewriter.h"
-#include "blue/log.h"
+#include "src/util/log.h"
 
 namespace blue
 {

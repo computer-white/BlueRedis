@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "server_data.h"
-#include "blue/await.h"
+#include "src/core/await.h"
 
 namespace blue
 {

@@ -30,8 +30,8 @@
 #include <shared_mutex>
 #include <mutex>
 #include <atomic>
-#include "blue/spscqueue.h"
-#include "blue/msocket.h"
+#include "src/util/spscqueue.h"
+#include "src/net/msocket.h"
 
 
 namespace blue

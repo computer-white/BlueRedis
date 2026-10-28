@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "redis_command/modules/monitor.h"
-#include "blue/util.h"
+#include "src/util/util.h"
 
 namespace blue
 {

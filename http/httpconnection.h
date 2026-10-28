@@ -26,13 +26,13 @@
 #ifndef BLUE_HTTP_HTTPCONNECTION_H
 #define BLUE_HTTP_HTTPCONNECTION_H
 #include <list>
-#include "blue/msocketstream.h"
-#include "blue/sslsocket.h"
-#include "blue/mthread.h"
-#include "blue/url.h"
+#include "src/net/msocketstream.h"
+#include "src/net/sslsocket.h"
+#include "src/util/mthread.h"
+#include "src/util/url.h"
 #include "http.h"
 #include "httpParser.h"
-#include "blue/task.h"
+#include "src/core/task.h"
 
 // http connnection
 namespace blue

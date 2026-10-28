@@ -16,8 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "subscription.h"
-#include "blue/resp_parser.h"
-#include "blue/log.h"
+#include "src/util/resp_parser.h"
+#include "src/util/log.h"
 #include <algorithm>
 
 namespace blue
