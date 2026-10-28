@@ -159,12 +159,12 @@ set(LIB_SRC
     redis_command/modules/monitor.cpp
     redis_command/modules/AOF.cpp
     redis_command/modules/replication.cpp
-    http/http.cpp
-    http/httpconnection.cpp
-    http/httpParser.cpp
-    http/httpserver.cpp
-    http/httpservlet.cpp
-    http/httpsession.cpp
+    src/http/http.cpp
+    src/http/httpconnection.cpp
+    src/http/httpParser.cpp
+    src/http/httpserver.cpp
+    src/http/httpservlet.cpp
+    src/http/httpsession.cpp
     newblue/io_manager.cpp
     newblue/scheduler.cpp
     newblue/timer.cpp
