@@ -101,8 +101,8 @@ if(NOT RAGEL_EXECUTABLE)
     message(FATAL_ERROR "ragel not found, please install: sudo apt install ragel")
 endif()
 
-set(RAGEL_INPUT  ${CMAKE_SOURCE_DIR}/blue/url_parser.rl)
-set(RAGEL_OUTPUT ${CMAKE_SOURCE_DIR}/blue/urlparser.cpp)
+set(RAGEL_INPUT  ${CMAKE_SOURCE_DIR}/src/util/url_parser.rl)
+set(RAGEL_OUTPUT ${CMAKE_SOURCE_DIR}/src/util/urlparser.cpp)
 
 add_custom_command(
     OUTPUT ${RAGEL_OUTPUT}
@@ -128,29 +128,29 @@ set(LLHTTP_SRC
 
 # ============ 库源文件 ============
 set(LIB_SRC
-    blue/address.cpp
-    blue/config.cpp
-    blue/configinit.cpp
-    blue/bytearray.cpp
-    blue/dbmanager.cpp
-    blue/fdmanager.cpp
-    blue/log.cpp
-    blue/msocket.cpp
-    blue/msocketstream.cpp
-    blue/mstream.cpp
-    blue/mthread.cpp
-    blue/mysqlpool.cpp
-    blue/redismanager.cpp
-    blue/sslsocket.cpp
-    blue/tcpServer.cpp
-    blue/url.cpp
-    blue/urlparser.cpp
-    blue/util.cpp
-    blue/scheduler.cpp
-    blue/io_manager.cpp
-    blue/timer.cpp
-    blue/resp_parser.cpp
-    blue/config_parser.cpp
+    src/net/address.cpp
+    src/util/config.cpp
+    src/util/configinit.cpp
+    src/util/bytearray.cpp
+    src/util/dbmanager.cpp
+    src/util/fdmanager.cpp
+    src/util/log.cpp
+    src/net/msocket.cpp
+    src/net/msocketstream.cpp
+    src/net/mstream.cpp
+    src/util/mthread.cpp
+    src/util/mysqlpool.cpp
+    src/util/redismanager.cpp
+    src/net/sslsocket.cpp
+    src/net/tcpServer.cpp
+    src/util/url.cpp
+    src/util/urlparser.cpp
+    src/util/util.cpp
+    src/core/scheduler.cpp
+    src/core/io_manager.cpp
+    src/core/timer.cpp
+    src/util/resp_parser.cpp
+    src/util/config_parser.cpp
     redis_command/command_handler.cpp
     redis_command/server_data.cpp
     redis_command/command/command_handler_table.cpp
