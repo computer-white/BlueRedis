@@ -1,4 +1,5 @@
 #include "command_handler_table.h"
+#include <iomanip>
 
 namespace blue
 {
