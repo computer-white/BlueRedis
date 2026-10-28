@@ -165,9 +165,6 @@ set(LIB_SRC
     src/http/httpserver.cpp
     src/http/httpservlet.cpp
     src/http/httpsession.cpp
-    newblue/io_manager.cpp
-    newblue/scheduler.cpp
-    newblue/timer.cpp
     proxy/url_rewriter.cpp
     ${LLHTTP_SRC}
 )
