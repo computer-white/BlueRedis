@@ -136,6 +136,7 @@ namespace blue
 
             auto task_base = blue::makeTaskBase<T>(std::move(task));
             {
+                // 持久化顶层协程
                 std::lock_guard<std::mutex> lock(m_runningMutex);
                 m_runningTasks.push_back(task_base);
             }
@@ -148,7 +149,7 @@ namespace blue
                     return;
                 }
                 std::lock_guard<std::mutex> lock(m_runningMutex);
-                // 先去 push_back 再去 remove
+                // 先去 push_back 再去 remove（防止多线程下的竟态，导致内存泄漏或UAF）
                 // 不进行 任何的 clear 或 swap 操作
                 m_finishedTasks.push_back(tb);
                 m_runningTasks.remove(tb);});

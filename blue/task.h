@@ -69,7 +69,13 @@ namespace blue
         virtual ~TaskBase() = default;
         virtual void resume() = 0;
         virtual bool done() const noexcept = 0;
-        virtual void setOnComplete(std::function<void()>) = 0;
+        // 回调函数，用于在schedule提交了一个协程后设置回调
+        // 这个被设置的回调函数会在final_suspend中被调用，用于将已经完成的协程转移到final列表
+        virtual void setOnComplete(std::function<void()>) = 0;、
+        // 多线程下有竞争(UAF),当调度器清理顶层协程帧时，这个协程虽然可能已经 done，但是正在final_suspend里面
+        // 若外部引用计数为0后，会destroy这个协程帧
+        // 在promise_type中保存一个原子变量，这个函数用于外部调度器可以拿到那个原子变量的值
+        // 目的是为了不让协程帧在 final_suspend 中还未退出，就被外部销毁
         virtual bool finalizing() const noexcept = 0;
     };
 
@@ -101,12 +107,15 @@ namespace blue
         {
             std::coroutine_handle<> fa = nullptr; // 父协程句柄
             std::exception_ptr exception = nullptr;
+            // 回调函数：调用在shcedule中设置的回调函数，通常是将已经完成的协程 Task 转移到 finished list中
+            // 这是将协程帧的生命周期交给外部定时器的重要设计
             std::function<void()> on_complete = nullptr;
             // 用于确保在进入 final_suspend 之后和成功调用完cb之前 保证不去清理 Task 的协程帧
             std::atomic<bool> finalizing{false};
 
             Task get_return_object()
             {
+                // 后续可以加上协程内存池来减少每次协程创建都要申请内存的开销
                 return Task{std::coroutine_handle<promise_type>::from_promise(*this)};
             }
 
@@ -258,6 +267,7 @@ namespace blue
         void resume() override { task.resume(); }
         bool done() const noexcept override { return task.done(); }
 
+        // 绑定回调函数到 协程句柄内部的 on_complete 中
         void setOnComplete(std::function<void()> cb) override
         {
             auto h = task.getHandle();
@@ -267,6 +277,7 @@ namespace blue
             }
         }
 
+        // 获取是否进入了 final_suspend 函数
         bool finalizing() const noexcept override
         {
             auto h = task.getHandle();

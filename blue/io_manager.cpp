@@ -53,7 +53,9 @@ namespace blue
 
     void IOManager::FdContext::resetEventContext(IOManager::FdContext::EventContext &ec)
     {
-        // 这边可以reset，因为它发生在delEvent中，从epoll中删除事件确实应该释放协程内存
+        // 内部reset不能对协程帧进行销毁，因为就异步IO的封装来说，若带有超时的异步IO超时先一步epoll
+        // 那么定时器事件会在 epoll 中 del fd上的事件，此时协程帧不能被 destroy，否则定时器事件协程
+        // 没有 done 就被 destroy,在这个设计中属于越权去销毁帧
         ec.reset();
     }
 

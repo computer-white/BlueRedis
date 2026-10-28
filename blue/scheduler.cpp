@@ -248,6 +248,7 @@ namespace blue
                 {
                     BLUE_LOG_ERROR(g_logger) << "Unknown task error in thread " << myIndex;
                 }
+                // 这边由于协程内部会调用 co_await 所以会有'伪结束'
                 // BLUE_LOG_INFO(g_logger) << "task.cb back but is not finished, m_running will sub one, now m_running is " << m_running.load();
                 m_running.fetch_sub(1, std::memory_order_acq_rel);
                 // BLUE_LOG_INFO(g_logger) << "m_running subed one, now m_running is " << m_running.load();
@@ -256,7 +257,7 @@ namespace blue
                 continue;
             }
 
-            // 没有任务时清理已完成的 Task
+            // 没有任务时清理已完成的 Task (不要光在wait_all里面清理，如果服务器一直不结束，那么已完成的协程会一直堆积)
             {
                 std::list<std::shared_ptr<TaskBase>> to_destroy;
                 drainFinished(to_destroy);

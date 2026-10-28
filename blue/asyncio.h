@@ -111,6 +111,7 @@ namespace blue
                     is_timeout = true;
                     if (event_added)
                     {
+                        // 这边 delEvent 内部会调用 reset()，需要保证 reset() 不会 destroy 协程帧
                         IOManager::GetThis()->delEvent(fd,event);
                         event_added = false;
                     }
