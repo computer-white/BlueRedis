@@ -2,7 +2,9 @@
 abseil-cpp
 bin
 lib
-blue*
+/blue*
+/http*
+/newblue
 build
 *.log
 *.out
