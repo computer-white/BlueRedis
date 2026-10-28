@@ -12,8 +12,8 @@
 #include <sys/eventfd.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include "blue/io_manager.h"
-#include "blue/await.h"
+#include "src/core/io_manager.h"
+#include "src/core/await.h"
 
 namespace
 {

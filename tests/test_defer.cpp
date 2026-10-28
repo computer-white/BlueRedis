@@ -14,10 +14,10 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
-#include "blue/task.h"
-#include "blue/io_manager.h"
-#include "blue/await.h"
-#include "blue/defer.h"
+#include "src/core/task.h"
+#include "src/core/io_manager.h"
+#include "src/core/await.h"
+#include "src/util/defer.h"
 
 TEST(DeferBasicTest, RunsAtScopeExit)
 {

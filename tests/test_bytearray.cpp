@@ -12,9 +12,9 @@
 #include <string>
 #include <vector>
 
-#include "blue/bytearray.h"
-#include "blue/log.h"
-#include "blue/macro.h"
+#include "src/util/bytearray.h"
+#include "src/util/log.h"
+#include "src/util/macro.h"
 
 namespace
 {

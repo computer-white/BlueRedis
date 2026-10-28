@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "http/httpconnection.h"
-#include "blue/address.h"
-#include "blue/await.h"
-#include <blue/io_manager.h>
+#include "src/net/address.h"
+#include "src/core/await.h"
+#include "src/core/io_manager.h"
 #include <map>
 
 static blue::Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();

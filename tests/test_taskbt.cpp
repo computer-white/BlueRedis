@@ -1,7 +1,7 @@
 #include <iostream>
-#include "blue/io_manager.h"
-#include "blue/task.h"
-#include "blue/await.h"
+#include "src/core/io_manager.h"
+#include "src/core/task.h"
+#include "src/core/await.h"
 
 blue::Task<int> child1()
 {

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <iostream>
-#include "blue/log.h"
+#include "src/util/log.h"
 
 void test()
 {

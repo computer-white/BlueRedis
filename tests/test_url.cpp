@@ -6,9 +6,9 @@
 #include <iostream>
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "blue/macro.h"
-#include "blue/url.h"
-#include "blue/urlutils.h"
+#include "src/util/macro.h"
+#include "src/util/url.h"
+#include "src/util/urlutils.h"
 
 namespace
 {

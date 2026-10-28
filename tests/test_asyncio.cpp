@@ -18,11 +18,11 @@
 #include <cstring>
 #include <cerrno>
 
-#include "blue/io_manager.h"
-#include "blue/await.h"
-#include "blue/asyncio.h"
-#include "blue/task.h"
-#include "blue/defer.h"
+#include "src/core/io_manager.h"
+#include "src/core/await.h"
+#include "src/core/asyncio.h"
+#include "src/core/task.h"
+#include "src/util/defer.h"
 
 namespace
 {

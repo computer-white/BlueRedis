@@ -5,8 +5,8 @@
  */
 #include <iostream>
 #include <yaml-cpp/yaml.h>
-#include "blue/config.h"
-#include "blue/configinit.h"
+#include "src/util/config.h"
+#include "src/util/configinit.h"
 
 int main()
 {

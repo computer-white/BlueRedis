@@ -7,10 +7,10 @@
 #include <atomic>
 #include <getopt.h>
 #include "redis_command/command_handler.h"
-#include "blue/address.h"
-#include "blue/task.h"
-#include "blue/log.h"
-#include "blue/await.h"
+#include "src/net/address.h"
+#include "src/core/task.h"
+#include "src/util/log.h"
+#include "src/core/await.h"
 
 using namespace blue;
 static Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();

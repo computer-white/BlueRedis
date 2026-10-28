@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include <iostream>
 #include <cassert>
-#include "blue/resp_parser.h"
+#include "src/util/resp_parser.h"
 
 using namespace blue;
 

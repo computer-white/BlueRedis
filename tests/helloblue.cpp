@@ -5,10 +5,10 @@
  */
 #include <csignal>
 #include <atomic>
-#include "blue/await.h"
-#include "blue/log.h"
-#include "blue/task.h"
-#include "blue/io_manager.h"
+#include "src/core/await.h"
+#include "src/util/log.h"
+#include "src/core/task.h"
+#include "src/core/io_manager.h"
 #include "http/httpserver.h"
 
 std::atomic<bool> g_running{true};

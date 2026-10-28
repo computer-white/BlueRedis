@@ -6,8 +6,8 @@
 #include <iostream>
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "blue/io_manager.h"
-#include "blue/await.h"
+#include "src/core/io_manager.h"
+#include "src/core/await.h"
 
 namespace
 {

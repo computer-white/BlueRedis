@@ -15,9 +15,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include "blue/log.h"
-#include "blue/config.h"
-#include "blue/configinit.h"
+#include "src/util/log.h"
+#include "src/util/config.h"
+#include "src/util/configinit.h"
 
 blue::ConfigVar<int>::ConfigVarPtr
     g_int_config_ptr = blue::Config::Lookup<int>("system.port", 8080, "system port");

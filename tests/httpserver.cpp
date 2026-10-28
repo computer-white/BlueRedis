@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <csignal>
-#include "blue/address.h"
+#include "src/net/address.h"
 #include "http/httpserver.h"
-#include "blue/await.h"
-#include "blue/log.h"
-#include "blue/configinit.h"
+#include "src/core/await.h"
+#include "src/util/log.h"
+#include "src/util/configinit.h"
 
 static blue::Logger::LoggerPtr g_logger = BLUE_LOG_MASSAGE_ROOT();
 
