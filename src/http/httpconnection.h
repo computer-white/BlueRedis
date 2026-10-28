@@ -1,0 +1,388 @@
+/*
+ * BlueRedis - High Performance Redis Server based on C++20 Coroutine
+ * Copyright (C) 2026 blue
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+/**
+ * @file httpconnection.h
+ * @brief http connection模块,用于发送请求和解析响应
+ * @author blue
+ * @email homeheyang@outlook.com
+ * @date 2026.5.14
+ * @copyright Copyright (c) 2026年 blue
+ */
+#ifndef BLUE_HTTP_HTTPCONNECTION_H
+#define BLUE_HTTP_HTTPCONNECTION_H
+#include <list>
+#include "src/net/msocketstream.h"
+#include "src/net/sslsocket.h"
+#include "src/util/mthread.h"
+#include "src/util/url.h"
+#include "http.h"
+#include "httpParser.h"
+#include "src/core/task.h"
+
+// http connnection
+namespace blue
+{
+    namespace http
+    {
+        struct HttpResult
+        {
+        public:
+            using HttpResultPtr = std::shared_ptr<HttpResult>;
+
+        public:
+            enum class ResultStatus
+            {
+                OK = 0,                         // ok
+                INVALID_URL = 1,                // url无效
+                INVALID_HOST = 2,               // host无效
+                CREATE_SOCKET_ERROR = 3,        // 创建socket失败
+                CONNECT_FAILED = 4,             // 连接失败
+                SEND_CLOSE_BY_PEER = 5,         // 连接被对方关闭
+                SEND_SOCKET_ERROR = 6,          // send出现错误
+                TIMEOUT = 7,                    // 超时
+                POOL_GET_CONNECTION_FAILED = 8, // 连接池获取connection失败
+                POOL_INVALID_CONNECTION = 9,    // 无效connection
+                SSL_INVALID_SSL = 10,           // 无效SSL
+                SSL_HANDSHAKE_FAILED = 11       // SSL handshake failed
+            };
+
+            HttpResult(int res, HttpResponse::HttpResponsePtr response, const std::string &reason)
+                : result(res),
+                  response(response),
+                  reason(reason) {}
+
+        public:
+            int result;
+            HttpResponse::HttpResponsePtr response;
+            std::string reason;
+        };
+
+        class HttpConnectionPool;
+
+        class HttpConnection : public SocketStream
+        {
+            friend class HttpConnectionPool;
+
+        public:
+            enum class RecvStatus
+            {
+                OK = 0,    // 解析完成
+                ERROR = 1, // 真正的错误
+                CLOSE = 2  // 对方主动关闭
+            };
+
+        public:
+            using HttpConnectionPtr = std::shared_ptr<HttpConnection>;
+            using ReturnType = std::pair<RecvStatus, HttpResponse::HttpResponsePtr>;
+
+        public:
+            /**
+             * @brief get 请求
+             * @param url 请求目标url
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            static Task<std::shared_ptr<HttpResult>> DoGet(std::string url,
+                                                           uint64_t timeout,
+                                                           std::map<std::string, std::string> header = {},
+                                                           std::string body = "");
+
+            /**
+             * @brief post 请求
+             * @param url 请求目标url
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            static Task<std::shared_ptr<HttpResult>> DoPost(std::string url,
+                                                            uint64_t timeout,
+                                                            std::map<std::string, std::string> header = {},
+                                                            std::string body = "");
+
+            /**
+             * @brief get 请求
+             * @param url 请求目标url智能指针
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            static Task<std::shared_ptr<HttpResult>> DoGet(blue::Url::UrlPtr url,
+                                                           uint64_t timeout,
+                                                           std::map<std::string, std::string> header = {},
+                                                           std::string body = "");
+
+            /**
+             * @brief post 请求
+             * @param url 请求目标url智能指针
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            static Task<std::shared_ptr<HttpResult>> DoPost(blue::Url::UrlPtr url,
+                                                            uint64_t timeout,
+                                                            std::map<std::string, std::string> header = {},
+                                                            std::string body = "");
+            /**
+             * @brief request请求
+             * @param mothod 方法
+             * @param url 请求目标url
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            static Task<std::shared_ptr<HttpResult>> DoRequest(http::HttpMethod method,
+                                                               std::string url,
+                                                               uint64_t timeout,
+                                                               std::map<std::string, std::string> header = {},
+                                                               std::string body = "");
+
+            /**
+             * @brief request请求
+             * @param mothod 方法
+             * @param url 请求目标url智能指针
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            static Task<std::shared_ptr<HttpResult>> DoRequest(http::HttpMethod method,
+                                                               blue::Url::UrlPtr url,
+                                                               uint64_t timeout,
+                                                               std::map<std::string, std::string> header = {},
+                                                               std::string body = "");
+
+            /**
+             * @brief 将request请求发到指定的url并带有超时时间
+             * @param req 请求智能指针
+             * @param url 指定url智能指针
+             * @param timeout 超时时长(ms)
+             */
+            static Task<std::shared_ptr<HttpResult>> DoRequest(http::HttpRequest::HttpRequestPtr req,
+                                                               blue::Url::UrlPtr url,
+                                                               uint64_t timeout);
+            /**
+             * @brief 服务器端与客户端一次连接
+             * @param stream 为支持ssl改用msockstream的父类stream
+             * @param time 连接创建的时间ms
+             * @param owner 是否完全交给连接管理服务器端sockfd对象,默认 true
+             */
+            HttpConnection(SocketStream::SocketStreamPtr stream, uint64_t time = 0, bool owner = true);
+
+            /**
+             * @brief 析构
+             */
+            ~HttpConnection();
+
+            /**
+             * @brief 接收服务器端响应并解析
+             * @return 返回一对值(recvStatus,httpResponsePtr)
+             * @note recvStatus返回有 ok,error,close(客户端主动关闭连接)
+             */
+            Task<ReturnType> recvResponse();
+
+            /**
+             * @brief 对服务器端发送请求
+             * @param request 要发送的请求对象智能指针
+             */
+            Task<int> sendRequest(HttpRequest::HttpRequestPtr request);
+
+            /**
+             * @brief 设置是否开启流式输出
+             * @param button true 表示开始
+             */
+            void setStreaming(bool button) { m_isStreaming.store(button, std::memory_order_release); }
+
+        private:
+            /**
+             * @brief reset(在连接池的Release里面使用)
+             * @note 主要将该连接socket fd上的旧数据清空
+             */
+            void reset();
+
+        private:
+            SocketStream::SocketStreamPtr m_stream; // socket 流
+            uint64_t m_createTime;                  // 连接的创建时间点(仅构造函数)
+            // 当前连接对象被用了多少次(仅在池中使用作为连接被释放的指标
+            // 而池有锁保护并且改内容的修改发生在ReleasePtr中，不会有多线程数据竞争)
+            uint64_t m_requestSize = 0;
+            std::atomic<bool> m_isFinish{false};    // http Response解析是否完成
+            std::atomic<bool> m_isStreaming{false}; // 是否流式响应
+            std::atomic<bool> m_isBusy{false};      // 用于连接池中获取到连接后标记为true表示正在使用
+        };
+
+        // 连接池最大大小
+        extern uint32_t s_httpconnpool_mxsize;
+
+        class HttpConnectionPool
+        {
+        public:
+            using HttpConnectionPoolPtr = std::shared_ptr<HttpConnectionPool>;
+            using MmutexType = blue::Mmutex;
+
+        public:
+            /**
+             * @brief httpconnection pool 构造函数
+             * @param host 目标真实目标主机(实际连接的 IP)
+             * @param vhost 目标虚拟主机
+             * @param port 目标端口
+             * @param aliveTime 连接对象最大存活时间
+             * @param maxRequest 最大支持的连接数(池中的每一个连接对象可以被使用多少次)
+             * @param maxSize 连接池最大大小 具有默认大小
+             */
+            HttpConnectionPool(const std::string &host,
+                               const std::string &vhost,
+                               uint16_t port,
+                               uint64_t aliveTime,
+                               uint32_t maxRequest,
+                               const std::string &scheme = "http",
+                               uint32_t maxSize = s_httpconnpool_mxsize);
+
+            
+            ~HttpConnectionPool();
+
+            /**
+             * @brief get 请求
+             * @param url 请求目标url
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            Task<std::shared_ptr<HttpResult>> doGet(std::string url,
+                                                    uint64_t timeout,
+                                                    std::map<std::string, std::string> header = {},
+                                                    std::string body = "");
+
+            /**
+             * @brief post 请求
+             * @param url 请求目标url
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            Task<std::shared_ptr<HttpResult>> doPost(std::string url,
+                                                     uint64_t timeout,
+                                                     std::map<std::string, std::string> header = {},
+                                                     std::string body = "");
+
+            /**
+             * @brief get 请求
+             * @param url 请求目标url智能指针
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            Task<std::shared_ptr<HttpResult>> doGet(blue::Url::UrlPtr url,
+                                                    uint64_t timeout,
+                                                    std::map<std::string, std::string> header = {},
+                                                    std::string body = "");
+
+            /**
+             * @brief post 请求
+             * @param url 请求目标url智能指针
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            Task<std::shared_ptr<HttpResult>> doPost(blue::Url::UrlPtr url,
+                                                     uint64_t timeout,
+                                                     std::map<std::string, std::string> header = {},
+                                                     std::string body = "");
+            /**
+             * @brief request请求
+             * @param mothod 方法
+             * @param url 请求目标url
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            Task<std::shared_ptr<HttpResult>> doRequest(http::HttpMethod method,
+                                                        std::string url,
+                                                        uint64_t timeout,
+                                                        std::map<std::string, std::string> header = {},
+                                                        std::string body = "");
+
+            /**
+             * @brief request请求
+             * @param mothod 方法
+             * @param url 请求目标url智能指针
+             * @param timeout 超时时长(ms)
+             * @param header 头部key-val
+             * @param body body
+             */
+            Task<std::shared_ptr<HttpResult>> doRequest(http::HttpMethod method,
+                                                        blue::Url::UrlPtr url,
+                                                        uint64_t timeout,
+                                                        std::map<std::string, std::string> header = {},
+                                                        std::string body = "");
+
+            /**
+             * @brief 发送request请求
+             * @param req 请求智能指针
+             * @param timeout 超时时长(ms)
+             */
+            Task<std::shared_ptr<HttpResult>> doRequest(http::HttpRequest::HttpRequestPtr req,
+                                                        uint64_t timeout);
+
+            /**
+             * @brief 获取idle connection 数量(pool大小)
+             */
+            uint32_t getIdleCounts() const;
+
+            /**
+             * @brief 获取total connection 数量
+             */
+            uint32_t getTotalCounts() const { return m_total.load(std::memory_order_acquire); }
+
+        public:
+            struct Deleter
+            {
+                HttpConnectionPool *pool;
+                void operator()(HttpConnection *conn) const noexcept
+                {
+                    pool->ReleasePtr(conn);
+                }
+            };
+            /**
+             * @brief 获取连接实例指针(unique_ptr设置了自定义释放回调函数Release)
+             */
+            Task<std::unique_ptr<HttpConnection, HttpConnectionPool::Deleter>> getConnnection();
+
+        private:
+            /**
+             * @brief 释放连接或放回到连接池
+             * @param conn http connection 连接
+             * @note 不使用协程
+             */
+            void ReleasePtr(HttpConnection *conn);
+
+        private:
+            mutable MmutexType m_mutex;         // 互斥变量
+            std::string m_scheme;               // scheme
+            std::string m_host;                 // 目标真实目标主机(实际连接的 IP)
+            std::string m_vhost;                // 目标虚拟主机
+            uint64_t m_maxAliveTime;            // 每个连接的最大存活时长
+            uint32_t m_maxSize;                 // 连接池的最大大小
+            uint32_t m_maxRequest;              // 最大支持的连接数(池中的每一个连接对象可以被使用多少次)
+            uint16_t m_port;                    // 目标端口
+            std::list<HttpConnection *> m_pool; // 连接池
+            std::atomic<int32_t> m_total{0};    // 共有多少连接(使用有符号,避免更新时出现无符号下溢)
+        };
+    }
+}
+
+#endif
