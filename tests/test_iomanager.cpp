@@ -604,20 +604,20 @@ TEST_F(IOFdTest, MultipleCoroutinesWaitDifferentFds)
     iom_->wait_all();
 }
 
-// 读超时后从epoll上del
-TEST_F(IOFdTest, ReadTimeoutThenDelEvent)
-{
-    auto done = std::make_shared<std::atomic<bool>>(false);
-    iom_->schedule(wait_fd_readable(iom_.get(), efd_, done));
+// 读超时后从epoll上del（修改wait_all逻辑后，这套就不适用了，也就是如果协程被提交，一定要被执行到结束，否则wait_all永不返回）
+// TEST_F(IOFdTest, ReadTimeoutThenDelEvent)
+// {
+//     auto done = std::make_shared<std::atomic<bool>>(false);
+//     iom_->schedule(wait_fd_readable(iom_.get(), efd_, done));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+//     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    // 删除efd_上的读事件
-    EXPECT_TRUE(iom_->delEvent(efd_, blue::IOManager::Event::READ));
+//     // 删除efd_上的读事件
+//     EXPECT_TRUE(iom_->delEvent(efd_, blue::IOManager::Event::READ));
 
-    iom_->wait_all();
-    EXPECT_FALSE(done->load());
-}
+//     iom_->wait_all();
+//     EXPECT_FALSE(done->load());
+// }
 
 class IOConcurrencyTest : public ::testing::Test
 {

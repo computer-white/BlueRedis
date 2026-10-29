@@ -44,6 +44,7 @@ blue::Task<void> helloblue()
         co_await blue::sleepFor(2);
     }
     server->ShutDownServer();
+    co_await server->waitAcceptDone();
     blue::IOManager::GetThis()->clear();
 }
 
