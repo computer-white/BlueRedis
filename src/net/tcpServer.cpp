@@ -34,10 +34,6 @@ namespace blue
 
     TcpServer::~TcpServer()
     {
-        if (m_worker)
-        {
-            delete m_worker;
-        }
         m_isStop.store(true, std::memory_order_release);
         if (m_socks.empty())
         {
@@ -59,7 +55,7 @@ namespace blue
 
     Task<void> TcpServer::startAccept(MSocket::MSocketPtr sock)
     {
-        auto self = this->shared_from_this();
+        m_acceptDone.store(false, std::memory_order_release);
         sock->setNoBlocking();
         // 处在连接状态
         while (!m_isStop.load(std::memory_order_acquire))
@@ -103,6 +99,7 @@ namespace blue
                 co_await sleepFor(1);
             }
         }
+        m_acceptDone.store(true, std::memory_order_release);
         co_return;
     }
 
@@ -122,18 +119,22 @@ namespace blue
 
     Task<bool> TcpServer::stop()
     {
-        if (m_connections.load(std::memory_order_acquire))
-        {
-            co_return false;
-        }
         m_isStop.store(true, std::memory_order_release);
         closeAllFds();
         co_return true;
     }
 
+    Task<bool> TcpServer::waitAcceptDone() const noexcept
+    {
+        while (!m_acceptDone.load(std::memory_order_acquire))
+        {
+            co_await sleepFor(3);
+        }
+        co_return true;
+    }
+
     Task<void> TcpServer::handleClient(MSocket::MSocketPtr sock)
     {
-        // auto self = this->shared_from_this();
         BLUE_LOG_INFO(g_logger) << "handleClient : " << sock->toString();
         char buf[1024];
         while (true)

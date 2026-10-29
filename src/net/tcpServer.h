@@ -191,15 +191,9 @@ namespace blue
         void closeAllFds();
 
         /**
-         * @brief 停止sock上的事件
+         * @brief 检查是否退出startAccept()
          */
-        void cancelSocketEvent()
-        {
-            for (auto sock : m_socks)
-            {
-                sock->cancelAll();
-            }
-        }
+        Task<bool> waitAcceptDone() const noexcept;
 
     protected:
         /**
@@ -219,10 +213,12 @@ namespace blue
          */
         virtual const int getMaxClientCount() const noexcept { return -1; };
 
+    protected:
+        std::atomic<bool> m_isStop{true};
+        std::atomic<bool> m_acceptDone{true};
     private:
         IOManager *m_worker;
         IOManager *m_acceptworker;
-        std::atomic<bool> m_isStop{true};
         std::atomic<uint32_t> m_connections{0};
         std::atomic<uint32_t> m_rejected_connections{0};
         std::vector<blue::MSocket::MSocketPtr> m_socks;
