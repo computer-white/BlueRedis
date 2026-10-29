@@ -71,12 +71,16 @@ namespace blue
 
         bool HttpServer::ShutDownServer()
         {
+            // 设置 http server 停止标识
+            m_shutdown.store(true, std::memory_order_release);
+
             // 停止 accept 循环
             m_isStop.store(true, std::memory_order_release);
 
             // 关闭所有 accept fd
             this->closeAllFds();
 
+            // 关闭已经成功连接的 socket fd
             for (auto wptr : m_clients)
             {
                 if (wptr.expired())
