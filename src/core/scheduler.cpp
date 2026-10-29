@@ -108,7 +108,7 @@ namespace blue
 
     void Scheduler::schedule(std::coroutine_handle<> h, int thr)
     {
-        if (!h || h.done())
+        if (!h || h.done() || m_stopping.load(std::memory_order_acquire))
         {
             return;
         }
@@ -120,7 +120,7 @@ namespace blue
 
     void Scheduler::schedule(std::function<void()> cb, int thr)
     {
-        if (!cb)
+        if (!cb || m_stopping.load(std::memory_order_acquire))
         {
             return;
         }
@@ -347,10 +347,11 @@ namespace blue
             {
                 total += queue->pending.load(std::memory_order_acquire);
             }
-            if (total == 0 && m_running.load(std::memory_order_acquire) == 0)
+            if (total == 0 && m_running.load(std::memory_order_acquire) == 0 && notHasRunningTask())
             {
                 break;
             }
+            clearFinishedTasks();
             m_doneCv.wait_for(lock, std::chrono::milliseconds(10));
         }
         clearFinishedTasks();

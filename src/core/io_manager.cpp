@@ -156,6 +156,9 @@ namespace blue
             stop();
         }
 
+        // // 清理所有的顶层协程帧
+        // this->clearAllTasks();
+
         // 清理所有 fd 上下文,保证内部存储的fd在外部已经全部关闭
         {
             std::unique_lock<std::shared_mutex> lock(m_Iommutex);
@@ -181,6 +184,11 @@ namespace blue
                             std::function<void()> cb,
                             int thread_id)
     {
+        if (m_stopping.load(std::memory_order_acquire))
+        {
+            return -1;
+        }
+
         if (fd < 0)
         {
             return -1;
@@ -287,6 +295,11 @@ namespace blue
 
     bool IOManager::delEvent(int fd, Event event)
     {
+        if (m_stopping.load(std::memory_order_acquire))
+        {
+            return false;
+        }
+
         if (fd < 0)
         {
             return false;
@@ -341,6 +354,11 @@ namespace blue
 
     bool IOManager::cancelEvent(int fd, Event event)
     {
+        if (m_stopping.load(std::memory_order_acquire))
+        {
+            return false;
+        }
+
         if (fd < 0)
         {
             return false;
@@ -394,6 +412,11 @@ namespace blue
 
     bool IOManager::cancelAll(int fd)
     {
+        if (m_stopping.load(std::memory_order_acquire))
+        {
+            return false;
+        }
+
         if (fd < 0)
         {
             return false;
@@ -619,10 +642,14 @@ namespace blue
             //                         << "m_pendingEventCounts = " << m_pendingEventCounts.load() << " "
             //                         << "hasTimer = " << TimerManager::hasTimer() << " "
             //                         << "m_running = " << m_running.load();
-            if (total == 0 && m_pendingEventCounts.load(std::memory_order_acquire) == 0 && !TimerManager::hasTimer() && m_running.load(std::memory_order_acquire) == 0)
+            if (total == 0 && m_pendingEventCounts.load(std::memory_order_acquire) == 0 &&
+                !TimerManager::hasTimer() && m_running.load(std::memory_order_acquire) == 0 &&
+                // 还需要等待所有的顶层协程 done
+                this->notHasRunningTask())
             {
                 break;
             }
+            clearFinishedTasks();
             m_doneCv.wait_for(lock, std::chrono::milliseconds(10));
         }
         clearFinishedTasks();

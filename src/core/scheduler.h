@@ -121,6 +121,11 @@ namespace blue
         template <typename... Args>
         void scheduleMul(Args &&...args)
         {
+            if (m_stopping.load(std::memory_order_acquire))
+            {
+                return;
+            }
+
             (schedule(std::forward<Args>(args), -1), ...);
         }
 
@@ -132,6 +137,12 @@ namespace blue
         template <typename T>
         void schedule(Task<T> task, int thr = -1)
         {
+            // 不能在调度器停止过程中提交新的任务
+            if (m_stopping.load(std::memory_order_acquire))
+            {
+                return;
+            }
+
             auto h = task.getHandleNoType(); // 保存裸句柄用于 lambda
 
             auto task_base = blue::makeTaskBase<T>(std::move(task));
@@ -234,6 +245,28 @@ namespace blue
          * @param index 线程索引
          */
         static void setThreadIndex(int index) { t_threadIndex = index; }
+
+    protected:
+
+        /**
+         * @brief 是否还存在顶层协程 Task
+         * @return true 表示没有顶层协程 Task 了
+         */
+        bool notHasRunningTask()
+        {
+            std::lock_guard<std::mutex> lock(m_runningMutex);
+            return m_runningTasks.empty();
+        }
+
+        void clearAllTasks()
+        {
+            std::list<std::shared_ptr<TaskBase>> to_destroy;
+            {
+                std::lock_guard<std::mutex> lock(m_runningMutex);
+                to_destroy.splice(to_destroy.end(), m_runningTasks);
+                to_destroy.splice(to_destroy.end(), m_finishedTasks);
+            }
+        }
 
     private:
         /**
