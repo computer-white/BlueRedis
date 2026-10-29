@@ -71,12 +71,22 @@ namespace blue
 
         bool HttpServer::ShutDownServer()
         {
+            // 停止 accept 循环
+            m_isStop.store(true, std::memory_order_release);
+
+            // 关闭所有 accept fd
+            this->closeAllFds();
+
             for (auto wptr : m_clients)
             {
-                if (wptr.expired()) continue;
+                if (wptr.expired())
+                {
+                    continue;
+                }
                 auto ptr = wptr.lock();
                 if (ptr)
                 {
+                    ptr->cancelAll();
                     ptr->shutdown(SHUT_RDWR);
                     ptr->close();
                 }
@@ -87,7 +97,6 @@ namespace blue
 
         Task<void> HttpServer::handleClient(MSocket::MSocketPtr sock)
         {
-            // auto self = this->shared_from_this();
             m_clients.push_back(sock);
             auto remoteAddress = std::dynamic_pointer_cast<IPAddress>(sock->getRemoteAddress());
             auto localAddress = std::dynamic_pointer_cast<IPAddress>(sock->getLocalAddress());
@@ -165,16 +174,6 @@ namespace blue
 
             session->close();
             this->subConnection();
-            
-            // 如果正在关闭且没有活跃连接，停止服务器
-            if (m_shutdown.load(std::memory_order_acquire) && this->getConnection() == 0)
-            {
-                bool end = co_await this->stop();
-                if (end)
-                {
-                    BLUE_LOG_INFO(xx::g_logger) << "Http Server Stoped";
-                }
-            }
             co_return;
         }
 
