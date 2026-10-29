@@ -258,16 +258,6 @@ namespace blue
             return m_runningTasks.empty();
         }
 
-        void clearAllTasks()
-        {
-            std::list<std::shared_ptr<TaskBase>> to_destroy;
-            {
-                std::lock_guard<std::mutex> lock(m_runningMutex);
-                to_destroy.splice(to_destroy.end(), m_runningTasks);
-                to_destroy.splice(to_destroy.end(), m_finishedTasks);
-            }
-        }
-
     private:
         /**
          * @brief 执行完当前线程的本地任务队列

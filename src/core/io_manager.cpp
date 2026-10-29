@@ -156,9 +156,6 @@ namespace blue
             stop();
         }
 
-        // // 清理所有的顶层协程帧
-        // this->clearAllTasks();
-
         // 清理所有 fd 上下文,保证内部存储的fd在外部已经全部关闭
         {
             std::unique_lock<std::shared_mutex> lock(m_Iommutex);
