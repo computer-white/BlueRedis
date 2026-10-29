@@ -59,6 +59,16 @@ namespace blue
 
     bool CommandHandler::ShutDownServer()
     {
+        // 设置 服务器停止标识
+        m_server->setShutdown(true);
+
+        // 设置 startAccept 停止标识
+        m_isStop.store(true, std::memory_order_release);
+
+        // 关闭 accetp socket fd
+        this->closeAllFds();
+
+        // 最后关闭已经来凝结成功的 socket
         for (auto wptr : m_clients)
         {
             if (wptr.expired())
@@ -68,9 +78,12 @@ namespace blue
             auto ptr = wptr.lock();
             if (ptr)
             {
+                ptr->cancelAll();
                 ptr->shutdown(SHUT_RDWR);
+                ptr->close();
             }
         }
+        m_clients.clear();
         return true;
     }
 
@@ -226,14 +239,7 @@ namespace blue
         // 删除过期的monitor
         m_server->getMonitor().removeMonitor();
 
-        this->subConnection() if (this->getConnection() == 0 && m_server->getShutdown().load(std::memory_order_acquire))
-        {
-            bool end = co_await this->stop();
-            if (end)
-            {
-                BLUE_LOG_INFO(g_logger) << "tcpserver stoped";
-            }
-        }
+        this->subConnection();
         co_return;
     }
 #else
@@ -496,14 +502,6 @@ namespace blue
         m_server->getMonitor().removeMonitor();
 
         this->subConnection();
-        if (this->getConnection() == 0 && m_server->getShutdown().load(std::memory_order_acquire))
-        {
-            bool end = co_await this->stop();
-            if (end)
-            {
-                BLUE_LOG_INFO(g_logger) << "tcpserver stoped";
-            }
-        }
         co_return;
     }
 #endif
