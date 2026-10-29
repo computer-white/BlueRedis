@@ -11,6 +11,9 @@
 #include "src/core/io_manager.h"
 #include "src/http/httpserver.h"
 
+
+static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("root");
+
 std::atomic<bool> g_running{true};
 
 void handle(int sig)
@@ -22,6 +25,11 @@ blue::Task<void> helloblue()
 {
     auto server = std::make_shared<blue::http::HttpServer>();
     auto addr = blue::Address::LookupAnyIpAddress("0.0.0.0:8888");
+    if (!addr)
+    {
+        BLUE_LOG_ERROR(g_logger) << "addr is empty";
+        co_return;
+    }
     while (!server->bind<int>(addr))
     {
         co_await blue::sleepFor(1);
@@ -37,8 +45,13 @@ blue::Task<void> helloblue()
         return 0;
     });
 
-    co_await server->start();
-
+    bool ans = co_await server->start();
+    if (!ans)
+    {
+        BLUE_LOG_INFO(g_logger) << "Server started error on " << addr->toString();
+        co_return;
+    }
+    BLUE_LOG_INFO(g_logger) << "HelloBlue Server is running";
     while (g_running.load())
     {
         co_await blue::sleepFor(2);
@@ -46,6 +59,7 @@ blue::Task<void> helloblue()
     server->ShutDownServer();
     co_await server->waitAcceptDone();
     blue::IOManager::GetThis()->clear();
+    BLUE_LOG_INFO(g_logger) << "HelloBlue Server Done";
 }
 
 

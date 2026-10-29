@@ -22,6 +22,11 @@ blue::Task<void> test()
 {
     auto httpserver = std::make_shared<blue::http::HttpServer>();
     auto address = blue::Address::LookupAny("0.0.0.0:8082");
+    if (!address)
+    {
+        BLUE_LOG_ERROR(g_logger) << "address is empty";
+        co_return;
+    }
     while (!httpserver->bind<int>(address))
     {
         co_await blue::sleepFor(2);
@@ -78,14 +83,15 @@ blue::Task<void> test()
         g_logger->Error("Http Server Start Error");
         co_return;
     }
+    BLUE_LOG_INFO(g_logger) << "Http Server is running";
     while (g_running.load(std::memory_order_acquire) && !httpserver->getIsStop())
     {
         co_await blue::sleepFor(2);
     }
     httpserver->ShutDownServer();
-    BLUE_LOG_INFO(g_logger) << "httpserver stop";
     co_await httpserver->waitAcceptDone();
     blue::IOManager::GetThis()->clear();
+    BLUE_LOG_INFO(g_logger) << "httpserver Done";
     co_return;
 }
 
