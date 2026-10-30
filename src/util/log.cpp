@@ -379,61 +379,6 @@ namespace blue
         }
     }
 
-    void Logger::Debug(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::DEBUG,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        this->Log(Level::DEBUG, logevent);
-    }
-
-    void Logger::Info(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::INFO,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        this->Log(Level::INFO, logevent);
-    }
-
-    void Logger::Warn(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::WARN,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        this->Log(Level::WARN, logevent);
-    }
-
-    void Logger::Error(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::ERROR,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        this->Log(Level::ERROR, logevent);
-    }
-
-    void Logger::Fatal(const std::string &content)
-    {
-        auto self = shared_from_this();
-        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::FATAL,
-                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
-                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
-
-        logevent->getstringstream() << content;
-        this->Log(Level::FATAL, logevent);
-    }
-
     void LogAppender::setformatter(LogFormatter::LogFormatterPtr formatter)
     {
         auto old_formatter = std::atomic_exchange_explicit(&m_formatter, formatter, std::memory_order_acq_rel);

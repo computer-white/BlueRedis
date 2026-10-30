@@ -242,7 +242,7 @@ namespace blue
         void _init();
 
     private:
-        std::string m_pattern;                                  // 日志输出格式
+        std::string m_pattern; // 日志输出格式
         std::vector<FormatterItem::FormatterItemPtr> m_items;
         std::atomic<bool> m_HasError = {false};
     };
@@ -397,7 +397,6 @@ namespace blue
         size_t m_file_idx = 0;               // 当前文件编号
         std::atomic<TimePoint> m_lasttime;   // 文件最新时间
         std::atomic<bool> m_rotating{false}; // 轮转标志
-
     };
 
     // 日志器
@@ -426,23 +425,28 @@ namespace blue
 
         /// @brief Debug 日志
         /// @param content 日志内容
-        void Debug(const std::string &content);
+        template <typename... Args>
+        void Debug(const Args &...content);
 
         /// @brief Info 日志
         /// @param content 日志内容
-        void Info(const std::string &content);
+        template <typename... Args>
+        void Info(const Args &...content);
 
         /// @brief Warn 日志
         /// @param content 日志内容
-        void Warn(const std::string &content);
+        template <typename... Args>
+        void Warn(const Args &...content);
 
         /// @brief Error 日志
         /// @param content 日志内容
-        void Error(const std::string &content);
+        template <typename... Args>
+        void Error(const Args &...content);
 
         /// @brief Fatal 日志
         /// @param content 日志内容
-        void Fatal(const std::string &content);
+        template <typename... Args>
+        void Fatal(const Args &...content);
 
         /**
          * @brief 将日志信息转为yamlstring
@@ -513,6 +517,74 @@ namespace blue
         LogFormatter::LogFormatterPtr m_formatter;          // 输出日志格式
     };
 
+    template <typename... Args>
+    inline void Logger::Debug(const Args &...content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::DEBUG,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+
+        std::ostringstream os;
+        (os << ... << content);
+        logevent->getstringstream() << os.str();
+        this->Log(Level::DEBUG, logevent);
+    }
+
+    template <typename... Args>
+    inline void Logger::Info(const Args &...content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::INFO,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+
+        std::ostringstream os;
+        (os << ... << content);
+        logevent->getstringstream() << os.str();
+        this->Log(Level::INFO, logevent);
+    }
+
+    template <typename... Args>
+    inline void Logger::Warn(const Args &...content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::WARN,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+
+        std::ostringstream os;
+        (os << ... << content);
+        logevent->getstringstream() << os.str();
+        this->Log(Level::WARN, logevent);
+    }
+
+    template <typename... Args>
+    inline void Logger::Error(const Args &...content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::ERROR,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+        std::ostringstream os;
+        (os << ... << content);
+        logevent->getstringstream() << os.str();
+        this->Log(Level::ERROR, logevent);
+    }
+
+    template <typename... Args>
+    inline void Logger::Fatal(const Args &...content)
+    {
+        auto self = shared_from_this();
+        LogEvent::LogEventPtr logevent = std::make_shared<LogEvent>(self, Level::FATAL,
+                                                                    __FILE__, std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+                                                                    __LINE__, 0, blue::GetThreadId(), blue::Mthread::GetName());
+        std::ostringstream os;
+        (os << ... << content);
+        logevent->getstringstream() << os.str();
+        this->Log(Level::FATAL, logevent);
+    }
+
     // logger管理类,生成root(默认name = "root",具有formatter格式,
     // 通过logger的Appender方法来给没有formatter的Appender设置formatter)
     class LoggerManager
@@ -522,7 +594,7 @@ namespace blue
 
         /**
          * @brief 构造函数,管理一个默认的logger智能指针
-         * 
+         *
          * @note 设置了默认的appender
          */
         LoggerManager();
