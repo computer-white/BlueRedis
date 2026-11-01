@@ -26,6 +26,7 @@
 #pragma once
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include "src/core/resume_ticket.h"
 #include "src/core/io_manager.h"
 #include "src/util/log.h"
 
@@ -55,8 +56,8 @@ namespace blue
         Timer::TimerPtr timer = nullptr;
         int fd = -1;
         IOManager::Event event;
-        bool is_timeout = false;
-        bool event_added = false;
+        std::shared_ptr<ResumeTicket> resumeTicket;
+        std::shared_ptr<AsyncIoState> state;
         int old_error = 0;
 
     public:
@@ -81,6 +82,23 @@ namespace blue
             requires((sslIo == SSLIo::ACCEPT || sslIo == SSLIo::CONNECT) && WithTimeOut)
             : ssl(ssl), timeout_ms(ms)
         {
+        }
+
+        ~SSLAsyncIo()
+        {
+            if (resumeTicket)
+            {
+                resumeTicket->m_armed.store(false, std::memory_order_release);
+            }
+            if (timer)
+            {
+                timer->cancel();
+                timer = nullptr;
+            }
+            if (state && state->event_added.exchange(false, std::memory_order_acq_rel))
+            {
+                IOManager::GetThis()->delEvent(fd, event);
+            }
         }
 
         ssize_t do_io()
@@ -121,14 +139,14 @@ namespace blue
             {
                 BLUE_LOG_ERROR(xx::g_logger) << "ssl 连接被关闭";
                 ret = 0;
-                return true;        // 返回0交给上级处理
+                return true; // 返回0交给上级处理
             }
             return true; // error
         }
         std::coroutine_handle<> await_suspend(std::coroutine_handle<> h)
         {
             int err = SSL_get_error(ssl, ret);
-            fd = SSL_get_fd(ssl);  // 拿到底层 socket fd
+            fd = SSL_get_fd(ssl); // 拿到底层 socket fd
 
             auto *iom = IOManager::GetThis();
             if (!iom)
@@ -136,39 +154,46 @@ namespace blue
                 BLUE_LOG_ERROR(xx::g_logger) << "not have iom";
                 ret = -1;
                 errno = EIO;
-                return h;       // 对称转移
+                return h; // 对称转移
             }
+            resumeTicket = std::make_shared<blue::ResumeTicket>();
+            resumeTicket->m_handle = h;
+            resumeTicket->m_armed.store(true, std::memory_order_release);
+
             if (err == SSL_ERROR_WANT_READ)
             {
-                int tem = iom->addEvent(fd, IOManager::READ, h, nullptr);  // 等可读
+                int tem = iom->addEvent(fd, IOManager::READ, resumeTicket, nullptr); // 等可读
                 if (tem)
                 {
                     BLUE_LOG_ERROR(xx::g_logger) << " await_suspend addEvent() error, fd : " << fd;
+                    resumeTicket->m_armed.store(false, std::memory_order_release);
                     ret = -1;
                     errno = EIO;
                     return h;
                 }
                 event = IOManager::READ;
-                event_added = true;
-            } 
-            else if (err == SSL_ERROR_WANT_WRITE) 
+                state->event_added.store(true, std::memory_order_release);
+            }
+            else if (err == SSL_ERROR_WANT_WRITE)
             {
-                int tem = iom->addEvent(fd, IOManager::WRITE, h, nullptr);  // 等可写
+                int tem = iom->addEvent(fd, IOManager::WRITE, resumeTicket, nullptr); // 等可写
                 if (tem)
                 {
                     BLUE_LOG_ERROR(xx::g_logger) << " await_suspend addEvent() error, fd : " << fd;
+                    resumeTicket->m_armed.store(false, std::memory_order_release);
                     ret = -1;
                     errno = EIO;
                     return h;
                 }
                 event = IOManager::WRITE;
-                event_added = true;
-            } 
-            else 
+                state->event_added.store(true, std::memory_order_release);
+            }
+            else
             {
                 if constexpr (WithTimeOut)
                 {
-                    iom->schedule(h);  // 其他错误且是定时任务，直接调度
+                    iom->schedule([resumeTicket = resumeTicket]()
+                                  { try_resume(resumeTicket); }); // 其他错误且是定时任务，直接调度
                 }
                 else
                 {
@@ -177,18 +202,14 @@ namespace blue
             }
             if constexpr (WithTimeOut)
             {
-                timer = iom->addTimer(timeout_ms, nullptr, [this,h]{
-                    is_timeout = true;
-                    if (event_added)
+                timer = iom->addTimer(timeout_ms, nullptr, [resumeTicket = resumeTicket, state = state, event = event, fd = fd]
+                                      {
+                    state->is_timeout.store(true, std::memory_order_release);
+                    if (state->event_added.exchange(false, std::memory_order_acq_rel))
                     {
                         IOManager::GetThis()->delEvent(fd,event);
-                        event_added = false;
                     }
-                    if (h && !h.done())
-                    {
-                        h.resume();
-                    }
-                });
+                    try_resume(resumeTicket); });
             }
             return std::noop_coroutine();
         }
@@ -199,12 +220,11 @@ namespace blue
                 timer->cancel();
                 timer = nullptr;
             }
-            if (event_added)
+            if (state && state->event_added.exchange(false, std::memory_order_acq_rel))
             {
                 IOManager::GetThis()->delEvent(fd, event);
-                event_added = false;
             }
-            if (is_timeout)
+            if (state && state->is_timeout.load(std::memory_order_acquire))
             {
                 errno = ETIMEDOUT;
                 return -1;
