@@ -24,14 +24,19 @@
 graph TD
     App["HTTP / Redis"] --> Task["Task&lt;T&gt;<br/>对称转移 / 类型擦除"]
     Task --> Awaiter["sleepFor / AsyncIo / defer"]
-    Awaiter --> IOM["IOManager<br/>epoll + eventfd"]
+    Awaiter --> AsyncIo["AsyncIo<br/>创建 ResumeTicket"]
+    AsyncIo --> RT["ResumeTicket<br/>帧外判断"]
+    AsyncIo --> IOM["IOManager<br/>epoll + eventfd"]
     Task --> Sched["Scheduler<br/>本地队列 + 全局队列 + 窃取"]
     Sched --> Own["m_runningTasks<br/>持有顶层 Task"]
     Sched --> Fin["m_finishedTasks<br/>延迟销毁"]
     IOM --> Timer["TimerManager<br/>最小堆"]
-    IOM --> Fd["FdContext<br/>只持 handle 引用"]
-    Own --> Life["Task 生命周期<br/>final_suspend 只通知不销毁"]
+    IOM --> Fd["FdContext<br/>持有 ResumeTicket / handle"]
+    Timer --> RT
+    Fd --> RT
+    Own --> Life["Task 生命周期<br/>finalizing 原子标志<br/>final_suspend 只通知不销毁"]
     Fin --> Life
+    RT --> Life
 ```
 
 ## 协程生命周期
@@ -63,14 +68,17 @@ graph LR
     subgraph Own["拥有"]
         T1["Task&lt;T&gt;"] -->|owns| H1["coroutine_handle"]
         H1 -->|points to| F1["coroutine frame"]
-        RT["Scheduler::m_runningTasks"] -->|owns| TB["TaskBase"]
+        H1 -->|promise_type| FIN["finalizing<br/>atomic&lt;bool&gt;"]
+        Running["m_runningTasks"] -->|owns| TB["TaskBase"]
         TB -->|owns| T2["Task&lt;T&gt;"]
-        FT["Scheduler::m_finishedTasks"] -->|owns| TB2["TaskBase"]
+        FT["m_finishedTasks"] -->|owns| TB2["TaskBase"]
     end
 
     subgraph Ref["只引用，不拥有"]
-        IOM["IOManager::FdContext"] -->|handle reference| H2["coroutine_handle"]
-        TIMER["Timer::m_handle"] -->|handle reference| H3["coroutine_handle"]
+        IOM["FdContext"] -->|shared_ptr| TK1["ResumeTicket"]
+        TIMER["Timer"] -->|shared_ptr| TK2["ResumeTicket"]
+        TK1 -->|contains| H2["coroutine_handle"]
+        TK2 -->|contains| H3["coroutine_handle"]
         CB["schedule lambda"] -->|weak_ptr| TB3["TaskBase"]
     end
 
@@ -78,6 +86,7 @@ graph LR
         X1["IOManager::reset()<br/>handle.destroy()"] -.->|❌ 越权| F1
         X2["Timer::cancel()<br/>handle.destroy()"] -.->|❌ 越权| F1
         X3["on_complete<br/>捕获 task_base 强引用"] -.->|❌ 闭环| TB3
+        X4["直接 resume 裸 handle<br/>(应用 ResumeTicket 替代)"] -.->|❌ UAF| F1
     end
 ```
 

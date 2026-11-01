@@ -17,7 +17,9 @@
 
 ### 4. 优雅停机与屏障清理（Wait-All & Drain）
 - 引入 `m_pending`（待处理任务数）与 `m_running`（正在执行数）双原子计数器。
-- `wait_all()` 接口通过条件变量等待这两个计数器归零以及m_runningTasks链表为空，随后触发 `drainFinished()`。在保证所有协程安全退出的前提下，清空内存，实现完美的优雅停机。
+- `wait_all()` 等待 `m_pending == 0 && m_running == 0 && m_runningTasks.empty()`。
+- **不需要等 `m_finishedTasks` 空**：其中的 `TaskModel` 对应已 `co_return` 的协程，`Task::destroySafe()` 只 `free` 帧内存，局部变量（含子协程 `Task<T>`）在 `co_return` 时已析构，不会回调 `IOManager`。残留的 `TaskModel` 在 `~Scheduler` 成员析构时释放，安全。
+- **必须等 `m_runningTasks` 空**：其中的 `TaskModel` 对应未完成协程，`destroySafe()` 会对未 `done` 的帧执行 `h.destroy()`，析构局部变量可能触发 `~TcpServer` → `IOManager::cancelAll`，此时 `IOManager` 可能已半析构。`notHasRunningTask()` 只查 `m_runningTasks.empty()` 即可。
 
 ## 🗺️ 调度器数据流向图
 
@@ -36,3 +38,4 @@ graph TD
     G -- 偷取成功 --> E
     F -- 队列非空 --> E
 ```
+> IO 唤醒路径不直接持有裸句柄：`IOManager` / 定时器通过 `shared_ptr<ResumeTicket>` 提交 resume，见 [README_COHANDLE.md](README_COHANDLE.md)。
