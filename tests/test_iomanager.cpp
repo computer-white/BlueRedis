@@ -236,7 +236,7 @@ protected:
 TEST_F(IOFdTest, AddReadEventSucceeds)
 {
     EXPECT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, noop),
+                             noop),
               0);
     EXPECT_TRUE(iom_->delEvent(efd_, blue::IOManager::Event::READ));
 }
@@ -244,7 +244,7 @@ TEST_F(IOFdTest, AddReadEventSucceeds)
 TEST_F(IOFdTest, AddWriteEventSucceeds)
 {
     EXPECT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::WRITE,
-                             nullptr, noop),
+                             noop),
               0);
     EXPECT_TRUE(iom_->delEvent(efd_, blue::IOManager::Event::WRITE));
 }
@@ -252,10 +252,10 @@ TEST_F(IOFdTest, AddWriteEventSucceeds)
 TEST_F(IOFdTest, AddReadAndWriteEvents)
 {
     EXPECT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, noop),
+                             noop),
               0);
     EXPECT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::WRITE,
-                             nullptr, noop),
+                            noop),
               0);
     EXPECT_TRUE(iom_->delEvent(efd_, blue::IOManager::Event::READ));
     EXPECT_TRUE(iom_->delEvent(efd_, blue::IOManager::Event::WRITE));
@@ -267,10 +267,10 @@ TEST_F(IOFdTest, AddReadAndWriteEvents)
 TEST_F(IOFdTest, AddSameEventTwiceFails)
 {
     ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, noop),
+                             noop),
               0);
     EXPECT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, noop),
+                             noop),
               -1)
         << "重复注册同一事件应返回 -1";
     iom_->delEvent(efd_, blue::IOManager::Event::READ);
@@ -287,7 +287,7 @@ TEST_F(IOFdTest, DelUnregisteredEventFails)
 TEST_F(IOFdTest, DelWrongEventTypeFails)
 {
     ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, noop),
+                             noop),
               0);
     EXPECT_FALSE(iom_->delEvent(efd_, blue::IOManager::Event::WRITE));
     iom_->delEvent(efd_, blue::IOManager::Event::READ);
@@ -299,7 +299,7 @@ TEST_F(IOFdTest, DelWrongEventTypeFails)
 TEST_F(IOFdTest, AddInvalidFdFails)
 {
     EXPECT_EQ(iom_->addEvent(-1, blue::IOManager::Event::READ,
-                             nullptr, noop),
+                             noop),
               -1);
 }
 
@@ -320,7 +320,7 @@ TEST_F(IOFdTest, CancelInvalidFdFails)
 TEST_F(IOFdTest, DelTwiceFailsSecond)
 {
     ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, noop),
+                             noop),
               0);
     EXPECT_TRUE(iom_->delEvent(efd_, blue::IOManager::Event::READ));
     EXPECT_FALSE(iom_->delEvent(efd_, blue::IOManager::Event::READ));
@@ -332,23 +332,13 @@ TEST_F(IOFdTest, DelTwiceFailsSecond)
 TEST_F(IOFdTest, ReAddAfterDel)
 {
     EXPECT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, noop),
+                             noop),
               0);
     EXPECT_TRUE(iom_->delEvent(efd_, blue::IOManager::Event::READ));
     EXPECT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, noop),
+                             noop),
               0);
     EXPECT_TRUE(iom_->delEvent(efd_, blue::IOManager::Event::READ));
-}
-
-// ------------------------------------------------------------
-// 2.7 无 cb / 无 handle 应被拒绝
-// ------------------------------------------------------------
-TEST_F(IOFdTest, AddEventWithoutHandlerFails)
-{
-    EXPECT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, nullptr),
-              -1);
 }
 
 // 测试fd 就绪触发cb或handle的回调
@@ -361,7 +351,6 @@ TEST_F(IOFdTest, WriteTriggersCallback)
     auto called = std::make_shared<std::atomic<int>>(0);
 
     ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr,
                              [called]
                              { called->fetch_add(1); }),
               0);
@@ -384,7 +373,6 @@ TEST_F(IOFdTest, CallbackCalledOnce)
     auto count = std::make_shared<std::atomic<int>>(0);
 
     ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr,
                              [count]
                              { count->fetch_add(1); }),
               0);
@@ -407,7 +395,6 @@ TEST_F(IOFdTest, CancelTriggersCallback)
     auto called = std::make_shared<std::atomic<bool>>(false);
 
     ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr,
                              [called]
                              { called->store(true); }),
               0);
@@ -429,12 +416,10 @@ TEST_F(IOFdTest, CancelAllTriggersAllCallbacks)
     auto write_called = std::make_shared<std::atomic<bool>>(false);
 
     ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr,
                              [read_called]
                              { read_called->store(true); }),
               0);
     ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::WRITE,
-                             nullptr,
                              [write_called]
                              { write_called->store(true); }),
               0);
@@ -468,12 +453,10 @@ TEST_F(IOFdTest, MultipleFdsTriggered)
     auto c1 = std::make_shared<std::atomic<int>>(0);
     auto c2 = std::make_shared<std::atomic<int>>(0);
 
-    ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, [c1]
+    ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ, [c1]
                              { c1->fetch_add(1); }),
               0);
-    ASSERT_EQ(iom_->addEvent(efd2, blue::IOManager::Event::READ,
-                             nullptr, [c2]
+    ASSERT_EQ(iom_->addEvent(efd2, blue::IOManager::Event::READ, [c2]
                              { c2->fetch_add(1); }),
               0);
 
@@ -497,8 +480,7 @@ TEST_F(IOFdTest, CanTriggerMultipleTimesAfterReAdd)
     auto count = std::make_shared<std::atomic<int>>(0);
 
     // 触发一次
-    ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, [count]
+    ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ, [count]
                              { count->fetch_add(1); }),
               0);
     writeEventfd();
@@ -507,8 +489,7 @@ TEST_F(IOFdTest, CanTriggerMultipleTimesAfterReAdd)
                           std::chrono::seconds(2)));
 
     // 再注册一次,再触发
-    ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ,
-                             nullptr, [count]
+    ASSERT_EQ(iom_->addEvent(efd_, blue::IOManager::Event::READ, [count]
                              { count->fetch_add(1); }),
               0);
     // 消费 eventfd 里的数据
