@@ -30,6 +30,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 #include <errno.h>
+#include "src/core/resume_ticket.h"
 #include "src/core/io_manager.h"
 #include "src/util/log.h"
 
@@ -57,8 +58,8 @@ namespace blue
         bool has_timer = false;
         ssize_t ret = -1;
         Timer::TimerPtr timer;
-        bool is_timeout = false;
-        bool event_added = false;
+        std::shared_ptr<ResumeTicket> resumeTicket;
+        std::shared_ptr<AsyncIoState> state;
         int old_error = 0;
 
     public:
@@ -67,6 +68,23 @@ namespace blue
 
         AsyncIo(int f, OriginFunc fun, IOManager::Event event, WithTimeoutTag, uint64_t ms, Args... args)
             : fd(f), event(event), func(fun), io_args(std::move(args)...), timeout_ms(ms) { has_timer = true; }
+
+        ~AsyncIo()
+        {
+            if (resumeTicket)
+            {
+                resumeTicket->m_armed.store(false, std::memory_order_release);
+            }
+            if (timer)
+            {
+                timer->cancel();
+                timer = nullptr;
+            }
+            if (state && state->event_added.exchange(false, std::memory_order_acq_rel))
+            {
+                IOManager::GetThis()->delEvent(fd, event);
+            }
+        }
 
         bool await_ready()
         {
@@ -95,31 +113,34 @@ namespace blue
                 errno = EIO;
                 return h;
             }
-            int tem = iom->addEvent(fd, event, h, nullptr);
+
+            resumeTicket = std::make_shared<blue::ResumeTicket>();
+            resumeTicket->m_handle = h;
+            resumeTicket->m_armed.store(true, std::memory_order_release);
+
+            state = std::make_shared<AsyncIoState>();
+            state->event_added.store(true, std::memory_order_release);
+
+            int tem = iom->addEvent(fd, event, resumeTicket, nullptr);
             if (tem)
             {
                 BLUE_LOG_ERROR(xx::g_logger) << " await_suspend addEvent() error, fd : " << fd;
+                resumeTicket->m_armed.store(false, std::memory_order_release);
                 ret = -1;
                 errno = EIO;
                 return h;
             }
-            event_added = true;
+
             if (has_timer)
             {
-                timer = iom->addTimer(timeout_ms, nullptr, [this, h]
-                {
-                    is_timeout = true;
-                    if (event_added)
+                timer = iom->addTimer(timeout_ms, nullptr, [state = state, resumeTicket = resumeTicket, fd = fd, event = event]
+                                      {
+                    state->is_timeout.store(true, std::memory_order_release);
+                    if (state->event_added.exchange(false, std::memory_order_acq_rel))
                     {
-                        // 这边 delEvent 内部会调用 reset()，需要保证 reset() 不会 destroy 协程帧
-                        IOManager::GetThis()->delEvent(fd,event);
-                        event_added = false;
+                        IOManager::GetThis()->delEvent(fd, event);
                     }
-                    if (h && !h.done())
-                    {
-                        h.resume();
-                    } 
-                });
+                    try_resume(resumeTicket); });
             }
             return std::noop_coroutine();
         }
@@ -130,12 +151,11 @@ namespace blue
                 timer->cancel();
                 timer = nullptr;
             }
-            if (event_added)
+            if (state && state->event_added.exchange(false))
             {
                 IOManager::GetThis()->delEvent(fd, event);
-                event_added = false;
             }
-            if (is_timeout)
+            if (state && state->is_timeout.load())
             {
                 errno = ETIMEDOUT;
                 return -1;

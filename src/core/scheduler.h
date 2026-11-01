@@ -188,6 +188,17 @@ namespace blue
          * @brief 提交协程句柄
          * @param h 协程句柄
          * @param thr 指定工作线程
+         * @warning 调用者必须保证：
+         * 1. 该句柄只会被 resume 一次
+         * 2. resume 执行时协程帧仍然存活（裸句柄无所有权，帧销毁后 resume 是 UAF）
+         * 若无法保证，请使用 ResumeTicket
+         * ag:
+         *      auto rt = std::make_shared<blue::ResumeTicket>();
+         *      rt->m_handle = h;
+         *      rt->m_armed.stroe(true, std::memory_order_release);
+         *      schedule([rt](){
+         *          try_resume(rt);
+         *      });
          */
         void schedule(std::coroutine_handle<> h, int thr = -1);
 
@@ -247,7 +258,6 @@ namespace blue
         static void setThreadIndex(int index) { t_threadIndex = index; }
 
     protected:
-
         /**
          * @brief 是否还存在顶层协程 Task
          * @return true 表示没有顶层协程 Task 了

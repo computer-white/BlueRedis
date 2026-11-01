@@ -77,6 +77,7 @@ namespace blue
         Scheduler *scheduler = ctx.scheduler;
         std::function<void()> cb = std::move(ctx.cb);
         std::coroutine_handle<> handle = ctx.handle;
+        auto rt = ctx.resumeTicket;
         int thread_id = ctx.thread_id;
 
         // 不能reset,假如有协程句柄，reset后会要么内存泄漏要么ASAN
@@ -110,6 +111,12 @@ namespace blue
             else if (handle)
             {
                 scheduler->schedule(handle, thread_id);
+            }
+            else if (rt)
+            {
+                scheduler->schedule([rt](){
+                    try_resume(rt);
+                }, thread_id);
             }
         }
     }
@@ -174,6 +181,226 @@ namespace blue
             close(m_epfd);
             m_epfd = -1;
         }
+    }
+
+    int IOManager::addEvent(int fd, Event event, std::function<void()> cb)
+    {
+        if (m_stopping.load(std::memory_order_acquire))
+        {
+            return -1;
+        }
+
+        if (fd < 0)
+        {
+            return -1;
+        }
+
+        if (!cb)
+        {
+            // 没有有效的回调
+            BLUE_LOG_ERROR(g_logger) << "addEvent: no callback provided";
+            return -1;
+        }
+
+        // 获取或创建 FdContext
+        FdContext *fd_ctx = nullptr;
+
+        {
+            std::shared_lock<std::shared_mutex> read_lock(m_Iommutex);
+            auto it = m_fdContexts.find(fd);
+
+            if (it != m_fdContexts.end())
+            {
+                fd_ctx = it->second.get();
+            }
+            else
+            {
+                read_lock.unlock();
+                std::unique_lock<std::shared_mutex> write_lock(m_Iommutex);
+
+                // 双重检查
+                auto [new_it, inserted] = m_fdContexts.try_emplace(
+                    fd, std::make_unique<FdContext>());
+                fd_ctx = new_it->second.get();
+
+                if (inserted)
+                {
+                    fd_ctx->fd = fd;
+                }
+            }
+        }
+
+        if (!fd_ctx)
+        {
+            return -1;
+        }
+
+        // 锁定 fd 上下文
+        std::lock_guard<std::mutex> lock(fd_ctx->mutex);
+
+        // 检查是否已注册相同事件
+        if (fd_ctx->m_events & event)
+        {
+            BLUE_LOG_ERROR(g_logger) << "addEvent: event already registered, fd="
+                                     << fd << " event=" << event;
+            return -1;
+        }
+
+        // 确定 epoll 操作
+        int op = fd_ctx->m_events ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
+        Event new_event = static_cast<Event>(fd_ctx->m_events | event);
+
+        // 设置 epoll 事件
+        epoll_event epevent;
+        memset(&epevent, 0, sizeof(epevent));
+        epevent.events = EPOLLET | static_cast<uint32_t>(new_event);
+        epevent.data.ptr = fd_ctx;
+
+        int rt = epoll_ctl(m_epfd, op, fd, &epevent);
+        if (rt)
+        {
+            BLUE_LOG_ERROR(g_logger) << "epoll_ctl error: "
+                                     << "epfd=" << m_epfd
+                                     << " op=" << op
+                                     << " fd=" << fd
+                                     << " errno=" << errno
+                                     << " (" << strerror(errno) << ")";
+            return -1;
+        }
+
+        // 更新状态
+        ++m_pendingEventCounts;
+        fd_ctx->m_events = new_event;
+
+        // 设置事件上下文
+        FdContext::EventContext &event_ctx = fd_ctx->getEventContext(event);
+        event_ctx.scheduler = Scheduler::GetThis();
+        if (!event_ctx.scheduler)
+        {
+            event_ctx.scheduler = this; // 兜底
+        }
+
+        if (cb)
+        {
+            event_ctx.cb = std::move(cb);
+            event_ctx.thread_id = -1;
+        }
+        return 0;
+    }
+
+    int IOManager::addEvent(int fd, Event event,
+                            std::shared_ptr<blue::ResumeTicket> resumeticket,
+                            std::function<void()> cb,
+                            int thread_id)
+    {
+        if (m_stopping.load(std::memory_order_acquire))
+        {
+            return -1;
+        }
+
+        if (fd < 0)
+        {
+            return -1;
+        }
+
+        if (!resumeticket && !cb)
+        {
+            // 没有有效的回调和协程句柄的封装
+            BLUE_LOG_ERROR(g_logger) << "addEvent: no callback or resumeTicket provided";
+            return -1;
+        }
+
+        // 获取或创建 FdContext
+        FdContext *fd_ctx = nullptr;
+
+        {
+            std::shared_lock<std::shared_mutex> read_lock(m_Iommutex);
+            auto it = m_fdContexts.find(fd);
+
+            if (it != m_fdContexts.end())
+            {
+                fd_ctx = it->second.get();
+            }
+            else
+            {
+                read_lock.unlock();
+                std::unique_lock<std::shared_mutex> write_lock(m_Iommutex);
+
+                // 双重检查
+                auto [new_it, inserted] = m_fdContexts.try_emplace(
+                    fd, std::make_unique<FdContext>());
+                fd_ctx = new_it->second.get();
+
+                if (inserted)
+                {
+                    fd_ctx->fd = fd;
+                }
+            }
+        }
+
+        if (!fd_ctx)
+        {
+            return -1;
+        }
+
+        // 锁定 fd 上下文
+        std::lock_guard<std::mutex> lock(fd_ctx->mutex);
+
+        // 检查是否已注册相同事件
+        if (fd_ctx->m_events & event)
+        {
+            BLUE_LOG_ERROR(g_logger) << "addEvent: event already registered, fd="
+                                     << fd << " event=" << event;
+            return -1;
+        }
+
+        // 确定 epoll 操作
+        int op = fd_ctx->m_events ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
+        Event new_event = static_cast<Event>(fd_ctx->m_events | event);
+
+        // 设置 epoll 事件
+        epoll_event epevent;
+        memset(&epevent, 0, sizeof(epevent));
+        epevent.events = EPOLLET | static_cast<uint32_t>(new_event);
+        epevent.data.ptr = fd_ctx;
+
+        int rt = epoll_ctl(m_epfd, op, fd, &epevent);
+        if (rt)
+        {
+            BLUE_LOG_ERROR(g_logger) << "epoll_ctl error: "
+                                     << "epfd=" << m_epfd
+                                     << " op=" << op
+                                     << " fd=" << fd
+                                     << " errno=" << errno
+                                     << " (" << strerror(errno) << ")";
+            return -1;
+        }
+
+        // 更新状态
+        ++m_pendingEventCounts;
+        fd_ctx->m_events = new_event;
+
+        // 设置事件上下文
+        FdContext::EventContext &event_ctx = fd_ctx->getEventContext(event);
+        event_ctx.scheduler = Scheduler::GetThis();
+        if (!event_ctx.scheduler)
+        {
+            event_ctx.scheduler = this; // 兜底
+        }
+
+        if (cb)
+        {
+            event_ctx.cb = std::move(cb);
+            event_ctx.thread_id = thread_id;
+        }
+        else if (resumeticket)
+        {
+            // event_ctx.handle = h;
+            event_ctx.resumeTicket = resumeticket;
+            event_ctx.thread_id = thread_id;
+        }
+
+        return 0;
     }
 
     int IOManager::addEvent(int fd, Event event,
