@@ -149,6 +149,7 @@ set(LIB_SRC
     src/core/scheduler.cpp
     src/core/io_manager.cpp
     src/core/timer.cpp
+    src/core/resume_ticket.cpp
     src/util/resp_parser.cpp
     src/util/config_parser.cpp
     redis_command/command_handler.cpp
