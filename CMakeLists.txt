@@ -9,6 +9,7 @@ else()
 endif()
 project(blue)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -250,6 +251,11 @@ option(BLUE_BUILD_TESTS "Build tests" ON)
 if(BLUE_BUILD_TESTS)
     enable_testing()                # 顶层调用一次即可
     add_subdirectory(${PROJECT_SOURCE_DIR}/tests)
+endif()
+
+option(BLUE_EXAMPLE "example projects" ON)
+if(BLUE_EXAMPLE)
+    add_subdirectory(${PROJECT_SOURCE_DIR}/example)
 endif()
 
 # 打印

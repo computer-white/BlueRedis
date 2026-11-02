@@ -1,4 +1,5 @@
 .vscode
+.cache
 abseil-cpp
 bin
 lib
