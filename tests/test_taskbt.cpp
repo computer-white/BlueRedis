@@ -3,6 +3,7 @@
 #include "src/core/io_manager.h"
 #include "src/core/task.h"
 #include "src/core/await.h"
+#include "src/core/wait_group.h"
 
 static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("root");
 
@@ -65,7 +66,7 @@ blue::Task<void> test_onlySleepFor()
     co_return;
 }
 
-blue::Task<void> child(int id, int seconds)
+blue::Task<void> child(int id, int seconds, std::shared_ptr<blue::WaitGroup> wg)
 {
     g_logger->Info("[子", id, "] 开始，等待 ", 
         seconds, " 秒", "线程：", std::this_thread::get_id());
@@ -73,6 +74,7 @@ blue::Task<void> child(int id, int seconds)
     std::cout << "[子" << id << "] 完成"
               << "（线程: " << std::this_thread::get_id() << "）" << std::endl;
     g_logger->Info("[子", id, "] 完成，线程：", std::this_thread::get_id());
+    wg->Done();
     co_return;
 }
 
@@ -80,25 +82,34 @@ blue::Task<void> father()
 {
     g_logger->Info("父协程 begin");
     g_logger->Info("父协程开始等待子协程");
-    // co_await child(1,1);
-    // co_await child(2,2);
-    // co_await child(3,3);
-    blue::IOManager::GetThis()->schedule(child(1, 1));
-    blue::IOManager::GetThis()->schedule(child(1, 2));
-    blue::IOManager::GetThis()->schedule(child(1, 3));
+    auto wg = std::make_shared<blue::WaitGroup>();
+    wg->Add(3);
+    blue::IOManager::GetThis()->schedule(child(1, 1, wg));
+    blue::IOManager::GetThis()->schedule(child(1, 2, wg));
+    blue::IOManager::GetThis()->schedule(child(1, 3, wg));
+    co_await wg->Wait();
     g_logger->Info("子协程全部结束");
-    // 暴露一个问题，没有 go 的 waitGroup 导致father协程不能真正去等待child
-    // 输出：
+    co_return;
+}
 
-    // 父协程
-    // 父亲协程开始等待子协程
-    // 子协程全部结束
-    // [子1] 开始，等待 1 秒（线程: 126157932459584）
-    // [子1] 开始，等待 2 秒（线程: 126157932459584）
-    // [子1] 开始，等待 3 秒（线程: 126157932459584）
-    // [子1] 完成（线程: 126157924066880）
-    // [子1] 完成（线程: 126157932459584）
-    // [子1] 完成（线程: 126157932459584）
+blue::Task<void> worker(int id, std::shared_ptr<blue::WaitGroup> wg)
+{
+    co_await blue::sleepForMs(100);
+    std::cout << "worker " << id << " done\n";
+    wg->Done();
+    co_return;
+}
+
+blue::Task<void> main_task()
+{
+    auto wg = std::make_shared<blue::WaitGroup>();
+    for (int i = 0; i < 10; ++i)
+    {
+        wg->Add(1);
+        blue::IOManager::GetThis()->schedule(worker(i, wg));
+    }
+    co_await wg->Wait();
+    std::cout << "all workers done\n";
     co_return;
 }
 
@@ -109,6 +120,7 @@ int main()
     iom.schedule(test_onlySleepFor());
     iom.schedule(child3());
     iom.schedule(father());
+    iom.schedule(main_task());
 
     iom.wait_all();
 }// touch Thu Sep 17 18:50:15 CST 2026
