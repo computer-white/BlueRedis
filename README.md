@@ -145,42 +145,6 @@ graph TD
 - **配置系统** — YAML / JSON 热加载，支持配置变更回调
 - **redis** — 使用c++20协程的redis服务器
 
-## 关于一些模块
-### 关于Redis服务器的入口文件(tests/blueRedis.cpp)
-    这个是Redis服务器的测试函数，IO调度器提交协程任务，然后协程被执行，comm->start()后Redis服务器就成功启动了
-### 关于协程以及相关IO、Sleep实现(blue/task.h，blue/asyncio.h，blue/await.h，redis_command/generator.h)
-    这些是关于协程和利用协程实现的IO和Sleep操作,在asyncio.h和await.h内部搭配epoll和定时器实现。关于C++20协程的用法这里不过多解释，
-    这里只是它的一种使用方式，大家可以在github或其他地方或通过AI学习到其他的实现和使用方法。关于这部分协程的使用测试文件，我这里有简单的
-    newtests/test_debug.cpp。最后一个redis_command/generator.h这个是一个异步生成器，测试文件有newtests/test_generator_game.cpp和
-    newtests/test_generator.cpp。
-### 关于调度器和定时器模块(blue/scheduler.h，blue/io_manager.h，blue/timer.h)
-    关于调度器，这里为了适配c++20协程，我搭配AI改了之前跟着Sylar写的这块的逻辑，但是仔细看的话还是没有太大改变(^_^)，调度器支持提交
-    协程句柄，协程（返回Task<T>类型的函数），以及CallBack函数。最后都已CallBack函数提交到任务队列，这块AI帮我做了优化，性能对比优化
-    前提升了好几倍，距离我写这段过去好几个月了，当时也没仔细算。IO_manager这块还是基于epoll，对比Sylar的改动不大，定时器这块实际改变
-    也不大...
-### 存储文件路径(需要提前创建，并且需要让当前项目所属用户具有相应权限)
-    日志存放在/var/log/blueRedis/logs_dir/
-    AOF持久文件和RDB持久文件放在/var/lib/blueRedis/
-    配置文件在/etc/blueRedis/redis_cof/blueredis.yml
-
-### 配置文件中的一些参数说明
-#### /etc/blueRedis/redis_cof/blueredis.yml"
-```bash
-    redis.max_command_size: 1M # 表示程序中的RESP命令解析器缓冲区最大大小
-    redis.max_batch_size: 256K # 服务器批量响应大小阈值
-    redis.max_exec_batch_size: 256 # 服务器批量执行的命令条数(即客户端单次输入的命令最大个数)
-    redis.timeout: 60s # 服务器与客户端之间最长接收的待机时长
-    redis.maxClients: 10000 # 服务器最大接收的客户端连接
-    redis.admin.password: admin # 服务器管理员密码(可以单独放到一个文件通过设置权限来保证安全，也可以选择不设置直接使用ctrl + c来关闭服务器)
-    redis.aof.aof_enabled: false # 服务器是否开启AOF写命令追加保存
-    redis.aof.aof_filename: "appendonly.aof" # 服务器AOF文件名
-    redis.aof.aof_max_buffer_size: 10M # 服务器AOF写入文件的最大缓冲区大小
-    redis.aof.aof_max_file_size: 10M # AOF持久化文件的最大大小
-    redis.aof.aof_max_file_number: 10 # AOF持久化文件轮转文件数量(文件最多保存多少)
-    redis.slowlog.slow_log_slower_than: 10ms # 规定执行时长大于10ms的记录为慢日志
-    redis.slowlog.slow_log_max_len: 256 # 慢日志缓存数组最大长度
-```
-
 ## 编译器
 ```bash
 sudo apt install g++-13 gcc-13
@@ -365,46 +329,8 @@ iom.schedule(do_thing(x, y));
 
 **判断标准**:只要是"会挂起"的协程,就**不能用 lambda 捕获**。无捕获的 lambda 或普通函数才安全。
 
----
 
-### 2. 协程句柄所有权规则
-
-```bash
-我重新设计了架构，或者说改正了架构，让顶层Task的生命周期跟随Handle的生命周期
-我最开始用的是把Task设计为shared_ptr然后同promise_type绑定(在promise_type中保存为self),
-在通过schedule提交给调度器时，通过std::coroutine_handle<typename blue::Task<T>::promise_type>::from_address(h.address())
-来拿到带有promise类型的handle并将handle.promise().self = shared_ptr(Task<T>)
-以此来拉长Task的生命周期，并当final_suspend时（即协程结束了）调用self.reset()。
-期间顶层Task需要co_await SleepFor()时 需要通过拿到带有promise类型的handle并拿到 auto task = handle.promise().self
-之后通过提交给定时器一个lambda捕获task来提升生命周期。
-
-这是个屎山设计，在一部分测试中（可以看tests/test_taskbt.cpp中当child()没有co_await SleepFor(1)时）
-他会正常运行，但是当出现 a co_await b; b co_await SleepFor()时
-就会出现内存泄漏，原因我想是因为b是一个临时的Task，它并没有设置self，导致临时Task在定时器中没有被延长存储就被析构了
-之后导致顶层协程不会被恢复从而导致内存泄漏
-
-仔细想，目的就是要去延迟顶层Task的生命周期，我不希望Task被提交给调度器后在handle变为done之前就析构了
-至于临时的那些Task他们结束后handle被destroy就行，无需担心。（另外测试中有一些测试是当协程被创建但是没有被执行
-当Task析构时，handle也应该destroy）
-
-所以最终设计为Task只管理对称转移，Task的生命周期由调度器统一管理，由于最初的Task是一个模板，而调度器不是一个模板
-导致我一开始就pass了这个想法，但是被AI敲打后，发现这应该才是合理的解耦的设计。感叹模板编程的强大，赞美AI
-
-在我目前代码的协程架构上，协程之间会出现以下情况:
-1. 协程内部只进行业务逻辑，处理完就退出
-2. 协程内部的业务逻辑需要`等待单个子协程完成`
-3. 协程内部需要co_await sleepFor(1)来等待异步sleep
-4. 协程内部需要`等待多个子协程完成`
-5. 协程内部既需要`等待多个子协程又需要等待异步sleep`
-6. 协程相互等待 a co_await b; b co_await c; c co_await d;
-7. 协程相互等待，子协程又在等待异步sleep
-目前我知道的协程之间用法就这么多，那么对应的测试文件为 tests/test_taskbt.cpp
-详细细节请看测试文件。此外其他带有协程的测试文件有tests/test_task.cpp、test_iomanager.cpp、test_defer.cpp
-test_defer.cpp是模拟go语言的defer的一个简单的defer
-```
----
-
-### 3. `Task` 是懒启动的
+### 2. `Task` 是懒启动的
 
 因为 `initial_suspend` 返回 `suspend_always`,创建后协程体**不会自动执行**:
 
@@ -439,7 +365,7 @@ int main()
 }
 ```
 
-### 4.协程的完成只能通知外部去清理，但是不能自己清理，所以在final_suspend里面不能调用任何可能删除当前协程帧的操作或回调
+### 3.协程的完成只能通知外部去清理，但是不能自己清理，所以在final_suspend里面不能调用任何可能删除当前协程帧的操作或回调
 ```cpp
 // 函数内部不能调用或使用可能导致当前即将进行对称转移的协程帧被销毁的操作
 // 这个外部回调会包含清理即将使用的协程帧的操作，跟上面的self.reset()本质
