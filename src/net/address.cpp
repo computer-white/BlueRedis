@@ -239,13 +239,19 @@ namespace blue
 				BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), host parse failed: " << host;
 				return false;
 			}
+
+			// BLUE_LOG_DEBUGE(g_logger) << "getaddrinfo called with bulk = " << bulk << ", service = " << service;
+			if (bulk.size() >= 2 && bulk.front() == '[' && bulk.back() == ']')
+			{
+				bulk = bulk.substr(1, bulk.size() - 2);
+			}
 			int error = getaddrinfo(bulk.c_str(), service.c_str(), &hints, &res);
 			if (error)
 			{
 				BLUE_LOG_ERROR(g_logger) << "bool Address::Lookup(), [host : " << host
-										<< " family : " << family << " type : " << type
-										<< " protocol : " << protocol << "],error : "
-										<< error << " gai_strerror : " << gai_strerror(error);
+										 << " family : " << family << " type : " << type
+										 << " protocol : " << protocol << "],error : "
+										 << error << " gai_strerror : " << gai_strerror(error);
 				return false;
 			}
 			next = res;
@@ -598,6 +604,10 @@ namespace blue
 
 	std::shared_ptr<IPAddress> IPv4Address::subnetMask(uint32_t prefix_len)
 	{
+		if (prefix_len >= 32)
+		{
+			return nullptr;
+		}
 		sockaddr_in subnet;
 		memset(&subnet, 0, sizeof(subnet));
 		subnet.sin_family = AF_INET;
@@ -747,7 +757,7 @@ namespace blue
 		}
 		if (bit_offset > 0)
 		{
-			subnet.sin6_addr.s6_addr[bit_pos] = ~CreateMask<uint32_t>(bit_offset);
+			subnet.sin6_addr.s6_addr[bit_pos] = ~CreateMask<uint8_t>(bit_offset);
 		}
 		return std::make_shared<IPv6Address>(subnet);
 	}
@@ -788,7 +798,7 @@ namespace blue
 		{
 			throw std::logic_error("path too long");
 		}
-		memcpy(m_addr.sun_path, path.c_str(), m_length);
+		memcpy(m_addr.sun_path, path.data(), path.size());
 		m_length += offsetof(sockaddr_un, sun_path);
 	}
 
