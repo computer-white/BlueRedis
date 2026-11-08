@@ -71,6 +71,7 @@ endmacro()
 
 
 # 单元测试
+add_gtest(test_address)
 add_gtest(test_url)
 add_gtest(test_task)
 add_gtest(test_iomanager)
