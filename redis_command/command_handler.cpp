@@ -247,6 +247,8 @@ namespace blue
     {
         // 收集连接上来的客户端sock
         m_clients.push_back(sock);
+        sock->setContext(std::make_shared<blue::ClientContext>());
+        
         BLUE_LOG_INFO(g_logger) << "Batch_commands Mode";
         BLUE_LOG_INFO(g_logger) << "Redis Server begin, fd=" << sock->getSocketfd();
         // BLUE_LOG_INFO(g_logger) << "remote address: " <<  sock->getRemoteAddress()->toString();
@@ -387,12 +389,12 @@ namespace blue
 
                 auto start = SteadyClock::now();
                 std::chrono::_V2::steady_clock::time_point end;
-                if (sock->inTransaction()) // 事务模式
+                if (sock->getContext()->inTransaction()) // 事务模式
                 {
                     is_special = true;
                     response = handleTransactionCommand(cmd, copy_arr, sock, start);
                 }
-                else if (sock->inSubScription()) // 订阅模式
+                else if (sock->getContext()->inSubScription()) // 订阅模式
                 {
                     is_special = true;
                     response = handleSubscriptionCommand(cmd, copy_arr, sock, start);
@@ -494,7 +496,7 @@ namespace blue
         // 关闭前清理订阅
         m_server->getSubscription().removeAllSubscribers(sock);
 
-        sock->clearSubScription();
+        sock->getContext()->clearSubScription();
         // BLUE_LOG_INFO(g_logger) << "one Client exit, fd:" << sock->getSocketfd();
         sock->close();
 
@@ -513,7 +515,7 @@ namespace blue
     {
         if (cmd == "EXEC") // EXEC
         {
-            if (sock->getClientlevel() < 1)
+            if (sock->getContext()->getClientlevel() < 1)
             {
                 return RespValue::error("ERR authentication required");
             }
@@ -523,31 +525,31 @@ namespace blue
             }
             else
             {
-                sock->setVersionChecker([this, sock](const std::string &key) -> uint64_t
+                sock->getContext()->setVersionChecker([this, sock](const std::string &key) -> uint64_t
                                         { return m_server->getKeyVersion(key, sock); });
-                if (sock->hasKeyModified())
+                if (sock->getContext()->hasKeyModified())
                 {
-                    sock->clearTransaction();
-                    sock->clearWatchedKey();
+                    sock->getContext()->clearTransaction();
+                    sock->getContext()->clearWatchedKey();
                     return RespValue::null_bulk();
                 }
                 else
                 {
                     std::vector<RespValue> results;
-                    for (const auto &transaction : sock->getTransaction())
+                    for (const auto &transaction : sock->getContext()->getTransaction())
                     {
                         auto response = m_table.executeTable(transaction, sock, m_server, true);
                         results.push_back(response);
                     }
-                    sock->clearTransaction();
-                    sock->clearWatchedKey();
+                    sock->getContext()->clearTransaction();
+                    sock->getContext()->clearWatchedKey();
                     return RespValue::array(std::move(results));
                 }
             }
         }
         else if (cmd == "DISCARD") // DISCARD 清除所有事务,会退出事务模式
         {
-            if (sock->getClientlevel() < 1)
+            if (sock->getContext()->getClientlevel() < 1)
             {
                 return RespValue::error("ERR authentication required");
             }
@@ -557,13 +559,13 @@ namespace blue
             }
             else
             {
-                sock->clearTransaction();
+                sock->getContext()->clearTransaction();
                 return RespValue::simple_string("OK");
             }
         }
         else
         {
-            sock->addTransaction(std::move(args)); // move后args为空
+            sock->getContext()->addTransaction(std::move(args)); // move后args为空
             return RespValue::simple_string("QUEUED");
         }
     }
@@ -576,13 +578,13 @@ namespace blue
         if (cmd == "UNSUBSCRIBE") // UNSUBSCRIBE [channel...], 并退出订阅模式
         {
             std::vector<std::string> channels;
-            if (sock->getClientlevel() < 1)
+            if (sock->getContext()->getClientlevel() < 1)
             {
                 return RespValue::error("ERR authentication required");
             }
             else if (args.size() == 1) // 取消所有订阅
             {
-                channels.assign(sock->getSubScriptionChannels().begin(), sock->getSubScriptionChannels().end());
+                channels.assign(sock->getContext()->getSubScriptionChannels().begin(), sock->getContext()->getSubScriptionChannels().end());
             }
             else
             {
@@ -600,24 +602,24 @@ namespace blue
                 m_server->getSubscription().removeSubscriber(channel, sock);
 
                 // 从连接订阅列表移除
-                sock->removeSubScriptionChannel(channel);
+                sock->getContext()->removeSubScriptionChannel(channel);
 
                 // 返回取消订阅消息
                 std::vector<RespValue> msg;
                 msg.push_back(*RespValue::bulk_string("unsubscribe"));
                 msg.push_back(*RespValue::bulk_string(channel));
-                msg.push_back(*RespValue::integer(sock->getSubScriptionChannels().size()));
+                msg.push_back(*RespValue::integer(sock->getContext()->getSubScriptionChannels().size()));
                 results.push_back(*RespValue::array(std::move(msg)));
             }
-            if (sock->getSubScriptionChannels().size() == 0)
+            if (sock->getContext()->getSubScriptionChannels().size() == 0)
             {
-                sock->endSubScription();
+                sock->getContext()->endSubScription();
             }
             return RespValue::array(std::move(results));
         }
         else if (cmd == "PING") // PING [message]
         {
-            if (sock->getClientlevel() < 1)
+            if (sock->getContext()->getClientlevel() < 1)
             {
                 return RespValue::error("ERR authentication required");
             }
@@ -628,9 +630,13 @@ namespace blue
             else
             {
                 if (args.size() == 1)
+                {
                     return RespValue::simple_string("PONG");
+                }
                 else
+                {
                     return RespValue::bulk_string(args[1].str);
+                }
             }
         }
         else
@@ -646,7 +652,7 @@ namespace blue
     {
         if (cmd == "MULTI") // MULTI, 进入事务模式
         {
-            if (sock->getClientlevel() < 1)
+            if (sock->getContext()->getClientlevel() < 1)
             {
                 return RespValue::error("ERR authentication required");
             }
@@ -654,7 +660,7 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'MULTI'");
             }
-            else if (!sock->beginTransaction())
+            else if (!sock->getContext()->beginTransaction())
             {
                 return RespValue::error("ERR already in SubScription");
             }
@@ -665,7 +671,7 @@ namespace blue
         }
         else if (cmd == "SUBSCRIBE") // SUBSCRIBE channel [channel...] 订阅channel 进入订阅模式
         {
-            if (sock->getClientlevel() < 1)
+            if (sock->getContext()->getClientlevel() < 1)
             {
                 return RespValue::error("ERR authentication required");
             }
@@ -673,7 +679,7 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'SUBSCRIBE'");
             }
-            else if (!sock->beginSubScription())
+            else if (!sock->getContext()->beginSubScription())
             {
                 return RespValue::error("ERR already in Transaction");
             }
@@ -685,7 +691,7 @@ namespace blue
                 {
                     const std::string channel = args[i].str;
                     // 添加到连接的订阅列表
-                    sock->addSubScriptionChannel(channel);
+                    sock->getContext()->addSubScriptionChannel(channel);
 
                     // 添加到全局订阅列表
                     m_server->getSubscription().addSubscriber(channel, sock);
@@ -709,7 +715,7 @@ namespace blue
                                                        MSocket::MSocketPtr sock,
                                                        const TimePoint &start)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -768,12 +774,12 @@ namespace blue
 
             auto start = SteadyClock::now();
             std::chrono::_V2::steady_clock::time_point end;
-            if (sock->inTransaction()) // 事务模式
+            if (sock->getContext()->inTransaction()) // 事务模式
             {
                 is_special = true;
                 response = *handleTransactionCommand(cmd, copy_arr, sock, start);
             }
-            else if (sock->inSubScription()) // 订阅模式
+            else if (sock->getContext()->inSubScription()) // 订阅模式
             {
                 is_special = true;
                 response = *handleSubscriptionCommand(cmd, copy_arr, sock, start);

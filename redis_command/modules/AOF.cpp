@@ -111,8 +111,8 @@ namespace blue
 
         // 创建临时的socket对象(没有真正调用系统API创建socket fd)来载入
         auto temp_sock = MSocket::CreateTcpSocket();
-        temp_sock->setClientlevel(1); // 跳过认证检查
-        temp_sock->setClientId(0);    // 默认数据库 0
+        temp_sock->getContext()->setClientlevel(1); // 跳过认证检查
+        temp_sock->getContext()->setClientId(0);    // 默认数据库 0
 
         int total_cmds = 0;
         int errors = 0;

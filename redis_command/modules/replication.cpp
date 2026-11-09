@@ -371,8 +371,8 @@ namespace blue
 
         // 创建临时的socket对象(没有真正调用系统API创建socket fd)来实现复制
         auto temp_sock = MSocket::CreateTcpSocket();
-        temp_sock->setClientlevel(1); // 跳过认证检查
-        temp_sock->setClientId(0);    // 默认数据库 0
+        temp_sock->getContext()->setClientlevel(1); // 跳过认证检查
+        temp_sock->getContext()->setClientId(0);    // 默认数据库 0
 
         while (!m_repl_queue_stop.load(std::memory_order_acquire) && !m_server_stop.load(std::memory_order_acquire))
         {
@@ -489,8 +489,8 @@ namespace blue
     {
         // 创建临时 socket 用于加载（不需要认证）
         auto temp_sock = MSocket::CreateTcpSocket();
-        temp_sock->setClientlevel(1);
-        temp_sock->setClientId(0);
+        temp_sock->getContext()->setClientlevel(1);
+        temp_sock->getContext()->setClientId(0);
 
         int count = 0;
         RespStreamParser parser(s_max_command_size.load(std::memory_order_acquire));

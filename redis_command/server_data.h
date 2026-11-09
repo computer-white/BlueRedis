@@ -276,12 +276,12 @@ namespace blue
          */
         DataShard &getShard(const std::string &key, MSocket::MSocketPtr sock)
         {
-            return m_dbs[sock->getClientId()][getShardIndex(key)];
+            return m_dbs[sock->getContext()->getClientId()][getShardIndex(key)];
         }
 
         const DataShard &getShard(const std::string &key, MSocket::MSocketPtr sock) const
         {
-            return m_dbs[sock->getClientId()][getShardIndex(key)];
+            return m_dbs[sock->getContext()->getClientId()][getShardIndex(key)];
         }
 
         bool isReadOnlyCommand(const std::string &cmd) const

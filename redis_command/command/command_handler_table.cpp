@@ -114,14 +114,18 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
         if (args.size() == 1)
+        {
             return RespValue::simple_string("PONG");
+        }
         else
+        {
             return RespValue::bulk_string(args[1].str);
+        }
     }
 
     AutoRespValue CommandHandlerTable::handleAUTH(std::vector<RespValue> &args,
@@ -129,13 +133,13 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (args[1].str == sock->getClientPassword())
+        if (args[1].str == sock->getContext()->getClientPassword())
         {
-            if (sock->getClientlevel() != 0)
+            if (sock->getContext()->getClientlevel() != 0)
             {
                 return RespValue::error("ERR this connection already have been logged by others");
             }
-            sock->setClientlevel(1);
+            sock->getContext()->setClientlevel(1);
             return RespValue::simple_string("OK");
         }
         if (args[1].str == RedisServerConfig::g_admin_password->getValue())
@@ -144,12 +148,12 @@ namespace blue
             {
                 return RespValue::error("ERR admin already logged in elsewhere");
             }
-            if (sock->getClientlevel() == 1)
+            if (sock->getContext()->getClientlevel() == 1)
             {
                 return RespValue::error("ERR this connection already have been logged by client");
             }
             self->setAdminSocket(sock);
-            sock->setClientlevel(2);
+            sock->getContext()->setClientlevel(2);
             return RespValue::simple_string("OK");
         }
         return RespValue::error("ERR invalid password");
@@ -160,7 +164,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -177,7 +181,7 @@ namespace blue
         {
             return RespValue::error("ERR invalid DB index");
         }
-        sock->setClientId(db);
+        sock->getContext()->setClientId(db);
         return RespValue::simple_string("OK");
     }
 
@@ -186,7 +190,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -198,7 +202,7 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'CLIENT SETNAME'");
             }
-            sock->setClientName(args[2].str);
+            sock->getContext()->setClientName(args[2].str);
             return RespValue::simple_string("OK");
         }
         else if (subcmd == "GETNAME")
@@ -207,11 +211,11 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'CLIENT GETNAME'");
             }
-            if (sock->getClientName().empty())
+            if (sock->getContext()->getClientName().empty())
             {
                 return RespValue::null_bulk();
             }
-            return RespValue::bulk_string(sock->getClientName());
+            return RespValue::bulk_string(sock->getContext()->getClientName());
         }
         else if (subcmd == "LIST")
         {
@@ -220,11 +224,11 @@ namespace blue
                 return RespValue::error("ERR wrong number of arguments for 'CLIENT LIST'");
             }
             std::string result;
-            result += "name=" + sock->getClientName() + " ";
+            result += "name=" + sock->getContext()->getClientName() + " ";
             result += "addr=" + sock->getRemoteAddress()->toString() + " ";
-            result += "subScription=" + std::to_string((int)(sock->inSubScription())) + " ";
-            result += "transaction=" + std::to_string((int)(sock->inTransaction())) + " ";
-            result += "monitor=" + std::to_string((int)(sock->inMonitorMode())) + "\r\n";
+            result += "subScription=" + std::to_string((int)(sock->getContext()->inSubScription())) + " ";
+            result += "transaction=" + std::to_string((int)(sock->getContext()->inTransaction())) + " ";
+            result += "monitor=" + std::to_string((int)(sock->getContext()->inMonitorMode())) + "\r\n";
             return RespValue::bulk_string(result);
         }
         else if (subcmd == "SETINFO")
@@ -258,7 +262,7 @@ namespace blue
             if (pattern == "*" || pattern == "clientpass")
             {
                 result.push_back(*RespValue::bulk_string("clientpass"));
-                result.push_back(*RespValue::bulk_string(sock->getClientPassword()));
+                result.push_back(*RespValue::bulk_string(sock->getContext()->getClientPassword()));
             }
             if (pattern == "*" || pattern == "maxclients")
             {
@@ -336,7 +340,7 @@ namespace blue
 
             if (param == "clientpass") // 客户端密码
             {
-                sock->setClientPassword(value);
+                sock->getContext()->setClientPassword(value);
                 return RespValue::simple_string("OK");
             }
             if (param == "slowlog-log-slower-than") // 慢查询的限制时长(超过这个时长记录慢查询)
@@ -495,7 +499,7 @@ namespace blue
                                                  bool aof,
                                                  std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -556,7 +560,7 @@ namespace blue
                                                  bool aof,
                                                  std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -589,7 +593,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -609,7 +613,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -648,7 +652,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -672,7 +676,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -698,7 +702,7 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -720,7 +724,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -747,7 +751,7 @@ namespace blue
                                                  bool aof,
                                                  std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -776,7 +780,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -811,7 +815,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -855,7 +859,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -902,7 +906,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -937,7 +941,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -974,7 +978,7 @@ namespace blue
         result.reserve(MAX_KEYS);
 
         // 遍历所有分片
-        for (auto &shard : self->getDBs()[sock->getClientId()])
+        for (auto &shard : self->getDBs()[sock->getContext()->getClientId()])
         {
             if (result.size() >= MAX_KEYS)
             {
@@ -1032,7 +1036,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1043,9 +1047,9 @@ namespace blue
 
         // 解析游标
         ScanCursor cursor;
-        if (sock->hasScanCursor())
+        if (sock->getContext()->hasScanCursor())
         {
-            cursor = sock->getScanCursor();
+            cursor = sock->getContext()->getScanCursor();
             // 如果游标已完成，检查客户端是否传入了新游标
             if (cursor.completed)
             {
@@ -1102,7 +1106,7 @@ namespace blue
         }
 
         // 获取当前数据库编号
-        int dbIndex = sock->getClientId() % DB_COUNT;
+        int dbIndex = sock->getContext()->getClientId() % DB_COUNT;
         cursor.db = dbIndex;
 
         // 执行扫描
@@ -1112,11 +1116,11 @@ namespace blue
         // 保存游标状态
         if (!completed)
         {
-            sock->setScanCursor(cursor);
+            sock->getContext()->setScanCursor(cursor);
         }
         else
         {
-            sock->clearScanCursor();
+            sock->getContext()->clearScanCursor();
         }
 
         // 构造响应
@@ -1148,7 +1152,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1191,7 +1195,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1222,7 +1226,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1248,7 +1252,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1278,7 +1282,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1317,7 +1321,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1362,7 +1366,7 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1407,7 +1411,7 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1453,7 +1457,7 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1489,7 +1493,7 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1521,7 +1525,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1573,7 +1577,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1621,7 +1625,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1641,7 +1645,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1684,7 +1688,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1732,7 +1736,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1782,7 +1786,7 @@ namespace blue
                                                        bool aof,
                                                        std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1800,7 +1804,7 @@ namespace blue
         {
             std::swap(first, second);
         }
-        auto &m_shards = self->getDBs()[sock->getClientId()];
+        auto &m_shards = self->getDBs()[sock->getContext()->getClientId()];
 
         std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
@@ -1837,7 +1841,7 @@ namespace blue
                                                        bool aof,
                                                        std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1855,7 +1859,7 @@ namespace blue
         {
             std::swap(first, second);
         }
-        auto &m_shards = self->getDBs()[sock->getClientId()];
+        auto &m_shards = self->getDBs()[sock->getContext()->getClientId()];
 
         std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
@@ -1892,7 +1896,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1952,7 +1956,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -1981,7 +1985,7 @@ namespace blue
                                                       bool aof,
                                                       std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2006,7 +2010,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2035,7 +2039,7 @@ namespace blue
                                                        bool aof,
                                                        std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2056,7 +2060,7 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2076,7 +2080,7 @@ namespace blue
                                                          bool aof,
                                                          std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2141,7 +2145,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2218,7 +2222,7 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2264,7 +2268,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2310,7 +2314,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2357,7 +2361,7 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2377,7 +2381,7 @@ namespace blue
         {
             std::swap(first, second);
         }
-        auto &m_shards = self->getDBs()[sock->getClientId()];
+        auto &m_shards = self->getDBs()[sock->getContext()->getClientId()];
 
         std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
@@ -2423,7 +2427,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2477,7 +2481,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2544,7 +2548,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2589,7 +2593,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2615,7 +2619,7 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2646,7 +2650,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2691,7 +2695,7 @@ namespace blue
                                                           bool aof,
                                                           std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2736,7 +2740,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2778,7 +2782,7 @@ namespace blue
                                                            bool aof,
                                                            std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2825,7 +2829,7 @@ namespace blue
                                                               bool aof,
                                                               std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2888,7 +2892,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2898,7 +2902,7 @@ namespace blue
             {
                 return RespValue::error("ERR wrong number of arguments for 'FLUSHDB'");
             }
-            for (auto &shards : self->getDBs()[sock->getClientId()])
+            for (auto &shards : self->getDBs()[sock->getContext()->getClientId()])
             {
                 std::unique_lock<std::shared_mutex> lock(shards.mutex);
                 shards.store.clear();
@@ -2910,7 +2914,7 @@ namespace blue
             }
             return RespValue::simple_string("OK");
         }
-        else if (sock->getClientlevel() == 1)
+        else if (sock->getContext()->getClientlevel() == 1)
         {
             if (args.size() != 2)
             {
@@ -2920,7 +2924,7 @@ namespace blue
             std::transform(confirm.begin(), confirm.end(), confirm.begin(), ::toupper);
             if (confirm == "CONFIRM")
             {
-                for (auto &shards : self->getDBs()[sock->getClientId()])
+                for (auto &shards : self->getDBs()[sock->getContext()->getClientId()])
                 {
                     std::unique_lock<std::shared_mutex> lock(shards.mutex);
                     shards.store.clear();
@@ -2942,7 +2946,7 @@ namespace blue
                                                         bool aof,
                                                         std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -2967,7 +2971,7 @@ namespace blue
             }
             return RespValue::simple_string("OK");
         }
-        else if (sock->getClientlevel() == 1)
+        else if (sock->getContext()->getClientlevel() == 1)
         {
             if (args.size() != 2)
             {
@@ -3002,12 +3006,12 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
         int64_t count = 0;
-        for (auto &shards : self->getDBs()[sock->getClientId()])
+        for (auto &shards : self->getDBs()[sock->getContext()->getClientId()])
         {
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             count += shards.store.size() + shards.lists.size() + shards.hash.size() + shards.zset.size();
@@ -3021,7 +3025,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3055,7 +3059,7 @@ namespace blue
                                                  bool aof,
                                                  std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3091,7 +3095,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3125,7 +3129,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3161,7 +3165,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3183,7 +3187,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3205,7 +3209,7 @@ namespace blue
         {
             std::swap(first, second);
         }
-        auto &m_shards = self->getDBs()[sock->getClientId()];
+        auto &m_shards = self->getDBs()[sock->getContext()->getClientId()];
         // 锁住zset
         std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
@@ -3351,7 +3355,7 @@ namespace blue
                                                       bool aof,
                                                       std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3373,7 +3377,7 @@ namespace blue
         {
             std::swap(first, second);
         }
-        auto &m_shards = self->getDBs()[sock->getClientId()];
+        auto &m_shards = self->getDBs()[sock->getContext()->getClientId()];
         // 锁住zset
         std::unique_lock<std::shared_mutex> lock1(m_shards[first].mutex);
         std::unique_lock<std::shared_mutex> lock2;
@@ -3524,12 +3528,12 @@ namespace blue
                                                        bool aof,
                                                        std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
         std::vector<std::string> all_keys;
-        for (auto &shards : self->getDBs()[sock->getClientId()])
+        for (auto &shards : self->getDBs()[sock->getContext()->getClientId()])
         {
             std::shared_lock<std::shared_mutex> lock(shards.mutex);
             // string
@@ -3574,7 +3578,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3646,7 +3650,7 @@ namespace blue
             // Memory
             info += "# Memory\r\n";
             size_t total_keys = 0;
-            for (auto &shard : self->getDBs()[sock->getClientId()])
+            for (auto &shard : self->getDBs()[sock->getContext()->getClientId()])
             {
                 std::shared_lock<std::shared_mutex> lock(shard.mutex);
                 total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
@@ -3732,7 +3736,7 @@ namespace blue
                 {
                     info += "# Memory\r\n";
                     size_t total_keys = 0;
-                    for (auto &shard : self->getDBs()[sock->getClientId()])
+                    for (auto &shard : self->getDBs()[sock->getContext()->getClientId()])
                     {
                         std::shared_lock<std::shared_mutex> lock(shard.mutex);
                         total_keys += shard.store.size() + shard.hash.size() + shard.lists.size() + shard.sets.size() + shard.zset.size();
@@ -3749,7 +3753,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3762,7 +3766,7 @@ namespace blue
                                                     bool aof,
                                                     std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3793,7 +3797,7 @@ namespace blue
                                                       bool aof,
                                                       std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3805,7 +3809,7 @@ namespace blue
                                                        bool aof,
                                                        std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3826,7 +3830,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3880,7 +3884,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3892,7 +3896,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3910,7 +3914,7 @@ namespace blue
                                                        bool aof,
                                                        std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -3955,16 +3959,16 @@ namespace blue
                                                    bool aof,
                                                    std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        sock->clearWatchedKey();
+        sock->getContext()->clearWatchedKey();
 
         for (size_t i = 1; i < args.size(); i++)
         {
             const std::string &key = args[i].str;
-            sock->addWatchKey(key, self->getKeyVersion(key, sock));
+            sock->getContext()->addWatchKey(key, self->getKeyVersion(key, sock));
         }
         return RespValue::simple_string("OK");
     }
@@ -3974,11 +3978,11 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
-        sock->clearWatchedKey();
+        sock->getContext()->clearWatchedKey();
         return RespValue::simple_string("OK");
     }
 
@@ -3988,7 +3992,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -4042,7 +4046,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -4050,7 +4054,7 @@ namespace blue
         // 添加monitor client
         self->getMonitor().addMonitorClient(sock);
 
-        sock->setMonitorMode(true);
+        sock->getContext()->setMonitorMode(true);
 
         return RespValue::simple_string("OK");
     }
@@ -4061,7 +4065,7 @@ namespace blue
                                                        bool aof,
                                                        std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -4092,7 +4096,7 @@ namespace blue
                                                        bool aof,
                                                        std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -4160,7 +4164,7 @@ namespace blue
                                                      bool aof,
                                                      std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
@@ -4263,7 +4267,7 @@ namespace blue
                                                   bool aof,
                                                   std::shared_ptr<ServerData> self)
     {
-        if (sock->getClientlevel() < 1)
+        if (sock->getContext()->getClientlevel() < 1)
         {
             return RespValue::error("ERR authentication required");
         }
