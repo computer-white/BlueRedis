@@ -114,7 +114,7 @@ namespace blue
          * @param rt 更安全的协程句柄包装
          * @param cd 回调函数
          * @param thread_id 指定线程id执行
-         * @note
+         * @note thread_id -1 表示优先提交到当前线程队列
          */
         int addEvent(int fd, Event event,
                      std::shared_ptr<blue::ResumeTicket> rt,
@@ -128,6 +128,7 @@ namespace blue
          * @param h 协程句柄
          * @param cd 回调函数
          * @param thread_id 指定线程id执行
+         * @note thread_id -1 表示优先提交到当前线程队列
          * @warning 若直接使用提交裸句柄，需要调用方保证：
          * 1. 该句柄仅被 IOManager 持有，而不同时被调度器或定时器持有
          * 若无法保证，请使用 ResumeTicket
@@ -144,6 +145,7 @@ namespace blue
 
         /**
          * @brief 供测试使用
+         * @note thread_id -1 表示优先提交到当前线程队列
          */
         int addEvent(int fd, Event event, std::function<void()> cb = nullptr, int thread_id = -1);
 
