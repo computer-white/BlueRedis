@@ -113,6 +113,12 @@ blue::Task<void> main_task()
     co_return;
 }
 
+int package_task(int x)
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    return x * x;
+}
+
 int main()
 {
     blue::IOManager iom(2);
@@ -121,6 +127,10 @@ int main()
     iom.schedule(child3());
     iom.schedule(father());
     iom.schedule(main_task());
+    std::packaged_task<int(int)> pt(package_task);
+    auto f = iom.schedulePackageTask(std::move(pt), 1);
+    auto v = f.get();
+    std::cout << v << "\n";
 
     iom.wait_all();
 }// touch Thu Sep 17 18:50:15 CST 2026

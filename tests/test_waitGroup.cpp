@@ -30,11 +30,11 @@ TEST(WaitGroupTest, WaitAllComplete)
         iom.schedule(delayed_increment(counter, wg, 10 + i));
     }
 
-    iom.schedule([wg, counter, N]() -> blue::Task<void> {
+    iom.schedule([](std::shared_ptr<blue::WaitGroup> wg, std::shared_ptr<std::atomic<int>> counter, int N) -> blue::Task<void> {
         co_await wg->Wait();
         EXPECT_EQ(counter->load(), N);
         co_return;
-    }());
+    }(wg, counter, N));
 
     iom.wait_all();
 }
@@ -46,10 +46,10 @@ TEST(WaitGroupTest, WaitImmediate)
     wg->Add(1);
     wg->Done();   // 计数归零
 
-    iom.schedule([wg]() -> blue::Task<void> {
+    iom.schedule([](std::shared_ptr<blue::WaitGroup> wg) -> blue::Task<void> {
         co_await wg->Wait();   // 立即完成
         co_return;
-    }());
+    }(wg));
 
     iom.wait_all();
 }
@@ -63,11 +63,11 @@ TEST(WaitGroupTest, WaitWithAddDuringWait)
     wg->Add(1);
     iom.schedule(delayed_increment(counter, wg, 50));
 
-    iom.schedule([wg, &iom, counter]() -> blue::Task<void> {
+    iom.schedule([](std::shared_ptr<blue::WaitGroup> wg, std::shared_ptr<std::atomic<int>> counter) -> blue::Task<void> {
         co_await wg->Wait();
         EXPECT_EQ(counter->load(), 1);
         co_return;
-    }());
+    }(wg, counter));
 
     iom.wait_all();
 }
