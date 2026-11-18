@@ -1,16 +1,22 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.20)
 # ============ 编译器 ============
 if(NOT DEFINED CMAKE_CXX_COMPILER)
-    set(CMAKE_CXX_COMPILER "g++-13")
-    set(CMAKE_C_COMPILER   "gcc-13")
-else()
-    set(CMAKE_CXX_COMPILER "g++-12")
-    set(CMAKE_C_COMPILER   "gcc-12")
+    find_program(GXX14 g++-14)
+    find_program(GXX13 g++-13)
+    if(GXX14)
+        set(CMAKE_CXX_COMPILER "g++-14")
+        set(CMAKE_C_COMPILER   "gcc-14")
+    elseif(GXX13)
+        set(CMAKE_CXX_COMPILER "g++-13")
+        set(CMAKE_C_COMPILER   "gcc-13")
+    else()
+        message(FATAL_ERROR "Need g++-13 or newer for C++23 features")
+    endif()
 endif()
-project(blue)
+project(blue LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -22,10 +28,6 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang
     add_compile_options(-fmacro-prefix-map=${CMAKE_SOURCE_DIR}=.)
     add_compile_options(-fdebug-prefix-map=${CMAKE_SOURCE_DIR}=.)
     message(STATUS "启用相对路径支持,源码根目录: ${CMAKE_SOURCE_DIR}")
-endif()
-
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fcoroutines>)
 endif()
 
 # 编译时使用cmake .. -DENABLE_ASAN=ON
@@ -61,6 +63,8 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
+
+set(CMAKE_TOOLCHAIN_FILE, "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
 
 # ============ 外部依赖 ============
 find_library(YAML_CPP     yaml-cpp PATHS /usr/lib/x86_64-linux-gnu)
@@ -120,12 +124,14 @@ if(GUMBO_FOUND)
     include_directories(${GUMBO_INCLUDE_DIRS})
 endif()
 
-# ============ llhttp 源码 ============
-set(LLHTTP_SRC
-    ${PROJECT_SOURCE_DIR}/thirdparty/llhttp-release-v9.2.0/src/llhttp.c
-    ${PROJECT_SOURCE_DIR}/thirdparty/llhttp-release-v9.2.0/src/api.c
-    ${PROJECT_SOURCE_DIR}/thirdparty/llhttp-release-v9.2.0/src/http.c
+# ============ llhttp 独立静态库 ============
+set(LLHTTP_ROOT ${PROJECT_SOURCE_DIR}/thirdparty/llhttp-release-v9.2.0)
+add_library(llhttp STATIC
+    ${LLHTTP_ROOT}/src/llhttp.c
+    ${LLHTTP_ROOT}/src/api.c
+    ${LLHTTP_ROOT}/src/http.c
 )
+target_include_directories(llhttp PUBLIC ${LLHTTP_ROOT}/include)
 
 # ============ 库源文件 ============
 set(LIB_SRC
@@ -168,11 +174,11 @@ set(LIB_SRC
     src/http/httpservlet.cpp
     src/http/httpsession.cpp
     proxy/url_rewriter.cpp
-    ${LLHTTP_SRC}
+    # ${LLHTTP_SRC}
 )
 
 # 生成 urlparser.cpp 必须在编译 blue 之前
-set_source_files_properties(blue/urlparser.cpp PROPERTIES
+set_source_files_properties(src/util/urlparser.cpp PROPERTIES
     GENERATED TRUE)
 
 # 让 urlparser.cpp 依赖 custom command
@@ -205,6 +211,7 @@ target_include_directories(blue_static PUBLIC
 
 # 公共依赖(用 PUBLIC,这样下游测试不用重复写)
 set(BLUE_PUBLIC_LIBS
+    llhttp
     ${YAML_CPP}
     ${PTHREAD_LIB}
     ${HIREDIS_LIB}
