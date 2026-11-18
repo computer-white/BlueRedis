@@ -116,12 +116,15 @@ namespace blue
         virtual void wait_all();
 
         /**
-         * @brief 提交一个 package_task<T>
-         * @param R 返回值类型
+         * @brief 提交一个 package_task
+         * @param p package_task
          */
-        template <typename R, typename... Args>
-        std::future<R> schedulePackageTask(std::packaged_task<R(Args...)> p, Args &&...args)
+        template <typename F, typename... Args>
+        auto schedulePackageTask(F &&func, Args &&...args)
+            -> std::future<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>>
         {
+            using R = std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>;
+
             if (m_stopping.load(std::memory_order_acquire))
             {
                 std::promise<R> prom;
@@ -130,13 +133,20 @@ namespace blue
                 return prom.get_future();
             }
 
-            auto sp = std::make_shared<std::packaged_task<R(Args...)>>(std::move(p));
+            // 把函数和参数打包成无参的 packaged_task
+            auto bound_task = [func = std::forward<F>(func),
+                               tup = std::make_tuple(std::forward<Args>(args)...)]() mutable -> R
+            {
+                return std::apply(std::move(func), std::move(tup));
+            };
+
+            // 封装 packaged_task，用 shared_ptr 延长生命周期
+            auto sp = std::make_shared<std::packaged_task<R()>>(std::move(bound_task));
             std::future<R> f = sp->get_future();
 
-            // 关键：按值捕获参数，用 decay 去掉引用，避免悬垂
-            auto wrapper = [sp, tup = std::make_tuple(std::forward<Args>(args)...)]() mutable
+            auto wrapper = [sp]() mutable
             {
-                std::apply(*sp, std::move(tup));
+                (*sp)();
             };
 
             scheduleCallBack(std::move(wrapper), -1);
@@ -144,8 +154,47 @@ namespace blue
         }
 
         /**
+         * @brief 提交一个 package_task 到指定线程
+         * @param f 函数指针
+         * @param thr 指定线程
+         * @note thr -1 表示优先提交到当前线程队列，同时会被其他线程窃取。也就是 thr不为-1，就不会被窃取
+         */
+        template <typename F, typename... Args>
+        auto schedulePackageTaskToThread(F &&func, int thr, Args &&...args)
+            -> std::future<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>>
+        {
+            using R = std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>;
+
+            if (m_stopping.load(std::memory_order_acquire))
+            {
+                std::promise<R> prom;
+                prom.set_exception(std::make_exception_ptr(
+                    std::runtime_error("scheduler is stopping")));
+                return prom.get_future();
+            }
+
+            // 把函数和参数打包成无参的 packaged_task
+            auto bound_task = [func = std::forward<F>(func),
+                               tup = std::make_tuple(std::forward<Args>(args)...)]() mutable -> R
+            {
+                return std::apply(std::move(func), std::move(tup));
+            };
+
+            // 封装 packaged_task，用 shared_ptr 延长生命周期
+            auto sp = std::make_shared<std::packaged_task<R()>>(std::move(bound_task));
+            std::future<R> f = sp->get_future();
+
+            auto wrapper = [sp]() mutable
+            {
+                (*sp)();
+            };
+
+            scheduleCallBack(std::move(wrapper), thr);
+            return f;
+        }
+
+        /**
          * @brief 提交一组协程任务
-         * @param thr 指定工作线程
          */
         template <typename... Args>
         void scheduleMul(Args &&...args)
@@ -159,9 +208,26 @@ namespace blue
         }
 
         /**
+         * @brief 提交一组协程任务到指定线程
+         * @param thr 指定线程
+         * @note thr -1 表示优先提交到当前线程队列，同时会被其他线程窃取。也就是 thr不为-1，就不会被窃取
+         */
+        template <typename... Args>
+        void scheduleMulToThr(int thr, Args &&...args)
+        {
+            if (m_stopping.load(std::memory_order_acquire))
+            {
+                return;
+            }
+
+            (schedule(std::forward<Args>(args), thr), ...);
+        }
+
+        /**
          * @brief 提交协程任务
          * @param task 一个返回Task<T>的函数,即协程
          * @param thr 指定工作线程
+         * @note thr -1 表示优先提交到当前线程队列，同时会被其他线程窃取。也就是 thr不为-1，就不会被窃取
          */
         template <typename T>
         void schedule(Task<T> task, int thr = -1)
@@ -213,6 +279,7 @@ namespace blue
          * @brief 提交函数任务
          * @param cb 包装好的任务
          * @param thr 指定工作线程
+         * @note thr -1 表示优先提交到当前线程队列，同时会被其他线程窃取。也就是 thr不为-1，就不会被窃取
          */
         void scheduleCallBack(std::function<void()> cb, int thr = -1);
 
@@ -220,6 +287,7 @@ namespace blue
          * @brief 提交协程句柄
          * @param h 协程句柄
          * @param thr 指定工作线程
+         * @note thr -1 表示优先提交到当前线程队列，同时会被其他线程窃取。也就是 thr不为-1，就不会被窃取
          * @warning 调用者必须保证：
          * 1. 该句柄只会被 resume 一次
          * 2. resume 执行时协程帧仍然存活（裸句柄无所有权，帧销毁后 resume 是 UAF）
@@ -238,6 +306,7 @@ namespace blue
          * @brief 任务窃取
          * @param task 引用传递,可以拿到窃取到的任务
          * @param max_attempts 最大尝试窃取次数
+         * @note 不会窃取绑定到指定线程的任务
          */
         bool stealTask(FuncAndId &task, int max_attempts = 3);
 
@@ -286,6 +355,7 @@ namespace blue
         /**
          * @brief 设置线程索引
          * @param index 线程索引
+         * @note 貌似没有用到
          */
         static void setThreadIndex(int index) { t_threadIndex = index; }
 

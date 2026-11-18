@@ -400,6 +400,15 @@ namespace blue
 
             if (lock.owns_lock() && !victim_queue->tasks.empty())
             {
+                // 核心改动：先看队尾任务是不是亲和任务
+                auto &candidate = victim_queue->tasks.back();
+                if (candidate.threadId != -1)
+                {
+                    // 亲和任务，禁止窃取，放弃这个受害者
+                    attempt++;
+                    continue;
+                }
+                // 普通任务可以窃取
                 task = std::move(victim_queue->tasks.back());
                 victim_queue->tasks.pop_back();
                 victim_queue->pending.fetch_sub(1, std::memory_order_acq_rel);
