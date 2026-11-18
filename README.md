@@ -332,8 +332,8 @@ t.get();                    // ← 拿结果 / 重抛异常
 ## 快速开始
 
 ```cpp
-#include "blue/io_manager.h"
-#include "blue/await.h"
+#include "src/core/io_manager.h"
+#include "src/core/await.h"
 
 blue::Task<void> hello()
 {
