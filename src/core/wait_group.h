@@ -59,7 +59,7 @@ namespace blue
                 {
                     if (auto *sched = Scheduler::GetThis())
                     {
-                        sched->schedule([ticket]
+                        sched->scheduleCallBack([ticket]
                                         { try_resume(ticket); });
                     }
                     else

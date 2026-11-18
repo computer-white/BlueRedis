@@ -287,11 +287,11 @@ namespace blue
             {
                 if (cb)
                 {
-                    scheduler->schedule(std::move(cb));
+                    scheduler->scheduleCallBack(std::move(cb));
                 }
                 if (handle)
                 {
-                    scheduler->schedule(handle);
+                    scheduler->scheduleHandle(handle);
                 }
             }
         }

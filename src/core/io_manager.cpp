@@ -106,15 +106,15 @@ namespace blue
         {
             if (cb)
             {
-                scheduler->schedule(std::move(cb), thread_id);
+                scheduler->scheduleCallBack(std::move(cb), thread_id);
             }
             else if (handle)
             {
-                scheduler->schedule(handle, thread_id);
+                scheduler->scheduleHandle(handle, thread_id);
             }
             else if (rt)
             {
-                scheduler->schedule([rt](){
+                scheduler->scheduleCallBack([rt](){
                     try_resume(rt);
                 }, thread_id);
             }
