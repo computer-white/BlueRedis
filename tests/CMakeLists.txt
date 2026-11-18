@@ -84,6 +84,7 @@ add_gtest(test_bytearrayBuffer)
 add_gtest(test_resp_parser)
 add_gtest(test_waitGroup)
 add_gtest(test_schedule_package_task)
+add_gtest(test_schedule_to_thread)
 
 # 服务
 add_blue_exe(helloblue)
