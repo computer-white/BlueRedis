@@ -192,7 +192,7 @@ namespace blue
             {
                 if constexpr (WithTimeOut)
                 {
-                    iom->schedule([resumeTicket = resumeTicket]()
+                    iom->scheduleCallBack([resumeTicket = resumeTicket]()
                                   { try_resume(resumeTicket); }); // 其他错误且是定时任务，直接调度
                 }
                 else
