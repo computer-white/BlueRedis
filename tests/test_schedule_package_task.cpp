@@ -23,8 +23,7 @@ TEST(SchedulePackageTaskTest, BasicResult)
 {
     blue::IOManager iom(1);
 
-    std::packaged_task<int(int, int)> pt(slow_add);
-    auto f = iom.schedulePackageTask(std::move(pt), 3, 4);
+    auto f = iom.schedulePackageTask(slow_add, 3, 4);
 
     EXPECT_EQ(f.get(), 7);
 
@@ -38,8 +37,7 @@ TEST(SchedulePackageTaskTest, SharedFutureMultipleWaiters)
 {
     blue::IOManager iom(2);
 
-    std::packaged_task<int(int, int)> pt(slow_add);
-    auto f = iom.schedulePackageTask(std::move(pt), 10, 32);
+    auto f = iom.schedulePackageTask(slow_add, 10, 32);
 
     // 提升为 shared_future：可被多个线程同时 get()
     auto sf = f.share();
@@ -85,13 +83,11 @@ TEST(SchedulePackageTaskTest, SharedFutureReadyAfterTaskCompletes)
     std::atomic<bool> task_started{false};
     std::atomic<bool> task_finished{false};
 
-    std::packaged_task<void()> pt([&]()
+    auto f = iom.schedulePackageTask([&]()
                                   {
         task_started.store(true, std::memory_order_release);
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
         task_finished.store(true, std::memory_order_release); });
-
-    auto f = iom.schedulePackageTask(std::move(pt));
     auto sf = f.share();
     EXPECT_FALSE(f.valid());
 
@@ -120,10 +116,8 @@ TEST(SchedulePackageTaskTest, SharedFuturePropagatesException)
 {
     blue::IOManager iom(2);
 
-    std::packaged_task<int()> pt([]() -> int
+    auto f = iom.schedulePackageTask([]() -> int
                                  { throw std::runtime_error("boom"); });
-
-    auto f = iom.schedulePackageTask(std::move(pt));
     auto sf = f.share();
     EXPECT_FALSE(f.valid());
 

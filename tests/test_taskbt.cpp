@@ -128,7 +128,7 @@ int main()
     iom.schedule(father());
     iom.schedule(main_task());
     std::packaged_task<int(int)> pt(package_task);
-    auto f = iom.schedulePackageTask(std::move(pt), 1);
+    auto f = iom.schedulePackageTask(package_task, 2);
     auto v = f.get();
     std::cout << v << "\n";
 
