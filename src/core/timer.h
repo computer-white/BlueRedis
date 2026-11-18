@@ -124,7 +124,7 @@ namespace blue
          * @param cb CallBack 函数
          * @param thr 指定线程
          * @param recurring 是否循环定时器
-         * @note thr -1 表示优先提交到当前线程队列
+         * @note thr -1 表示优先提交到当前线程队列，同时会被其他线程窃取。也就是 thr不为-1，就不会被窃取
          */
         Timer::TimerPtr addTimer(uint64_t ms, std::coroutine_handle<> h, 
                                  std::function<void()> cb, int thr = -1, bool recurring = false);
@@ -137,7 +137,7 @@ namespace blue
          * @param thr 指定线程
          * @param weak_cond 条件（后续需要更明确的修复这块）
          * @param recurring 是否循环定时器
-         * @note thr -1 表示优先提交到当前线程队列
+         * @note thr -1 表示优先提交到当前线程队列，同时会被其他线程窃取。也就是 thr不为-1，就不会被窃取
          */
         Timer::TimerPtr addConditionTimer(uint64_t ms, std::coroutine_handle<> h, 
                                           std::function<void()> cb, 
