@@ -76,16 +76,18 @@ namespace blue
         {
             m_name = "NOKNOW";
         }
-        m_thread = std::thread(&Mthread::run,this);
+        m_thread = std::thread(&Mthread::run, this);
         // 等待run函数把一切都设置好
         std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk,[this]{return m_running.load(std::memory_order_acquire); });
+        m_cv.wait(lk, [this]
+                  { return m_running.load(std::memory_order_acquire); });
     }
+    
     Mthread::~Mthread()
     {
         if (m_thread.joinable())
         {
-            m_thread.detach();
+            m_thread.join();
         }
     }
 
