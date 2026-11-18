@@ -183,7 +183,7 @@ namespace blue
         }
     }
 
-    int IOManager::addEvent(int fd, Event event, std::function<void()> cb)
+    int IOManager::addEvent(int fd, Event event, std::function<void()> cb, int thread_id)
     {
         if (m_stopping.load(std::memory_order_acquire))
         {
@@ -283,7 +283,7 @@ namespace blue
         if (cb)
         {
             event_ctx.cb = std::move(cb);
-            event_ctx.thread_id = -1;
+            event_ctx.thread_id = thread_id;
         }
         return 0;
     }

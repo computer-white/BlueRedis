@@ -181,6 +181,9 @@ namespace blue
                 m_runningTasks.push_back(task_base);
             }
 
+            // 绑定线程序号
+            task_base->setThreadIndex(thr);
+
             // 使用 waek_ptr 来防止循环引用（自身调用捕获自身）
             task_base->setOnComplete([this, wp = std::weak_ptr<TaskBase>(task_base)]()
                                      {

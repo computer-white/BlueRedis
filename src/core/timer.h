@@ -68,7 +68,7 @@ namespace blue
 
     private:
         explicit Timer(uint64_t ms, std::coroutine_handle<> h, 
-                      std::function<void()> cb, bool recurring, TimerManager *manager);
+                      std::function<void()> cb, int thr, bool recurring, TimerManager *manager);
         explicit Timer(TimePoint expire);
 
     public:
@@ -81,17 +81,21 @@ namespace blue
 
         static std::shared_ptr<Timer> Create_by_next(TimePoint expire);
         static std::shared_ptr<Timer> Create_by_ms(uint64_t ms, std::coroutine_handle<> h,
-                                                   std::function<void()> cb, bool recurring, 
+                                                   std::function<void()> cb, 
+                                                   int thr,
+                                                   bool recurring, 
                                                    TimerManager *manager);
 
     private:
-        bool m_recurring = false;           
-        uint64_t m_ms = 0;                  
-        TimePoint m_expire;                 
-        std::coroutine_handle<> m_handle;   
-        std::function<void()> m_cb;         
-        TimerManager *m_manager = nullptr;
+        bool m_recurring = false;           // 是否是循环定时器
+        uint64_t m_ms = 0;                  // 定时周期
+        int m_thr = -1;                     // 指定线程
+        TimePoint m_expire;                 // 过期时间点
+        std::coroutine_handle<> m_handle;   // 协程句柄
+        std::function<void()> m_cb;         // CallBack函数
+        TimerManager *m_manager = nullptr;  // Timer管理者指针
 
+        // 自定义比较器
         struct Comparator
         {
             bool operator()(const Timer::TimerPtr &lhs, const Timer::TimerPtr &rhs) const;
@@ -114,10 +118,11 @@ namespace blue
         virtual ~TimerManager() = default;
 
         Timer::TimerPtr addTimer(uint64_t ms, std::coroutine_handle<> h, 
-                                 std::function<void()> cb, bool recurring = false);
+                                 std::function<void()> cb, int thr = -1, bool recurring = false);
 
         Timer::TimerPtr addConditionTimer(uint64_t ms, std::coroutine_handle<> h, 
                                           std::function<void()> cb, 
+                                          int thr,
                                           std::weak_ptr<void> weak_cond, 
                                           bool recurring = false);
 

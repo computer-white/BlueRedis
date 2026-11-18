@@ -143,7 +143,9 @@ namespace blue
             }
             return true; // error
         }
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h)
+
+        template <typename Promise>
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> h)
         {
             int err = SSL_get_error(ssl, ret);
             fd = SSL_get_fd(ssl); // 拿到底层 socket fd
@@ -156,13 +158,16 @@ namespace blue
                 errno = EIO;
                 return h; // 对称转移
             }
+
+            int thr = h.promise().thr;
+
             resumeTicket = std::make_shared<blue::ResumeTicket>();
             resumeTicket->m_handle = h;
             resumeTicket->m_armed.store(true, std::memory_order_release);
 
             if (err == SSL_ERROR_WANT_READ)
             {
-                int tem = iom->addEvent(fd, IOManager::READ, resumeTicket, nullptr); // 等可读
+                int tem = iom->addEvent(fd, IOManager::READ, resumeTicket, nullptr, thr); // 等可读
                 if (tem)
                 {
                     BLUE_LOG_ERROR(xx::g_logger) << " await_suspend addEvent() error, fd : " << fd;
@@ -176,7 +181,7 @@ namespace blue
             }
             else if (err == SSL_ERROR_WANT_WRITE)
             {
-                int tem = iom->addEvent(fd, IOManager::WRITE, resumeTicket, nullptr); // 等可写
+                int tem = iom->addEvent(fd, IOManager::WRITE, resumeTicket, nullptr, thr); // 等可写
                 if (tem)
                 {
                     BLUE_LOG_ERROR(xx::g_logger) << " await_suspend addEvent() error, fd : " << fd;
@@ -193,7 +198,7 @@ namespace blue
                 if constexpr (WithTimeOut)
                 {
                     iom->scheduleCallBack([resumeTicket = resumeTicket]()
-                                  { try_resume(resumeTicket); }); // 其他错误且是定时任务，直接调度
+                                  { try_resume(resumeTicket); }, thr); // 其他错误且是定时任务，直接调度
                 }
                 else
                 {
@@ -209,7 +214,7 @@ namespace blue
                     {
                         IOManager::GetThis()->delEvent(fd,event);
                     }
-                    try_resume(resumeTicket); });
+                    try_resume(resumeTicket); }, thr);
             }
             return std::noop_coroutine();
         }

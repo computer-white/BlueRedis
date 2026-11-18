@@ -43,8 +43,8 @@ namespace blue
     }
 
     Timer::Timer(uint64_t ms, std::coroutine_handle<> h,
-                 std::function<void()> cb, bool recurring, TimerManager *manager)
-        : m_recurring(recurring), m_ms(ms), m_cb(std::move(cb)), m_handle(h), m_manager(manager)
+                 std::function<void()> cb, int thr, bool recurring, TimerManager *manager)
+        : m_recurring(recurring), m_ms(ms), m_cb(std::move(cb)), m_thr(thr), m_handle(h), m_manager(manager)
     {
         m_expire = SClock::now() + std::chrono::milliseconds(ms);
     }
@@ -60,9 +60,9 @@ namespace blue
     }
 
     std::shared_ptr<Timer> Timer::Create_by_ms(uint64_t ms, std::coroutine_handle<> h,
-                                               std::function<void()> cb, bool recurring, TimerManager *manager)
+                                               std::function<void()> cb, int thr, bool recurring, TimerManager *manager)
     {
-        return std::shared_ptr<Timer>(new Timer(ms, h, std::move(cb), recurring, manager));
+        return std::shared_ptr<Timer>(new Timer(ms, h, std::move(cb), thr, recurring, manager));
     }
 
     bool Timer::cancel()
@@ -71,6 +71,7 @@ namespace blue
         
         m_cb = nullptr;
         m_handle = nullptr;
+        m_thr = -1;
 
         // 从管理器中移除
         m_manager->m_timers.erase(shared_from_this());
@@ -145,9 +146,9 @@ namespace blue
     }
 
     Timer::TimerPtr TimerManager::addTimer(uint64_t ms, std::coroutine_handle<> h,
-                                           std::function<void()> cb, bool recurring)
+                                           std::function<void()> cb, int thr, bool recurring)
     {
-        auto timer = Timer::Create_by_ms(ms, h, std::move(cb), recurring, this);
+        auto timer = Timer::Create_by_ms(ms, h, std::move(cb), thr, recurring, this);
 
         std::unique_lock<std::shared_mutex> lock(m_mutex);
         bool was_empty = m_timers.empty();
@@ -187,12 +188,13 @@ namespace blue
 
     Timer::TimerPtr TimerManager::addConditionTimer(uint64_t ms, std::coroutine_handle<> h,
                                                     std::function<void()> cb,
+                                                    int thr,
                                                     std::weak_ptr<void> weak_cond,
                                                     bool recurring)
     {
         // 包装回调，检查条件是否仍然有效
         auto wrapped_cb = std::bind(&OnTimer, std::move(weak_cond), std::move(cb));
-        return addTimer(ms, h, std::move(wrapped_cb), recurring);
+        return addTimer(ms, h, std::move(wrapped_cb), thr, recurring);
     }
 
     uint64_t TimerManager::getNextTime()
@@ -271,6 +273,7 @@ namespace blue
         {
             std::function<void()> cb;
             std::coroutine_handle<> handle = nullptr;
+            int thr = -1;
 
             if (timer->m_cb)
             {
@@ -280,6 +283,7 @@ namespace blue
             {
                 handle = timer->m_handle;
             }
+            thr = timer->m_thr;
 
             // 调度执行
             auto *scheduler = Scheduler::GetThis();
@@ -287,11 +291,11 @@ namespace blue
             {
                 if (cb)
                 {
-                    scheduler->scheduleCallBack(std::move(cb));
+                    scheduler->scheduleCallBack(std::move(cb), thr);
                 }
                 if (handle)
                 {
-                    scheduler->scheduleHandle(handle);
+                    scheduler->scheduleHandle(handle, thr);
                 }
             }
         }

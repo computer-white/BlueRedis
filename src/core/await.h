@@ -46,9 +46,11 @@ namespace blue
             return false;
         }
 
-        void await_suspend(std::coroutine_handle<> h)
+        template <typename Promise>
+        void await_suspend(std::coroutine_handle<Promise> h)
         {
-            IOManager::GetThis()->addTimer(s * 1000, h, nullptr);
+            int thr = h.promise().thr;
+            IOManager::GetThis()->addTimer(s * 1000, h, nullptr, thr);
         }
 
         void await_resume() const noexcept {}
@@ -62,23 +64,26 @@ namespace blue
         return SleepAwaiter{s};
     }
 
-
-    struct SleepAwaiterMs 
+    struct SleepAwaiterMs
     {
         uint64_t ms;
-        
+
         SleepAwaiterMs(uint64_t ms) : ms(ms) {}
-        
+
         bool await_ready() const noexcept { return false; }
-        
-        void await_suspend(std::coroutine_handle<> h) {
-            IOManager::GetThis()->addTimer(ms, h, nullptr);
+
+        template <typename Promise>
+        void await_suspend(std::coroutine_handle<Promise> h)
+        {
+            int thr = h.promise().thr;
+            IOManager::GetThis()->addTimer(ms, h, nullptr, thr);
         }
-        
+
         void await_resume() const noexcept {}
     };
 
-    inline SleepAwaiterMs sleepForMs(uint64_t ms) {
+    inline SleepAwaiterMs sleepForMs(uint64_t ms)
+    {
         return SleepAwaiterMs{ms};
     }
 }

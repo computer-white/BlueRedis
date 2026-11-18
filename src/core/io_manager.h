@@ -145,7 +145,7 @@ namespace blue
         /**
          * @brief 供测试使用
          */
-        int addEvent(int fd, Event event, std::function<void()> cb = nullptr);
+        int addEvent(int fd, Event event, std::function<void()> cb = nullptr, int thread_id = -1);
 
         /**
          * @brief 删除fd上event事件

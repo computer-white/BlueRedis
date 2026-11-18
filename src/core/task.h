@@ -77,6 +77,8 @@ namespace blue
         // 在promise_type中保存一个原子变量，这个函数用于外部调度器可以拿到那个原子变量的值
         // 目的是为了不让协程帧在 final_suspend 中还未退出，就被外部销毁
         virtual bool finalizing() const noexcept = 0;
+        // 设置协程绑定的线程序号
+        virtual void setThreadIndex(int thr = -1) noexcept = 0;
     };
 
     namespace detail
@@ -113,6 +115,8 @@ namespace blue
             // 用于确保在进入 final_suspend 之后和成功调用完cb之前 保证不去清理 Task 的协程帧
             // 这是协程和调度器以及定时器生命周期管理的最后一块拼图，用于防止多线程下竟态导致的UAF
             std::atomic<bool> finalizing{false};
+            // 持有这个协程最开始被提交的的线程序号，保证协程被恢复后依旧提交到原线程
+            int thr = -1;
 
             Task get_return_object()
             {
@@ -288,6 +292,12 @@ namespace blue
         {
             auto h = task.getHandle();
             return h && h.promise().finalizing.load(std::memory_order_acquire);
+        }
+
+        virtual void setThreadIndex(int thr = -1) noexcept override
+        {
+            auto h = task.getHandle();
+            h.promise().thr = thr;
         }
     };
 

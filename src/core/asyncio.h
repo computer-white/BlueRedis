@@ -103,7 +103,9 @@ namespace blue
                                          << " strerrno : " << strerror(old_error);
             return true; // error
         }
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<> h)
+
+        template <typename Promise>
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> h)
         {
             auto *iom = IOManager::GetThis();
             if (!iom)
@@ -121,7 +123,9 @@ namespace blue
             state = std::make_shared<AsyncIoState>();
             state->event_added.store(true, std::memory_order_release);
 
-            int tem = iom->addEvent(fd, event, resumeTicket, nullptr);
+            int thr = h.promise().thr;
+
+            int tem = iom->addEvent(fd, event, resumeTicket, nullptr, thr);
             if (tem)
             {
                 BLUE_LOG_ERROR(xx::g_logger) << " await_suspend addEvent() error, fd : " << fd;
@@ -140,7 +144,7 @@ namespace blue
                     {
                         IOManager::GetThis()->delEvent(fd, event);
                     }
-                    try_resume(resumeTicket); });
+                    try_resume(resumeTicket); }, thr);
             }
             return std::noop_coroutine();
         }
