@@ -106,19 +106,19 @@ namespace blue
         m_workers.clear();
     }
 
-    void Scheduler::schedule(std::coroutine_handle<> h, int thr)
+    void Scheduler::scheduleHandle(std::coroutine_handle<> h, int thr)
     {
         if (!h || h.done() || m_stopping.load(std::memory_order_acquire))
         {
             return;
         }
 
-        schedule([h]() mutable
+        scheduleCallBack([h]() mutable
                  {
             if (h && h.address() && !h.done()) h.resume(); }, thr);
     }
 
-    void Scheduler::schedule(std::function<void()> cb, int thr)
+    void Scheduler::scheduleCallBack(std::function<void()> cb, int thr)
     {
         if (!cb || m_stopping.load(std::memory_order_acquire))
         {

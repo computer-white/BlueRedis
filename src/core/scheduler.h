@@ -32,6 +32,7 @@
 #include <random>
 #include <condition_variable>
 #include <functional>
+#include <future>
 #include <atomic>
 #include <list>
 #include "src/core/task.h"
@@ -115,6 +116,34 @@ namespace blue
         virtual void wait_all();
 
         /**
+         * @brief 提交一个 package_task<T>
+         * @param R 返回值类型
+         */
+        template <typename R, typename... Args>
+        std::future<R> schedulePackageTask(std::packaged_task<R(Args...)> p, Args &&...args)
+        {
+            if (m_stopping.load(std::memory_order_acquire))
+            {
+                std::promise<R> prom;
+                prom.set_exception(std::make_exception_ptr(
+                    std::runtime_error("scheduler is stopping")));
+                return prom.get_future();
+            }
+
+            auto sp = std::make_shared<std::packaged_task<R(Args...)>>(std::move(p));
+            std::future<R> f = sp->get_future();
+
+            // 关键：按值捕获参数，用 decay 去掉引用，避免悬垂
+            auto wrapper = [sp, tup = std::make_tuple(std::forward<Args>(args)...)]() mutable
+            {
+                std::apply(*sp, std::move(tup));
+            };
+
+            scheduleCallBack(std::move(wrapper), -1);
+            return f;
+        }
+
+        /**
          * @brief 提交一组协程任务
          * @param thr 指定工作线程
          */
@@ -166,15 +195,15 @@ namespace blue
                 m_finishedTasks.push_back(tb);
                 m_runningTasks.remove(tb); });
 
-            schedule([h]() mutable
-                     {
-                         if (h && h.address() && !h.done())
-                         {
-                             h.resume();
-                         }
-                         // 统一在 wait_all 或 Scheduler::run() 里清理。
-                     },
-                     thr);
+            scheduleCallBack([h]() mutable
+                             {
+                                 if (h && h.address() && !h.done())
+                                 {
+                                     h.resume();
+                                 }
+                                 // 统一在 wait_all 或 Scheduler::run() 里清理。
+                             },
+                             thr);
         }
 
         /**
@@ -182,7 +211,7 @@ namespace blue
          * @param cb 包装好的任务
          * @param thr 指定工作线程
          */
-        void schedule(std::function<void()> cb, int thr = -1);
+        void scheduleCallBack(std::function<void()> cb, int thr = -1);
 
         /**
          * @brief 提交协程句柄
@@ -200,7 +229,7 @@ namespace blue
          *          try_resume(rt);
          *      });
          */
-        void schedule(std::coroutine_handle<> h, int thr = -1);
+        void scheduleHandle(std::coroutine_handle<> h, int thr = -1);
 
         /**
          * @brief 任务窃取
