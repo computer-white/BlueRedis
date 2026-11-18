@@ -32,7 +32,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            g++-13 cmake ragel pkg-config \
+            g++-14 g++-13 cmake ragel pkg-config \
             libboost-all-dev libssl-dev libyaml-cpp-dev \
             libhiredis-dev libgtest-dev libgmock-dev \
             libabsl-dev nlohmann-json3-dev libidn2-dev \
