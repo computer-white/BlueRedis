@@ -58,10 +58,8 @@ blue::Task<void> test()
         co_await blue::sleepFor(2);
     }
 
-    auto ds = httpserver->getDispatch();
-
     // 首页：链到二叉树的根 /page/0 和 /page/1
-    ds->addServlet("/", [](blue::http::HttpRequest::HttpRequestPtr req, blue::http::HttpResponse::HttpResponsePtr resp, blue::http::HttpSession::HttpSessionPtr) -> int32_t
+    httpserver->Get("/", [](auto req,auto resp)
                    {
     std::string body = makePage("Blue Spider Home", "Binary tree test site, 1000 pages.",
         {"/page/0", "/page/1"});
@@ -71,7 +69,7 @@ blue::Task<void> test()
     return 0; });
 
     // /page/*：二叉树，/page/N 链 /page/2N+1 和 /page/2N+2
-    ds->addBlurServlet("/page/*", [](blue::http::HttpRequest::HttpRequestPtr req, blue::http::HttpResponse::HttpResponsePtr resp, blue::http::HttpSession::HttpSessionPtr) -> int32_t
+    httpserver->Get("/page/*", [](auto req, auto resp)
                        {
     std::string path = req->getPath();   // "/page/123"
     int n = 0;
@@ -101,90 +99,6 @@ blue::Task<void> test()
     resp->setHeader("Content-Length", std::to_string(body.size()));
     resp->setBody(body);
     return 0; });
-
-    // ds->addServlet("/", [](auto req, auto resp, auto session) -> int32_t
-    //                {
-    // std::vector<std::string> links;
-    // for (int i = 0; i < 20; ++i)
-    //     links.push_back("/page/" + std::to_string(i));
-    // std::string body = makePage("Home", "1000 pages test site.", links);
-    // resp->setHeader("Content-Type", "text/html; charset=utf-8");
-    // resp->setHeader("Content-Length", std::to_string(body.size()));
-    // resp->setBody(body);
-    // return 0; });
-
-    // // /page/*：每个页面链接到 N+1 ~ N+5 + 首页
-    // ds->addBlurServlet("/page/*", [](auto req, auto resp, auto session) -> int32_t
-    //                    {
-    // std::string path = req->getPath();   // "/page/123"
-    // int n = 0;
-    // if (path.size() > 6) {
-    //     try { n = std::stoi(path.substr(6)); } catch (...) { n = 0; }
-    // }
-
-    // std::vector<std::string> links;
-    // for (int i = 1; i <= 5; ++i) {
-    //     int next = n + i;
-    //     if (next < 1000) links.push_back("/page/" + std::to_string(next));
-    // }
-    // links.push_back("/");
-
-    // std::string body = makePage("Page " + std::to_string(n),
-    //     "This is page " + std::to_string(n) + " of 1000.", links);
-    // resp->setHeader("Content-Type", "text/html; charset=utf-8");
-    // resp->setHeader("Content-Length", std::to_string(body.size()));
-    // resp->setBody(body);
-    // return 0; });
-
-    // // 首页：链接到 4 个子页面
-    // ds->addServlet("/", [](blue::http::HttpRequest::HttpRequestPtr req, blue::http::HttpResponse::HttpResponsePtr resp, blue::http::HttpSession::HttpSessionPtr) -> int32_t
-    //                {
-    //     std::string body = makePage("Blue Spider Home", "Welcome to the test site.",
-    //         {"/page/a", "/page/b", "/page/c", "/page/d"});
-    //     resp->setHeader("Content-Type", "text/html; charset=utf-8");
-    //     resp->setHeader("Content-Length", std::to_string(body.size()));
-    //     resp->setBody(body);
-    //     return 0; });
-
-    // // /page/a：链回首页 + /page/b + /page/c
-    // ds->addServlet("/page/a", [](blue::http::HttpRequest::HttpRequestPtr, blue::http::HttpResponse::HttpResponsePtr resp, blue::http::HttpSession::HttpSessionPtr) -> int32_t
-    //                {
-    //     std::string body = makePage("Page A", "This is page A.",
-    //         {"/", "/page/b", "/page/c"});
-    //     resp->setHeader("Content-Type", "text/html; charset=utf-8");
-    //     resp->setHeader("Content-Length", std::to_string(body.size()));
-    //     resp->setBody(body);
-    //     return 0; });
-
-    // // /page/b：链回首页 + /page/a + /page/d
-    // ds->addServlet("/page/b", [](blue::http::HttpRequest::HttpRequestPtr, blue::http::HttpResponse::HttpResponsePtr resp, blue::http::HttpSession::HttpSessionPtr) -> int32_t
-    //                {
-    //     std::string body = makePage("Page B", "This is page B.",
-    //         {"/", "/page/a", "/page/d"});
-    //     resp->setHeader("Content-Type", "text/html; charset=utf-8");
-    //     resp->setHeader("Content-Length", std::to_string(body.size()));
-    //     resp->setBody(body);
-    //     return 0; });
-
-    // // /page/c：链回首页 + /page/a
-    // ds->addServlet("/page/c", [](blue::http::HttpRequest::HttpRequestPtr, blue::http::HttpResponse::HttpResponsePtr resp, blue::http::HttpSession::HttpSessionPtr) -> int32_t
-    //                {
-    //     std::string body = makePage("Page C", "This is page C.",
-    //         {"/", "/page/a"});
-    //     resp->setHeader("Content-Type", "text/html; charset=utf-8");
-    //     resp->setHeader("Content-Length", std::to_string(body.size()));
-    //     resp->setBody(body);
-    //     return 0; });
-
-    // // /page/d：链回首页 + /page/b
-    // ds->addServlet("/page/d", [](blue::http::HttpRequest::HttpRequestPtr, blue::http::HttpResponse::HttpResponsePtr resp, blue::http::HttpSession::HttpSessionPtr) -> int32_t
-    //                {
-    //     std::string body = makePage("Page D", "This is page D.",
-    //         {"/", "/page/b"});
-    //     resp->setHeader("Content-Type", "text/html; charset=utf-8");
-    //     resp->setHeader("Content-Length", std::to_string(body.size()));
-    //     resp->setBody(body);
-    //     return 0; });
 
     bool ans = co_await httpserver->start();
     if (!ans)
