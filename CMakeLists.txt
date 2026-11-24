@@ -171,10 +171,8 @@ set(LIB_SRC
     src/http/httpconnection.cpp
     src/http/httpParser.cpp
     src/http/httpserver.cpp
-    src/http/httpservlet.cpp
+    src/http/httprouter.cpp
     src/http/httpsession.cpp
-    proxy/url_rewriter.cpp
-    # ${LLHTTP_SRC}
 )
 
 # 生成 urlparser.cpp 必须在编译 blue 之前
