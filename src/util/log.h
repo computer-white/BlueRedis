@@ -35,9 +35,10 @@
 #include <type_traits>
 #include <chrono>
 #include <map>
-#include "util.h"
-#include "singleton.h"
-#include "mthread.h"
+#include "src/util/util.h"
+#include "src/util/singleton.h"
+#include "src/util/mthread.h"
+
 // 宏展开输出
 #define BLUE_LOG_LEVEL(logger, level)                                                                                                         \
     if (logger->getlevel() <= level)                                                                                                          \
@@ -423,28 +424,38 @@ namespace blue
          */
         Logger(const std::string &name = "root");
 
-        /// @brief Debug 日志
-        /// @param content 日志内容
+        /**
+         * @brief Debug 日志
+         * @param content 日志内容
+         */
         template <typename... Args>
         void Debug(const Args &...content);
 
-        /// @brief Info 日志
-        /// @param content 日志内容
+        /**
+         * @brief Info 日志
+         * @param content 日志内容
+         */
         template <typename... Args>
         void Info(const Args &...content);
 
-        /// @brief Warn 日志
-        /// @param content 日志内容
+        /**
+         * @brief Warn 日志
+         * @param content 日志内容
+         */
         template <typename... Args>
         void Warn(const Args &...content);
 
-        /// @brief Error 日志
-        /// @param content 日志内容
+        /**
+         * @brief Error 日志
+         * @param content 日志内容
+         */
         template <typename... Args>
         void Error(const Args &...content);
 
-        /// @brief Fatal 日志
-        /// @param content 日志内容
+        /**
+         * @brief Fatal 日志
+         * @param content 日志内容
+         */
         template <typename... Args>
         void Fatal(const Args &...content);
 
