@@ -146,9 +146,12 @@ namespace blue
 
         /**
          * @brief start 开始tcpserver
-         * @return 成功返回true
          */
         virtual Task<bool> start();
+
+        virtual Task<bool> start(std::shared_ptr<Address> addr);
+
+        virtual Task<bool> start(const char* addr);
 
         /**
          * @brief stop 停止tcpserver

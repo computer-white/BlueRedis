@@ -117,6 +117,28 @@ namespace blue
         co_return true;
     }
 
+    Task<bool> TcpServer::start(std::shared_ptr<Address> addr)
+    {
+        while (!bind<int>(addr))
+        {
+            co_await blue::sleepFor(1);
+        }
+
+        auto res = co_await start();
+        co_return res;
+    }
+
+    Task<bool> TcpServer::start(const char* addr)
+    {
+        auto address = blue::Address::LookupAnyIpAddress(addr);
+        if (!address)
+        {
+            co_return false;
+        }
+        auto res = co_await start(address);
+        co_return res;
+    }
+
     Task<bool> TcpServer::stop()
     {
         m_isStop.store(true, std::memory_order_release);
