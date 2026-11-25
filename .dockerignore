@@ -1,0 +1,12 @@
+build
+.cache
+*.o
+*.a
+*.so
+bin
+newblue
+http.bak
+lib
+.vscode
+config
+.git/
