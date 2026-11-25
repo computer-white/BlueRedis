@@ -32,6 +32,7 @@
 #include "src/http/httprouter.h"
 #include "src/net/tcpServer.h"
 #include "src/core/task.h"
+#include "src/http/middleware.h"
 
 // http server
 namespace blue
@@ -103,6 +104,15 @@ namespace blue
              */
             bool ShutDownServer();
 
+            /**
+             * @brief 注册中间件
+             */
+            template <typename F>
+            void Use(F &&mw)
+            {
+                m_middlewares.push_back(ToAsync(std::forward<F>(mw)));
+            }
+
         protected:
             /**
              * @brief 处理客户端和服务端的请求和响应
@@ -129,6 +139,7 @@ namespace blue
 
         private:
             std::vector<MSocket::MSocketWPtr> m_clients;
+            std::vector<AsyncFunc> m_middlewares;
         };
 
     }

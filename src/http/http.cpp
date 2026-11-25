@@ -415,6 +415,11 @@ namespace blue
             m_header[key] = val;
         }
 
+        bool HttpResponse::hasHeader(const std::string &key)
+        {
+            return m_header.find(key) != m_header.end();
+        }
+
         void HttpResponse::delHeader(const std::string &key)
         {
             m_header.erase(key);

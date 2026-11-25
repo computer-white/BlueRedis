@@ -204,7 +204,7 @@ namespace blue
 #define XX(num, name, string) name = num,
             BLUE_HTTP_METHOD_MAP(XX)
 #undef XX
-                INVAILD_METHOD
+            INVAILD_METHOD
         };
 
         enum class HttpStatus
@@ -212,7 +212,7 @@ namespace blue
 #define XX(code, name, desc) name = code,
             BLUE_HTTP_STATUS_MAP(XX)
 #undef XX
-                INVAILD_STATUS
+            INVAILD_STATUS
         };
 
         /**
@@ -325,6 +325,7 @@ namespace blue
         public:
             using HttpRequestPtr = std::shared_ptr<HttpRequest>;
             using MapType = std::map<std::string, std::string, CompareInsensitiveLess>;
+
         public:
             /**
              * @brief httprequest构造函数
@@ -416,7 +417,7 @@ namespace blue
              * @param val httpMethod类型(GET POST...)
              */
             void setMethod(HttpMethod val) { m_method = val; }
-            
+
             /**
              * @brief 设置query(params把query细分了)
              * @param val query值(string)
@@ -777,6 +778,11 @@ namespace blue
              * @return
              */
             void setHeader(const std::string &key, const std::string &val);
+
+            /**
+             * @brief 是否有 header
+             */
+            bool hasHeader(const std::string &key);
 
             /**
              * @brief 删除header中key对应的所有值

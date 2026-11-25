@@ -71,7 +71,7 @@ namespace blue
             return true;
         }
 
-        void HttpServer::Register(HttpMethod method, const std::string& path, Handle handle)
+        void HttpServer::Register(HttpMethod method, const std::string &path, Handle handle)
         {
             if (path.back() == '*')
             {
@@ -138,7 +138,28 @@ namespace blue
                                                                   (requestPtr->isKeepAlive() || temkeepAlive));
                 temkeepAlive = (requestPtr->isKeepAlive() || temkeepAlive);
 
-                m_router->handle(requestPtr, responsePtr);
+                // 构建 Context
+                auto ctx = std::make_shared<HttpContext>(requestPtr, responsePtr);
+
+                // 构建链: 中间件 + 路由目标 Handle
+                MiddlewareChain chain;
+                for (auto &mw : m_middlewares)
+                {
+                    chain.Use(mw);
+                }
+
+                // 设置最后的用户 Handle
+                chain.SetFinal([this](HttpContext &c) -> void
+                               { m_router->handle(c.Request(), c.Response()); });
+
+                // 开始运行 Chain
+                co_await chain.Run(*ctx);
+
+                // 补上 body 的长度
+                if (!responsePtr->hasHeader("Content-Length"))
+                {
+                    responsePtr->setHeader("Content-Length", std::to_string(responsePtr->getBody().size()));
+                }
 
                 co_await session->sendResponse(responsePtr, requestPtr);
                 BLUE_LOG_INFO(g_logger) << sock->getRemoteAddress()->toString()
