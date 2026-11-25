@@ -22,12 +22,12 @@
 namespace blue
 {
     static blue::Logger::LoggerPtr g_logger = BLUE_LOG_NAME("system");
-    Task<ssize_t> MStream::readFixSize(void* buf, size_t len)
+    Task<ssize_t> MStream::readFixSize(void *buf, size_t len, int flags)
     {
-        size_t offset = 0,l = len;
+        size_t offset = 0, l = len;
         while (l > 0)
         {
-            ssize_t ret = co_await read((char*)(buf) + offset,l);
+            ssize_t ret = co_await read((char *)(buf) + offset, l, flags);
             if (ret <= 0)
             {
                 co_return ret;
@@ -38,12 +38,12 @@ namespace blue
         co_return len;
     }
 
-    Task<ssize_t> MStream::readFixSize(ByteArray::ByteArrayPtr data, size_t len)
+    Task<ssize_t> MStream::readFixSize(ByteArray::ByteArrayPtr data, size_t len, int flags)
     {
         size_t l = len;
         while (l > 0)
         {
-            ssize_t ret = co_await read(data,l);
+            ssize_t ret = co_await read(data, l, flags);
             if (ret <= 0)
             {
                 co_return ret;
@@ -53,12 +53,12 @@ namespace blue
         co_return len;
     }
 
-    Task<ssize_t> MStream::writeFixSize(const void* buf, size_t len)
+    Task<ssize_t> MStream::writeFixSize(const void *buf, size_t len, int flags)
     {
-        size_t offset = 0,l = len;
+        size_t offset = 0, l = len;
         while (l > 0)
         {
-            ssize_t ret = co_await write((const char*)(buf) + offset,l);
+            ssize_t ret = co_await write((const char *)(buf) + offset, l, flags);
             if (ret <= 0)
             {
                 co_return ret;
@@ -67,15 +67,14 @@ namespace blue
             l -= ret;
         }
         co_return len;
-
     }
 
-    Task<ssize_t> MStream::writeFixSize(ByteArray::ByteArrayPtr data, size_t len)
+    Task<ssize_t> MStream::writeFixSize(ByteArray::ByteArrayPtr data, size_t len, int flags)
     {
         size_t l = len;
         while (l > 0)
         {
-            ssize_t ret = co_await write(data,l);
+            ssize_t ret = co_await write(data, l, flags);
             if (ret <= 0)
             {
                 co_return ret;

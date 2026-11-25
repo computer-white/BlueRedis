@@ -211,7 +211,7 @@ namespace blue
         co_return true;
     }
 
-    Task<ssize_t> SSLSocket::read(void *buf, size_t len)
+    Task<ssize_t> SSLSocket::read(void *buf, size_t len, int flags)
     {
         if (!isConnected())
         {
@@ -221,7 +221,7 @@ namespace blue
         co_return ret;
     }
 
-    Task<ssize_t> SSLSocket::read(ByteArray::ByteArrayPtr data, size_t len)
+    Task<ssize_t> SSLSocket::read(ByteArray::ByteArrayPtr data, size_t len, int flags)
     {
         if (!isConnected())
         {
@@ -262,7 +262,7 @@ namespace blue
         co_return ret;
     }
 
-    Task<ssize_t> SSLSocket::write(const void *buf, size_t len)
+    Task<ssize_t> SSLSocket::write(const void *buf, size_t len, int flags)
     {
         if (!isConnected())
         {
@@ -273,7 +273,7 @@ namespace blue
         co_return ret;
     }
 
-    Task<ssize_t> SSLSocket::write(ByteArray::ByteArrayPtr data, size_t len)
+    Task<ssize_t> SSLSocket::write(ByteArray::ByteArrayPtr data, size_t len, int flags)
     {
         if (!isConnected())
         {

@@ -21,10 +21,9 @@
 namespace blue
 {
     SocketStream::SocketStream(MSocket::MSocketPtr sock, bool owner)
-    :m_sock(sock),
-    m_owner(owner)
+        : m_sock(sock),
+          m_owner(owner)
     {
-
     }
 
     SocketStream::~SocketStream()
@@ -40,17 +39,17 @@ namespace blue
         return m_sock && m_sock->isConnected();
     }
 
-    Task<ssize_t> SocketStream::read(void *buf, size_t len)
+    Task<ssize_t> SocketStream::read(void *buf, size_t len, int flags)
     {
         if (!isConnected())
         {
             co_return -1;
         }
-        auto res = co_await m_sock->recv(buf,len);
+        auto res = co_await m_sock->recv(buf, len, flags);
         co_return res;
     }
 
-    Task<ssize_t> SocketStream::read(ByteArray::ByteArrayPtr data, size_t len)
+    Task<ssize_t> SocketStream::read(ByteArray::ByteArrayPtr data, size_t len, int flags)
     {
         if (!isConnected())
         {
@@ -58,8 +57,8 @@ namespace blue
         }
         std::vector<iovec> vec;
         // 获取可读缓冲区
-        data->getReadBuffers(vec,len);
-        ssize_t ret = co_await m_sock->recv(&vec[0],vec.size());
+        data->getReadBuffers(vec, len);
+        ssize_t ret = co_await m_sock->recv(&vec[0], vec.size(), flags);
         if (ret > 0)
         {
             data->setPosition(data->getPosition() + ret);
@@ -67,17 +66,44 @@ namespace blue
         co_return ret;
     }
 
-    Task<ssize_t> SocketStream::write(const void *buf, size_t len)
+    Task<ssize_t> SocketStream::readT(void *buf, size_t len, int flags, uint64_t timeout)
     {
         if (!isConnected())
         {
             co_return -1;
         }
-        auto res = co_await m_sock->send(buf,len);
+        auto res = co_await m_sock->recvT(buf, len, flags, timeout);
         co_return res;
     }
 
-    Task<ssize_t> SocketStream::write(ByteArray::ByteArrayPtr data, size_t len)
+    Task<ssize_t> SocketStream::readT(ByteArray::ByteArrayPtr data, size_t len, int flags, uint64_t timeout)
+    {
+        if (!isConnected())
+        {
+            co_return -1;
+        }
+        std::vector<iovec> vec;
+        // 获取可读缓冲区
+        data->getReadBuffers(vec, len);
+        ssize_t ret = co_await m_sock->recvT(&vec[0], vec.size(), flags, timeout);
+        if (ret > 0)
+        {
+            data->setPosition(data->getPosition() + ret);
+        }
+        co_return ret;
+    }
+
+    Task<ssize_t> SocketStream::write(const void *buf, size_t len, int flags)
+    {
+        if (!isConnected())
+        {
+            co_return -1;
+        }
+        auto res = co_await m_sock->send(buf, len, flags);
+        co_return res;
+    }
+
+    Task<ssize_t> SocketStream::write(ByteArray::ByteArrayPtr data, size_t len, int flags)
     {
         if (!isConnected())
         {
@@ -85,8 +111,36 @@ namespace blue
         }
         std::vector<iovec> vec;
         // 获取可写缓冲区
-        data->getWriteBuffers(vec,len);
-        ssize_t ret = co_await m_sock->send(&vec[0],vec.size());
+        data->getWriteBuffers(vec, len);
+        ssize_t ret = co_await m_sock->send(&vec[0], vec.size(), flags);
+        if (ret > 0)
+        {
+            data->setSize(data->getSize() + ret);
+            data->setPosition(data->getPosition() + ret);
+        }
+        co_return ret;
+    }
+
+    Task<ssize_t> SocketStream::writeT(const void *buf, size_t len, int flags, uint64_t timeout)
+    {
+        if (!isConnected())
+        {
+            co_return -1;
+        }
+        auto res = co_await m_sock->sendT(buf, len, flags, timeout);
+        co_return res;
+    }
+
+    Task<ssize_t> SocketStream::writeT(ByteArray::ByteArrayPtr data, size_t len, int flags, uint64_t timeout)
+    {
+        if (!isConnected())
+        {
+            co_return -1;
+        }
+        std::vector<iovec> vec;
+        // 获取可写缓冲区
+        data->getWriteBuffers(vec, len);
+        ssize_t ret = co_await m_sock->sendT(&vec[0], vec.size(), flags, timeout);
         if (ret > 0)
         {
             data->setSize(data->getSize() + ret);

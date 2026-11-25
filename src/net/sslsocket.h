@@ -64,37 +64,41 @@ namespace blue
          * @brief 读取len长度内容到buf中
          * @param buf 存放读取内容的地址
          * @param len 想要读取的长度
+         * @param flags 标志位
          * @return 返回实际读取的大小
          * @note 对socket上recv的抽象(出错返回实际读取)
          */
-        Task<ssize_t> read(void *buf, size_t len) override;
+        Task<ssize_t> read(void *buf, size_t len, int flags = 0) override;
 
         /**
          * @brief 读取len长度内容到字节链表(byteArray)
          * @param data 字节链表指针
          * @param len 想要读取的长度
+         * @param flags 标志位
          * @return 返回实际读取的大小
          * @note 对socket上recv的抽象(出错返回实际读取)
          */
-        Task<ssize_t> read(ByteArray::ByteArrayPtr data, size_t len) override;
+        Task<ssize_t> read(ByteArray::ByteArrayPtr data, size_t len, int flags = 0) override;
 
         /**
          * @brief 将buf中len长度内容发送给对方
          * @param buf 存放输出内容的地址
          * @param len 想要输出的长度
+         * @param flags 标志位
          * @return 返回实际写入的大小
          * @note 对socket上send的抽象(出错返回实际写入)
          */
-        Task<ssize_t> write(const void *buf, size_t len) override;
+        Task<ssize_t> write(const void *buf, size_t len, int flags = 0) override;
 
         /**
          * @brief 将data中len长度内容发送给对方
          * @param data 存放输出内容的地址
          * @param len 想要输出的长度
+         * @param flags 标志位
          * @return 返回实际写入的大小
          * @note 对socket上send的抽象(出错返回实际写入)
          */
-        Task<ssize_t> write(ByteArray::ByteArrayPtr data, size_t len) override;
+        Task<ssize_t> write(ByteArray::ByteArrayPtr data, size_t len, int flags = 0) override;
 
         /**
          * @brief 读取len长度内容到buf中
